@@ -35,27 +35,27 @@ public class TestPerformance {
   private final OkHttpClient client = new OkHttpClient();
 
   private static final String CREATE_TABLE_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog1/schemas/db1/tables";
+      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog/schemas/db1/tables";
   private static final String LIST_METALAKE_URL = "http://localhost:8090/api/metalakes";
   private static final String LOAD_CATALOG_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog1";
+      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog";
 
   private static final String LOAD_SCHEMA_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog1/schemas/db1";
+      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog/schemas/db1";
 
   private static final String ALTER_CATALOG_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog1";
+      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog";
 
   private static final String LIST_TABLE_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog1/schemas/db1/tables";
+      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog/schemas/db1/tables";
 
   private static final String LOAD_TABLE_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog1/schemas/db1/tables/";
+      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog/schemas/db1/tables/";
 
   private static final Multimap<String, Long> timeMap =
       MultimapBuilder.linkedHashKeys().arrayListValues().build();
   private static final Map<String, Long> failedMap = Maps.newConcurrentMap();
-  private static final int repeatTimes = 20;
+  private static final int repeatTimes = 50;
 
   static {
     failedMap.put("listMetalakes", 0L);
@@ -237,31 +237,32 @@ public class TestPerformance {
     }
 
     // One thread to list metalakes for 100 times;
-    completionService.submit(
-        () -> {
-          try {
-            Thread.sleep(20000);
-          } catch (Exception e) {
-            e.printStackTrace();
-          }
+    Future<Integer> listMetalakeFuture =
+        completionService.submit(
+            () -> {
+              try {
+                Thread.sleep(20000);
+              } catch (Exception e) {
+                e.printStackTrace();
+              }
 
-          long start = System.currentTimeMillis();
-          for (int i = 0; i < repeatTimes * 5; i++) {
-            long listStart = System.currentTimeMillis();
-            listMetalakes();
-            synchronized (this) {
-              timeMap.put("listMetalakes", System.currentTimeMillis() - listStart);
-            }
-            try {
-              Thread.sleep(100);
-            } catch (InterruptedException e) {
-              e.printStackTrace();
-            }
-          }
-          System.out.println(
-              "end to list metalakes, take: " + (System.currentTimeMillis() - start));
-          return 0;
-        });
+              long start = System.currentTimeMillis();
+              for (int i = 0; i < repeatTimes; i++) {
+                long listStart = System.currentTimeMillis();
+                listMetalakes();
+                synchronized (this) {
+                  timeMap.put("listMetalakes", System.currentTimeMillis() - listStart);
+                }
+                try {
+                  Thread.sleep(5000);
+                } catch (InterruptedException e) {
+                  e.printStackTrace();
+                }
+              }
+              System.out.println(
+                  "end to list metalakes, take: " + (System.currentTimeMillis() - start));
+              return 0;
+            });
 
     // One thread to load catalog for 500 times;
     Future<Integer> loadCatalogFuture =
@@ -276,7 +277,7 @@ public class TestPerformance {
                 }
 
                 try {
-                  Thread.sleep(100);
+                  Thread.sleep(500);
                 } catch (InterruptedException e) {
                   e.printStackTrace();
                 }
@@ -297,7 +298,7 @@ public class TestPerformance {
               }
 
               long start = System.currentTimeMillis();
-              for (int i = 0; i < repeatTimes * 10; i++) {
+              for (int i = 0; i < repeatTimes; i++) {
                 long alterCatalogStart = System.currentTimeMillis();
                 alterCatalog();
 
@@ -306,7 +307,7 @@ public class TestPerformance {
                 }
 
                 try {
-                  Thread.sleep(100);
+                  Thread.sleep(1000);
                 } catch (InterruptedException e) {
                   e.printStackTrace();
                 }
@@ -335,25 +336,33 @@ public class TestPerformance {
             });
 
     // List table
-    completionService.submit(
-        () -> {
-          try {
-            Thread.sleep(3000);
-          } catch (InterruptedException e) {
-            e.printStackTrace();
-          }
+    Future<Integer> listTableFuture =
+        completionService.submit(
+            () -> {
+              try {
+                Thread.sleep(3000);
+              } catch (InterruptedException e) {
+                e.printStackTrace();
+              }
 
-          long start = System.currentTimeMillis();
-          for (int i = 0; i < repeatTimes * 50; i++) {
-            long listTableStart = System.currentTimeMillis();
-            listTable();
-            synchronized (this) {
-              timeMap.put("listTable", System.currentTimeMillis() - listTableStart);
-            }
-          }
-          System.out.println("end to list table, take: " + (System.currentTimeMillis() - start));
-          return 0;
-        });
+              long start = System.currentTimeMillis();
+              for (int i = 0; i < repeatTimes * 5; i++) {
+                long listTableStart = System.currentTimeMillis();
+                listTable();
+                synchronized (this) {
+                  timeMap.put("listTable", System.currentTimeMillis() - listTableStart);
+                }
+
+                try {
+                  Thread.sleep(500);
+                } catch (InterruptedException e) {
+                  e.printStackTrace();
+                }
+              }
+              System.out.println(
+                  "end to list table, take: " + (System.currentTimeMillis() - start));
+              return 0;
+            });
 
     long start = System.currentTimeMillis();
     CountDownLatch countDownLatch = new CountDownLatch(2);
@@ -401,6 +410,12 @@ public class TestPerformance {
               synchronized (this) {
                 timeMap.put("loadTable", System.currentTimeMillis() - loadTableStart);
               }
+
+              try {
+                Thread.sleep(100);
+              } catch (InterruptedException e) {
+                e.printStackTrace();
+              }
             }
             loadTableCountDownLatch.countDown();
             return 0;
@@ -411,6 +426,8 @@ public class TestPerformance {
     countDownLatch.await();
     System.out.println("end to load tables, take: " + (System.currentTimeMillis() - start - 10000));
 
+    listMetalakeFuture.get();
+    listTableFuture.get();
     loadCatalogFuture.get();
     alterCatalogFuture.get();
     loadSchemaFuture.get();
