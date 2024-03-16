@@ -63,7 +63,7 @@ public class CatalogOperations {
             NameIdentifier[] idents =
                 TreeLockUtils.doWithTreeLock(
                     NameIdentifier.of(metalake),
-                    LockType.WRITE,
+                    LockType.READ,
                     () -> manager.listCatalogs(catalogNS));
             return Utils.ok(new EntityListResponse(idents));
           });

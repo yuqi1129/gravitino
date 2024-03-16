@@ -70,7 +70,7 @@ public class SchemaOperations {
             NameIdentifier[] idents =
                 TreeLockUtils.doWithTreeLock(
                     NameIdentifier.of(metalake, catalog),
-                    LockType.WRITE,
+                    LockType.READ,
                     () -> dispatcher.listSchemas(schemaNS));
             return Utils.ok(new EntityListResponse(idents));
           });

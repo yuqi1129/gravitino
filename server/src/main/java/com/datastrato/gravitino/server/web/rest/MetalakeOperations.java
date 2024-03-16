@@ -66,7 +66,7 @@ public class MetalakeOperations {
           httpRequest,
           () -> {
             BaseMetalake[] metalakes =
-                TreeLockUtils.doWithRootTreeLock(LockType.WRITE, manager::listMetalakes);
+                TreeLockUtils.doWithRootTreeLock(LockType.READ, manager::listMetalakes);
             MetalakeDTO[] metalakeDTOS =
                 Arrays.stream(metalakes).map(DTOConverters::toDTO).toArray(MetalakeDTO[]::new);
             return Utils.ok(new MetalakeListResponse(metalakeDTOS));

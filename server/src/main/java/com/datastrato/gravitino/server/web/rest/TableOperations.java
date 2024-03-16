@@ -71,7 +71,7 @@ public class TableOperations {
             NameIdentifier[] idents =
                 TreeLockUtils.doWithTreeLock(
                     NameIdentifier.of(metalake, catalog, schema),
-                    LockType.WRITE,
+                    LockType.READ,
                     () -> dispatcher.listTables(tableNS));
             return Utils.ok(new EntityListResponse(idents));
           });

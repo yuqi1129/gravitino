@@ -5,12 +5,13 @@
 
 package com.datastrato.gravitino.lock;
 
-import com.datastrato.gravitino.GravitinoEnv;
 import com.datastrato.gravitino.NameIdentifier;
 import com.datastrato.gravitino.utils.Executable;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /** Utility class for tree locks. */
 public class TreeLockUtils {
+  private static final ReentrantReadWriteLock reentrantReadWriteLock = new ReentrantReadWriteLock();
 
   private TreeLockUtils() {
     // Prevent instantiation.
@@ -29,12 +30,28 @@ public class TreeLockUtils {
    */
   public static <R, E extends Exception> R doWithTreeLock(
       NameIdentifier identifier, LockType lockType, Executable<R, E> executable) throws E {
-    TreeLock lock = GravitinoEnv.getInstance().getLockManager().createTreeLock(identifier);
+    //    TreeLock lock = GravitinoEnv.getInstance().getLockManager().createTreeLock(identifier);
+    //    try {
+    //      lock.lock(lockType);
+    //      return executable.execute();
+    //    } finally {
+    //      lock.unlock();
+    //    }
+    if (lockType == LockType.READ) {
+      reentrantReadWriteLock.readLock().lock();
+    } else {
+      reentrantReadWriteLock.writeLock().lock();
+    }
+
     try {
-      lock.lock(lockType);
       return executable.execute();
     } finally {
-      lock.unlock();
+      // Do nothing
+      if (lockType == LockType.READ) {
+        reentrantReadWriteLock.readLock().unlock();
+      } else {
+        reentrantReadWriteLock.writeLock().unlock();
+      }
     }
   }
 
