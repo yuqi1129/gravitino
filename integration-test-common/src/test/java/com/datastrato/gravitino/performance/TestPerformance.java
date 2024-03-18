@@ -132,6 +132,29 @@ public class TestPerformance {
     }
   }
 
+  public void alterTable(String tableName) {
+    String data =
+        "{\n"
+            + "  \"updates\": [\n"
+            + "    {\n"
+            + "      \"@type\": \"setProperty\",\n"
+            + "      \"property\": \"key3\",\n"
+            + "      \"value\": \"value3\"\n"
+            + "    }\n"
+            + "  ]\n"
+            + "}";
+    RequestBody body = RequestBody.create(data, JSON);
+    Request request = new Request.Builder().url(LOAD_TABLE_URL + tableName).put(body).build();
+
+    try (Response response = client.newCall(request).execute()) {
+      if (200 != response.code()) {
+        increment("alterCatalog");
+      }
+    } catch (Exception e) {
+      increment("alterCatalog");
+    }
+  }
+
   @Test
   void testListTable() {
     long start = System.currentTimeMillis();
@@ -373,7 +396,8 @@ public class TestPerformance {
             for (int j = 0; j < repeatTimes * 50; j++) {
               long createTableStart = System.currentTimeMillis();
               try {
-                createTable(String.format("test_table_%s_%s", finalI, j));
+                alterTable(String.format("test_table_%s_%s", finalI, j));
+                //                createTable(String.format("test_table_%s_%s", finalI, j));
               } catch (Exception e) {
                 increment("createTable");
               }
