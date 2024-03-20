@@ -35,27 +35,27 @@ public class TestPerformance {
   private final OkHttpClient client = new OkHttpClient();
 
   private static final String CREATE_TABLE_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog/schemas/db1/tables";
+      "http://localhost:8090/api/metalakes/test/catalogs/mysql_catalog/schemas/db1/tables";
   private static final String LIST_METALAKE_URL = "http://localhost:8090/api/metalakes";
   private static final String LOAD_CATALOG_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog";
+      "http://localhost:8090/api/metalakes/test/catalogs/mysql_catalog";
 
   private static final String LOAD_SCHEMA_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog/schemas/db1";
+      "http://localhost:8090/api/metalakes/test/catalogs/mysql_catalog/schemas/db1";
 
   private static final String ALTER_CATALOG_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog";
+      "http://localhost:8090/api/metalakes/test/catalogs/mysql_catalog";
 
   private static final String LIST_TABLE_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog/schemas/db1/tables";
+      "http://localhost:8090/api/metalakes/test/catalogs/mysql_catalog/schemas/db1/tables";
 
   private static final String LOAD_TABLE_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/hive_catalog/schemas/db1/tables/";
+      "http://localhost:8090/api/metalakes/test/catalogs/mysql_catalog/schemas/db1/tables/";
 
   private static final Multimap<String, Long> timeMap =
       MultimapBuilder.linkedHashKeys().arrayListValues().build();
   private static final Map<String, Long> failedMap = Maps.newConcurrentMap();
-  private static final int repeatTimes = 50;
+  private static final int repeatTimes = 100;
 
   static {
     failedMap.put("listMetalakes", 0L);
@@ -133,13 +133,23 @@ public class TestPerformance {
   }
 
   public void alterTable(String tableName) {
+    //    String data =
+    //        "{\n"
+    //            + "  \"updates\": [\n"
+    //            + "    {\n"
+    //            + "      \"@type\": \"setProperty\",\n"
+    //            + "      \"property\": \"key3\",\n"
+    //            + "      \"value\": \"value3\"\n"
+    //            + "    }\n"
+    //            + "  ]\n"
+    //            + "}";
+
     String data =
         "{\n"
             + "  \"updates\": [\n"
             + "    {\n"
-            + "      \"@type\": \"setProperty\",\n"
-            + "      \"property\": \"key3\",\n"
-            + "      \"value\": \"value3\"\n"
+            + "      \"@type\": \"updateComment\",\n"
+            + "      \"newComment\": \"key3\"\n"
             + "    }\n"
             + "  ]\n"
             + "}";
