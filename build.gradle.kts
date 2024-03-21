@@ -338,6 +338,7 @@ subprojects {
         "SelfComparison",
         "SelfEquals",
         "SizeGreaterThanOrEqualsZero",
+        "StaticGuardedByInstance",
         "StreamToString",
         "StringBuilderInitWithChar",
         "SubstringOfZero",
@@ -353,7 +354,8 @@ subprojects {
         "VarTypeName",
         "XorPower",
         "EqualsGetClass",
-        "DefaultCharset"
+        "DefaultCharset",
+        "InlineFormatString"
       )
     }
   }
@@ -503,9 +505,9 @@ tasks.rat {
     "web/next-env.d.ts",
     "web/dist/**/*",
     "web/node_modules/**/*",
-    "web/lib/utils/axios/**/*",
-    "web/lib/enums/httpEnum.ts",
-    "web/types/axios.d.ts",
+    "web/src/lib/utils/axios/**/*",
+    "web/src/lib/enums/httpEnum.ts",
+    "web/src/types/axios.d.ts",
     "web/yarn.lock",
     "web/package-lock.json",
     "web/pnpm-lock.yaml",
@@ -670,9 +672,11 @@ tasks {
     dependsOn(
       ":catalogs:catalog-hive:copyLibAndConfig",
       ":catalogs:catalog-lakehouse-iceberg:copyLibAndConfig",
+      ":catalogs:catalog-jdbc-doris:copyLibAndConfig",
       ":catalogs:catalog-jdbc-mysql:copyLibAndConfig",
       ":catalogs:catalog-jdbc-postgresql:copyLibAndConfig",
-      ":catalogs:catalog-hadoop:copyLibAndConfig"
+      ":catalogs:catalog-hadoop:copyLibAndConfig",
+      "catalogs:catalog-messaging-kafka:copyLibAndConfig"
     )
   }
 
