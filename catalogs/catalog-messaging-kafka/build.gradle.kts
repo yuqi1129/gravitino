@@ -64,4 +64,8 @@ tasks {
   }
 }
 
+tasks.getByName("generateMetadataFileForMavenJavaPublication") {
+  dependsOn("runtimeJars")
+}
+
 // TODO. add test task later on.
