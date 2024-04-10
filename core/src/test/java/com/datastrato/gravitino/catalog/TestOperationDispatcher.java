@@ -4,6 +4,9 @@
  */
 package com.datastrato.gravitino.catalog;
 
+import static com.datastrato.gravitino.Configs.TREE_LOCK_CLEAN_INTERVAL;
+import static com.datastrato.gravitino.Configs.TREE_LOCK_MAX_NODE_IN_MEMORY;
+import static com.datastrato.gravitino.Configs.TREE_LOCK_MIN_NODE_IN_MEMORY;
 import static com.datastrato.gravitino.TestFilesetPropertiesMetadata.TEST_FILESET_HIDDEN_KEY;
 import static com.datastrato.gravitino.connector.BasePropertiesMetadata.GRAVITINO_MANAGED_ENTITY;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -15,9 +18,11 @@ import com.datastrato.gravitino.Catalog;
 import com.datastrato.gravitino.Config;
 import com.datastrato.gravitino.Configs;
 import com.datastrato.gravitino.EntityStore;
+import com.datastrato.gravitino.GravitinoEnv;
 import com.datastrato.gravitino.NameIdentifier;
 import com.datastrato.gravitino.StringIdentifier;
 import com.datastrato.gravitino.exceptions.IllegalNamespaceException;
+import com.datastrato.gravitino.lock.LockManager;
 import com.datastrato.gravitino.meta.AuditInfo;
 import com.datastrato.gravitino.meta.BaseMetalake;
 import com.datastrato.gravitino.meta.SchemaVersion;
@@ -53,6 +58,10 @@ public abstract class TestOperationDispatcher {
   public static void setUp() throws IOException {
     config = new Config(false) {};
     config.set(Configs.CATALOG_LOAD_ISOLATED, false);
+    config.set(TREE_LOCK_MAX_NODE_IN_MEMORY, 1000000L);
+    config.set(TREE_LOCK_MIN_NODE_IN_MEMORY, 1000L);
+    config.set(TREE_LOCK_CLEAN_INTERVAL, 36000L);
+    GravitinoEnv.getInstance().setLockManager(new LockManager(config));
 
     entityStore = spy(new TestMemoryEntityStore.InMemoryEntityStore());
     entityStore.initialize(config);

@@ -4,13 +4,20 @@
  */
 package com.datastrato.gravitino.catalog;
 
+import static com.datastrato.gravitino.Configs.TREE_LOCK_CLEAN_INTERVAL;
+import static com.datastrato.gravitino.Configs.TREE_LOCK_MAX_NODE_IN_MEMORY;
+import static com.datastrato.gravitino.Configs.TREE_LOCK_MIN_NODE_IN_MEMORY;
 import static com.datastrato.gravitino.StringIdentifier.ID_KEY;
 import static com.datastrato.gravitino.connector.BasePropertiesMetadata.GRAVITINO_MANAGED_ENTITY;
 
+import com.datastrato.gravitino.Config;
+import com.datastrato.gravitino.Configs;
+import com.datastrato.gravitino.GravitinoEnv;
 import com.datastrato.gravitino.NameIdentifier;
 import com.datastrato.gravitino.Namespace;
 import com.datastrato.gravitino.file.Fileset;
 import com.datastrato.gravitino.file.FilesetChange;
+import com.datastrato.gravitino.lock.LockManager;
 import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
 import java.util.Map;
@@ -28,6 +35,13 @@ public class TestFilesetOperationDispatcher extends TestOperationDispatcher {
         new SchemaOperationDispatcher(catalogManager, entityStore, idGenerator);
     filesetOperationDispatcher =
         new FilesetOperationDispatcher(catalogManager, entityStore, idGenerator);
+
+    Config config = new Config(false) {};
+    config.set(Configs.CATALOG_LOAD_ISOLATED, false);
+    config.set(TREE_LOCK_MAX_NODE_IN_MEMORY, 1000000L);
+    config.set(TREE_LOCK_MIN_NODE_IN_MEMORY, 1000L);
+    config.set(TREE_LOCK_CLEAN_INTERVAL, 36000L);
+    GravitinoEnv.getInstance().setLockManager(new LockManager(config));
   }
 
   @Test
