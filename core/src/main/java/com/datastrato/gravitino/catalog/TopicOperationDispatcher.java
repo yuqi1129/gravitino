@@ -16,6 +16,8 @@ import com.datastrato.gravitino.connector.HasPropertyMetadata;
 import com.datastrato.gravitino.exceptions.NoSuchSchemaException;
 import com.datastrato.gravitino.exceptions.NoSuchTopicException;
 import com.datastrato.gravitino.exceptions.TopicAlreadyExistsException;
+import com.datastrato.gravitino.lock.LockType;
+import com.datastrato.gravitino.lock.TreeLockUtils;
 import com.datastrato.gravitino.messaging.DataLayout;
 import com.datastrato.gravitino.messaging.Topic;
 import com.datastrato.gravitino.messaging.TopicCatalog;
@@ -54,10 +56,14 @@ public class TopicOperationDispatcher extends OperationDispatcher implements Top
    */
   @Override
   public NameIdentifier[] listTopics(Namespace namespace) throws NoSuchSchemaException {
-    return doWithCatalog(
-        getCatalogIdentifier(NameIdentifier.of(namespace.levels())),
-        c -> c.doWithTopicOps(t -> t.listTopics(namespace)),
-        NoSuchSchemaException.class);
+    return TreeLockUtils.doWithTreeLock(
+        NameIdentifier.of(namespace.levels()),
+        LockType.READ,
+        () ->
+            doWithCatalog(
+                getCatalogIdentifier(NameIdentifier.of(namespace.levels())),
+                c -> c.doWithTopicOps(t -> t.listTopics(namespace)),
+                NoSuchSchemaException.class));
   }
 
   /**
@@ -69,36 +75,46 @@ public class TopicOperationDispatcher extends OperationDispatcher implements Top
    */
   @Override
   public Topic loadTopic(NameIdentifier ident) throws NoSuchTopicException {
-    NameIdentifier catalogIdent = getCatalogIdentifier(ident);
-    Topic topic =
-        doWithCatalog(
-            catalogIdent,
-            c -> c.doWithTopicOps(t -> t.loadTopic(ident)),
-            NoSuchTopicException.class);
+    return TreeLockUtils.doWithTreeLock(
+        ident,
+        LockType.READ,
+        () -> {
+          NameIdentifier catalogIdent = getCatalogIdentifier(ident);
+          Topic topic =
+              doWithCatalog(
+                  catalogIdent,
+                  c -> c.doWithTopicOps(t -> t.loadTopic(ident)),
+                  NoSuchTopicException.class);
 
-    StringIdentifier stringId = getStringIdFromProperties(topic.properties());
-    // Case 1: The topic is not created by Gravitino.
-    // Note: for Kafka catalog, stringId will not be null. Because there is no way to store the
-    // Gravitino
-    // ID in Kafka, therefor we use the topic ID as the Gravitino ID
-    if (stringId == null) {
-      return EntityCombinedTopic.of(topic)
-          .withHiddenPropertiesSet(
-              getHiddenPropertyNames(
-                  catalogIdent, HasPropertyMetadata::topicPropertiesMetadata, topic.properties()));
-    }
+          StringIdentifier stringId = getStringIdFromProperties(topic.properties());
+          // Case 1: The topic is not created by Gravitino.
+          // Note: for Kafka catalog, stringId will not be null. Because there is no way to store
+          // the
+          // Gravitino
+          // ID in Kafka, therefor we use the topic ID as the Gravitino ID
+          if (stringId == null) {
+            return EntityCombinedTopic.of(topic)
+                .withHiddenPropertiesSet(
+                    getHiddenPropertyNames(
+                        catalogIdent,
+                        HasPropertyMetadata::topicPropertiesMetadata,
+                        topic.properties()));
+          }
 
-    TopicEntity topicEntity =
-        operateOnEntity(
-            ident,
-            identifier -> store.get(identifier, TOPIC, TopicEntity.class),
-            "GET",
-            getStringIdFromProperties(topic.properties()).id());
+          TopicEntity topicEntity =
+              operateOnEntity(
+                  ident,
+                  identifier -> store.get(identifier, TOPIC, TopicEntity.class),
+                  "GET",
+                  getStringIdFromProperties(topic.properties()).id());
 
-    return EntityCombinedTopic.of(topic, topicEntity)
-        .withHiddenPropertiesSet(
-            getHiddenPropertyNames(
-                catalogIdent, HasPropertyMetadata::topicPropertiesMetadata, topic.properties()));
+          return EntityCombinedTopic.of(topic, topicEntity)
+              .withHiddenPropertiesSet(
+                  getHiddenPropertyNames(
+                      catalogIdent,
+                      HasPropertyMetadata::topicPropertiesMetadata,
+                      topic.properties()));
+        });
   }
 
   /**
@@ -118,61 +134,72 @@ public class TopicOperationDispatcher extends OperationDispatcher implements Top
   public Topic createTopic(
       NameIdentifier ident, String comment, DataLayout dataLayout, Map<String, String> properties)
       throws NoSuchSchemaException, TopicAlreadyExistsException {
-    NameIdentifier catalogIdent = getCatalogIdentifier(ident);
-    doWithCatalog(
-        catalogIdent,
-        c ->
-            c.doWithPropertiesMeta(
-                p -> {
-                  validatePropertyForCreate(p.topicPropertiesMetadata(), properties);
-                  return null;
-                }),
-        IllegalArgumentException.class);
-    Long uid = idGenerator.nextId();
-    StringIdentifier stringId = StringIdentifier.fromId(uid);
-    Map<String, String> updatedProperties =
-        StringIdentifier.newPropertiesWithId(stringId, properties);
+    return TreeLockUtils.doWithTreeLock(
+        NameIdentifier.of(ident.namespace().levels()),
+        LockType.WRITE,
+        () -> {
+          NameIdentifier catalogIdent = getCatalogIdentifier(ident);
+          doWithCatalog(
+              catalogIdent,
+              c ->
+                  c.doWithPropertiesMeta(
+                      p -> {
+                        validatePropertyForCreate(p.topicPropertiesMetadata(), properties);
+                        return null;
+                      }),
+              IllegalArgumentException.class);
+          Long uid = idGenerator.nextId();
+          StringIdentifier stringId = StringIdentifier.fromId(uid);
+          Map<String, String> updatedProperties =
+              StringIdentifier.newPropertiesWithId(stringId, properties);
 
-    doWithCatalog(
-        catalogIdent,
-        c -> c.doWithTopicOps(t -> t.createTopic(ident, comment, dataLayout, updatedProperties)),
-        NoSuchSchemaException.class,
-        TopicAlreadyExistsException.class);
+          doWithCatalog(
+              catalogIdent,
+              c ->
+                  c.doWithTopicOps(
+                      t -> t.createTopic(ident, comment, dataLayout, updatedProperties)),
+              NoSuchSchemaException.class,
+              TopicAlreadyExistsException.class);
 
-    // Retrieve the Topic again to obtain some values generated by underlying catalog
-    Topic topic =
-        doWithCatalog(
-            catalogIdent,
-            c -> c.doWithTopicOps(t -> t.loadTopic(ident)),
-            NoSuchTopicException.class);
+          // Retrieve the Topic again to obtain some values generated by underlying catalog
+          Topic topic =
+              doWithCatalog(
+                  catalogIdent,
+                  c -> c.doWithTopicOps(t -> t.loadTopic(ident)),
+                  NoSuchTopicException.class);
 
-    TopicEntity topicEntity =
-        TopicEntity.builder()
-            .withId(fromProperties(topic.properties()).id())
-            .withName(ident.name())
-            .withComment(comment)
-            .withNamespace(ident.namespace())
-            .withAuditInfo(
-                AuditInfo.builder()
-                    .withCreator(PrincipalUtils.getCurrentPrincipal().getName())
-                    .withCreateTime(Instant.now())
-                    .build())
-            .build();
+          TopicEntity topicEntity =
+              TopicEntity.builder()
+                  .withId(fromProperties(topic.properties()).id())
+                  .withName(ident.name())
+                  .withComment(comment)
+                  .withNamespace(ident.namespace())
+                  .withAuditInfo(
+                      AuditInfo.builder()
+                          .withCreator(PrincipalUtils.getCurrentPrincipal().getName())
+                          .withCreateTime(Instant.now())
+                          .build())
+                  .build();
 
-    try {
-      store.put(topicEntity, true /* overwrite */);
-    } catch (Exception e) {
-      LOG.error(OperationDispatcher.FormattedErrorMessages.STORE_OP_FAILURE, "put", ident, e);
-      return EntityCombinedTopic.of(topic)
-          .withHiddenPropertiesSet(
-              getHiddenPropertyNames(
-                  catalogIdent, HasPropertyMetadata::topicPropertiesMetadata, topic.properties()));
-    }
+          try {
+            store.put(topicEntity, true /* overwrite */);
+          } catch (Exception e) {
+            LOG.error(OperationDispatcher.FormattedErrorMessages.STORE_OP_FAILURE, "put", ident, e);
+            return EntityCombinedTopic.of(topic)
+                .withHiddenPropertiesSet(
+                    getHiddenPropertyNames(
+                        catalogIdent,
+                        HasPropertyMetadata::topicPropertiesMetadata,
+                        topic.properties()));
+          }
 
-    return EntityCombinedTopic.of(topic, topicEntity)
-        .withHiddenPropertiesSet(
-            getHiddenPropertyNames(
-                catalogIdent, HasPropertyMetadata::topicPropertiesMetadata, topic.properties()));
+          return EntityCombinedTopic.of(topic, topicEntity)
+              .withHiddenPropertiesSet(
+                  getHiddenPropertyNames(
+                      catalogIdent,
+                      HasPropertyMetadata::topicPropertiesMetadata,
+                      topic.properties()));
+        });
   }
 
   /**
@@ -187,61 +214,68 @@ public class TopicOperationDispatcher extends OperationDispatcher implements Top
   @Override
   public Topic alterTopic(NameIdentifier ident, TopicChange... changes)
       throws NoSuchTopicException, IllegalArgumentException {
-    validateAlterProperties(ident, HasPropertyMetadata::topicPropertiesMetadata, changes);
 
-    NameIdentifier catalogIdent = getCatalogIdentifier(ident);
-    Topic tempAlteredTopic =
-        doWithCatalog(
-            catalogIdent,
-            c -> c.doWithTopicOps(t -> t.alterTopic(ident, changes)),
-            NoSuchTopicException.class,
-            IllegalArgumentException.class);
+    return TreeLockUtils.doWithTreeLock(
+        NameIdentifier.of(ident.namespace().levels()),
+        LockType.WRITE,
+        () -> {
+          validateAlterProperties(ident, HasPropertyMetadata::topicPropertiesMetadata, changes);
 
-    // Retrieve the Topic again to obtain some values generated by underlying catalog
-    Topic alteredTopic =
-        doWithCatalog(
-            catalogIdent,
-            c ->
-                c.doWithTopicOps(
-                    t ->
-                        t.loadTopic(NameIdentifier.of(ident.namespace(), tempAlteredTopic.name()))),
-            NoSuchTopicException.class);
+          NameIdentifier catalogIdent = getCatalogIdentifier(ident);
+          Topic tempAlteredTopic =
+              doWithCatalog(
+                  catalogIdent,
+                  c -> c.doWithTopicOps(t -> t.alterTopic(ident, changes)),
+                  NoSuchTopicException.class,
+                  IllegalArgumentException.class);
 
-    TopicEntity updatedTopicEntity =
-        operateOnEntity(
-            ident,
-            id ->
-                store.update(
-                    id,
-                    TopicEntity.class,
-                    TOPIC,
-                    topicEntity ->
-                        TopicEntity.builder()
-                            .withId(topicEntity.id())
-                            .withName(topicEntity.name())
-                            .withNamespace(ident.namespace())
-                            .withComment(
-                                StringUtils.isBlank(tempAlteredTopic.comment())
-                                    ? topicEntity.comment()
-                                    : tempAlteredTopic.comment())
-                            .withAuditInfo(
-                                AuditInfo.builder()
-                                    .withCreator(topicEntity.auditInfo().creator())
-                                    .withCreateTime(topicEntity.auditInfo().createTime())
-                                    .withLastModifier(
-                                        PrincipalUtils.getCurrentPrincipal().getName())
-                                    .withLastModifiedTime(Instant.now())
-                                    .build())
-                            .build()),
-            "UPDATE",
-            getStringIdFromProperties(alteredTopic.properties()).id());
+          // Retrieve the Topic again to obtain some values generated by underlying catalog
+          Topic alteredTopic =
+              doWithCatalog(
+                  catalogIdent,
+                  c ->
+                      c.doWithTopicOps(
+                          t ->
+                              t.loadTopic(
+                                  NameIdentifier.of(ident.namespace(), tempAlteredTopic.name()))),
+                  NoSuchTopicException.class);
 
-    return EntityCombinedTopic.of(alteredTopic, updatedTopicEntity)
-        .withHiddenPropertiesSet(
-            getHiddenPropertyNames(
-                catalogIdent,
-                HasPropertyMetadata::topicPropertiesMetadata,
-                alteredTopic.properties()));
+          TopicEntity updatedTopicEntity =
+              operateOnEntity(
+                  ident,
+                  id ->
+                      store.update(
+                          id,
+                          TopicEntity.class,
+                          TOPIC,
+                          topicEntity ->
+                              TopicEntity.builder()
+                                  .withId(topicEntity.id())
+                                  .withName(topicEntity.name())
+                                  .withNamespace(ident.namespace())
+                                  .withComment(
+                                      StringUtils.isBlank(tempAlteredTopic.comment())
+                                          ? topicEntity.comment()
+                                          : tempAlteredTopic.comment())
+                                  .withAuditInfo(
+                                      AuditInfo.builder()
+                                          .withCreator(topicEntity.auditInfo().creator())
+                                          .withCreateTime(topicEntity.auditInfo().createTime())
+                                          .withLastModifier(
+                                              PrincipalUtils.getCurrentPrincipal().getName())
+                                          .withLastModifiedTime(Instant.now())
+                                          .build())
+                                  .build()),
+                  "UPDATE",
+                  getStringIdFromProperties(alteredTopic.properties()).id());
+
+          return EntityCombinedTopic.of(alteredTopic, updatedTopicEntity)
+              .withHiddenPropertiesSet(
+                  getHiddenPropertyNames(
+                      catalogIdent,
+                      HasPropertyMetadata::topicPropertiesMetadata,
+                      alteredTopic.properties()));
+        });
   }
 
   /**
@@ -252,22 +286,27 @@ public class TopicOperationDispatcher extends OperationDispatcher implements Top
    */
   @Override
   public boolean dropTopic(NameIdentifier ident) {
-    boolean dropped =
-        doWithCatalog(
-            getCatalogIdentifier(ident),
-            c -> c.doWithTopicOps(t -> t.dropTopic(ident)),
-            NoSuchTopicException.class);
+    return TreeLockUtils.doWithTreeLock(
+        NameIdentifier.of(ident.namespace().levels()),
+        LockType.WRITE,
+        () -> {
+          boolean dropped =
+              doWithCatalog(
+                  getCatalogIdentifier(ident),
+                  c -> c.doWithTopicOps(t -> t.dropTopic(ident)),
+                  NoSuchTopicException.class);
 
-    if (!dropped) {
-      return false;
-    }
+          if (!dropped) {
+            return false;
+          }
 
-    try {
-      store.delete(ident, TOPIC);
-    } catch (Exception e) {
-      throw new RuntimeException(e);
-    }
+          try {
+            store.delete(ident, TOPIC);
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
 
-    return true;
+          return true;
+        });
   }
 }

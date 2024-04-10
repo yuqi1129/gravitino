@@ -16,8 +16,6 @@ import com.datastrato.gravitino.dto.responses.DropResponse;
 import com.datastrato.gravitino.dto.responses.EntityListResponse;
 import com.datastrato.gravitino.dto.responses.TopicResponse;
 import com.datastrato.gravitino.dto.util.DTOConverters;
-import com.datastrato.gravitino.lock.LockType;
-import com.datastrato.gravitino.lock.TreeLockUtils;
 import com.datastrato.gravitino.messaging.Topic;
 import com.datastrato.gravitino.messaging.TopicChange;
 import com.datastrato.gravitino.metrics.MetricNames;
@@ -62,11 +60,7 @@ public class TopicOperations {
           () -> {
             LOG.info("Listing topics under schema: {}.{}.{}", metalake, catalog, schema);
             Namespace topicNS = Namespace.ofTopic(metalake, catalog, schema);
-            NameIdentifier[] topics =
-                TreeLockUtils.doWithTreeLock(
-                    NameIdentifier.of(metalake, catalog, schema),
-                    LockType.READ,
-                    () -> dispatcher.listTopics(topicNS));
+            NameIdentifier[] topics = dispatcher.listTopics(topicNS);
             return Utils.ok(new EntityListResponse(topics));
           });
     } catch (Exception e) {
@@ -98,15 +92,11 @@ public class TopicOperations {
                 NameIdentifier.ofTopic(metalake, catalog, schema, request.getName());
 
             Topic topic =
-                TreeLockUtils.doWithTreeLock(
-                    NameIdentifier.ofSchema(metalake, catalog, schema),
-                    LockType.WRITE,
-                    () ->
-                        dispatcher.createTopic(
-                            ident,
-                            request.getComment(),
-                            null /* dataLayout, always null because it's not supported yet.*/,
-                            request.getProperties()));
+                dispatcher.createTopic(
+                    ident,
+                    request.getComment(),
+                    null /* dataLayout, always null because it's not supported yet.*/,
+                    request.getProperties());
             return Utils.ok(new TopicResponse(DTOConverters.toDTO(topic)));
           });
     } catch (Exception e) {
@@ -131,9 +121,7 @@ public class TopicOperations {
           () -> {
             LOG.info("Loading topic: {}.{}.{}.{}", metalake, catalog, schema, topic);
             NameIdentifier ident = NameIdentifier.ofTopic(metalake, catalog, schema, topic);
-            Topic t =
-                TreeLockUtils.doWithTreeLock(
-                    ident, LockType.READ, () -> dispatcher.loadTopic(ident));
+            Topic t = dispatcher.loadTopic(ident);
             return Utils.ok(new TopicResponse(DTOConverters.toDTO(t)));
           });
     } catch (Exception e) {
@@ -164,11 +152,7 @@ public class TopicOperations {
                     .map(TopicUpdateRequest::topicChange)
                     .toArray(TopicChange[]::new);
 
-            Topic t =
-                TreeLockUtils.doWithTreeLock(
-                    NameIdentifier.ofSchema(metalake, catalog, schema),
-                    LockType.WRITE,
-                    () -> dispatcher.alterTopic(ident, changes));
+            Topic t = dispatcher.alterTopic(ident, changes);
             return Utils.ok(new TopicResponse(DTOConverters.toDTO(t)));
           });
     } catch (Exception e) {
@@ -192,12 +176,7 @@ public class TopicOperations {
           () -> {
             LOG.info("Dropping topic under schema: {}.{}.{}", metalake, catalog, schema);
             NameIdentifier ident = NameIdentifier.ofTopic(metalake, catalog, schema, topic);
-            boolean dropped =
-                TreeLockUtils.doWithTreeLock(
-                    NameIdentifier.ofSchema(metalake, catalog, schema),
-                    LockType.WRITE,
-                    () -> dispatcher.dropTopic(ident));
-
+            boolean dropped = dispatcher.dropTopic(ident);
             if (!dropped) {
               LOG.warn("Failed to drop topic {} under schema {}", topic, schema);
             }

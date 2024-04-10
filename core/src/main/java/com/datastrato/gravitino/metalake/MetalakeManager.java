@@ -17,6 +17,8 @@ import com.datastrato.gravitino.exceptions.AlreadyExistsException;
 import com.datastrato.gravitino.exceptions.MetalakeAlreadyExistsException;
 import com.datastrato.gravitino.exceptions.NoSuchEntityException;
 import com.datastrato.gravitino.exceptions.NoSuchMetalakeException;
+import com.datastrato.gravitino.lock.LockType;
+import com.datastrato.gravitino.lock.TreeLockUtils;
 import com.datastrato.gravitino.meta.AuditInfo;
 import com.datastrato.gravitino.meta.BaseMetalake;
 import com.datastrato.gravitino.meta.SchemaVersion;
@@ -60,8 +62,11 @@ public class MetalakeManager implements SupportsMetalakes {
   @Override
   public BaseMetalake[] listMetalakes() {
     try {
-      return store.list(Namespace.empty(), BaseMetalake.class, EntityType.METALAKE).stream()
-          .toArray(BaseMetalake[]::new);
+      return TreeLockUtils.doWithRootTreeLock(
+          LockType.READ,
+          () ->
+              store.list(Namespace.empty(), BaseMetalake.class, EntityType.METALAKE).stream()
+                  .toArray(BaseMetalake[]::new));
     } catch (IOException ioe) {
       LOG.error("Listing Metalakes failed due to storage issues.", ioe);
       throw new RuntimeException(ioe);
@@ -79,7 +84,8 @@ public class MetalakeManager implements SupportsMetalakes {
   @Override
   public BaseMetalake loadMetalake(NameIdentifier ident) throws NoSuchMetalakeException {
     try {
-      return store.get(ident, EntityType.METALAKE, BaseMetalake.class);
+      return TreeLockUtils.doWithTreeLock(
+          ident, LockType.READ, () -> store.get(ident, EntityType.METALAKE, BaseMetalake.class));
     } catch (NoSuchEntityException e) {
       LOG.warn("Metalake {} does not exist", ident, e);
       throw new NoSuchMetalakeException(METALAKE_DOES_NOT_EXIST_MSG, ident);
@@ -103,38 +109,43 @@ public class MetalakeManager implements SupportsMetalakes {
   public BaseMetalake createMetalake(
       NameIdentifier ident, String comment, Map<String, String> properties)
       throws MetalakeAlreadyExistsException {
-    long uid = idGenerator.nextId();
-    StringIdentifier stringId = StringIdentifier.fromId(uid);
 
-    if (Entity.SYSTEM_METALAKE_RESERVED_NAME.equals(ident.name())) {
-      throw new IllegalArgumentException(
-          "Can't create a metalake with with reserved name `system`");
-    }
+    return TreeLockUtils.doWithRootTreeLock(
+        LockType.WRITE,
+        () -> {
+          long uid = idGenerator.nextId();
+          StringIdentifier stringId = StringIdentifier.fromId(uid);
 
-    BaseMetalake metalake =
-        BaseMetalake.builder()
-            .withId(uid)
-            .withName(ident.name())
-            .withComment(comment)
-            .withProperties(StringIdentifier.newPropertiesWithId(stringId, properties))
-            .withVersion(SchemaVersion.V_0_1)
-            .withAuditInfo(
-                AuditInfo.builder()
-                    .withCreator(PrincipalUtils.getCurrentPrincipal().getName())
-                    .withCreateTime(Instant.now())
-                    .build())
-            .build();
+          if (Entity.SYSTEM_METALAKE_RESERVED_NAME.equals(ident.name())) {
+            throw new IllegalArgumentException(
+                "Can't create a metalake with with reserved name `system`");
+          }
 
-    try {
-      store.put(metalake, false /* overwritten */);
-      return metalake;
-    } catch (EntityAlreadyExistsException | AlreadyExistsException e) {
-      LOG.warn("Metalake {} already exists", ident, e);
-      throw new MetalakeAlreadyExistsException("Metalake %s already exists", ident);
-    } catch (IOException ioe) {
-      LOG.error("Loading Metalake {} failed due to storage issues", ident, ioe);
-      throw new RuntimeException(ioe);
-    }
+          BaseMetalake metalake =
+              BaseMetalake.builder()
+                  .withId(uid)
+                  .withName(ident.name())
+                  .withComment(comment)
+                  .withProperties(StringIdentifier.newPropertiesWithId(stringId, properties))
+                  .withVersion(SchemaVersion.V_0_1)
+                  .withAuditInfo(
+                      AuditInfo.builder()
+                          .withCreator(PrincipalUtils.getCurrentPrincipal().getName())
+                          .withCreateTime(Instant.now())
+                          .build())
+                  .build();
+
+          try {
+            store.put(metalake, false /* overwritten */);
+            return metalake;
+          } catch (EntityAlreadyExistsException | AlreadyExistsException e) {
+            LOG.warn("Metalake {} already exists", ident, e);
+            throw new MetalakeAlreadyExistsException("Metalake %s already exists", ident);
+          } catch (IOException ioe) {
+            LOG.error("Loading Metalake {} failed due to storage issues", ident, ioe);
+            throw new RuntimeException(ioe);
+          }
+        });
   }
 
   /**
@@ -151,38 +162,40 @@ public class MetalakeManager implements SupportsMetalakes {
   public BaseMetalake alterMetalake(NameIdentifier ident, MetalakeChange... changes)
       throws NoSuchMetalakeException, IllegalArgumentException {
     try {
-      return store.update(
-          ident,
-          BaseMetalake.class,
-          EntityType.METALAKE,
-          metalake -> {
-            BaseMetalake.Builder builder =
-                BaseMetalake.builder()
-                    .withId(metalake.id())
-                    .withName(metalake.name())
-                    .withComment(metalake.comment())
-                    .withProperties(metalake.properties())
-                    .withVersion(metalake.getVersion());
+      return TreeLockUtils.doWithRootTreeLock(
+          LockType.WRITE,
+          () ->
+              store.update(
+                  ident,
+                  BaseMetalake.class,
+                  EntityType.METALAKE,
+                  metalake -> {
+                    BaseMetalake.Builder builder =
+                        BaseMetalake.builder()
+                            .withId(metalake.id())
+                            .withName(metalake.name())
+                            .withComment(metalake.comment())
+                            .withProperties(metalake.properties())
+                            .withVersion(metalake.getVersion());
 
-            AuditInfo newInfo =
-                AuditInfo.builder()
-                    .withCreator(metalake.auditInfo().creator())
-                    .withCreateTime(metalake.auditInfo().createTime())
-                    .withLastModifier(
-                        metalake.auditInfo().creator()) /*TODO: Use real user later on.  */
-                    .withLastModifiedTime(Instant.now())
-                    .build();
-            builder.withAuditInfo(newInfo);
+                    AuditInfo newInfo =
+                        AuditInfo.builder()
+                            .withCreator(metalake.auditInfo().creator())
+                            .withCreateTime(metalake.auditInfo().createTime())
+                            .withLastModifier(
+                                metalake.auditInfo().creator()) /*TODO: Use real user later on.  */
+                            .withLastModifiedTime(Instant.now())
+                            .build();
+                    builder.withAuditInfo(newInfo);
 
-            Map<String, String> newProps =
-                metalake.properties() == null
-                    ? Maps.newHashMap()
-                    : Maps.newHashMap(metalake.properties());
-            builder = updateEntity(builder, newProps, changes);
+                    Map<String, String> newProps =
+                        metalake.properties() == null
+                            ? Maps.newHashMap()
+                            : Maps.newHashMap(metalake.properties());
+                    builder = updateEntity(builder, newProps, changes);
 
-            return builder.build();
-          });
-
+                    return builder.build();
+                  }));
     } catch (NoSuchEntityException ne) {
       LOG.warn("Metalake {} does not exist", ident, ne);
       throw new NoSuchMetalakeException(METALAKE_DOES_NOT_EXIST_MSG, ident);
@@ -207,7 +220,8 @@ public class MetalakeManager implements SupportsMetalakes {
   @Override
   public boolean dropMetalake(NameIdentifier ident) {
     try {
-      return store.delete(ident, EntityType.METALAKE);
+      return TreeLockUtils.doWithRootTreeLock(
+          LockType.WRITE, () -> store.delete(ident, EntityType.METALAKE));
     } catch (IOException ioe) {
       LOG.error("Deleting metalake {} failed due to storage issues", ident, ioe);
       throw new RuntimeException(ioe);

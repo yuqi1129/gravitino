@@ -18,6 +18,8 @@ import com.datastrato.gravitino.exceptions.NonEmptyEntityException;
 import com.datastrato.gravitino.file.Fileset;
 import com.datastrato.gravitino.file.FilesetCatalog;
 import com.datastrato.gravitino.file.FilesetChange;
+import com.datastrato.gravitino.lock.LockType;
+import com.datastrato.gravitino.lock.TreeLockUtils;
 import com.datastrato.gravitino.storage.IdGenerator;
 import java.util.Map;
 
@@ -43,10 +45,14 @@ public class FilesetOperationDispatcher extends OperationDispatcher implements F
    */
   @Override
   public NameIdentifier[] listFilesets(Namespace namespace) throws NoSuchSchemaException {
-    return doWithCatalog(
-        getCatalogIdentifier(NameIdentifier.of(namespace.levels())),
-        c -> c.doWithFilesetOps(f -> f.listFilesets(namespace)),
-        NoSuchSchemaException.class);
+    return TreeLockUtils.doWithTreeLock(
+        NameIdentifier.of(namespace.levels()),
+        LockType.READ,
+        () ->
+            doWithCatalog(
+                getCatalogIdentifier(NameIdentifier.of(namespace.levels())),
+                c -> c.doWithFilesetOps(f -> f.listFilesets(namespace)),
+                NoSuchSchemaException.class));
   }
 
   /**
@@ -58,20 +64,25 @@ public class FilesetOperationDispatcher extends OperationDispatcher implements F
    */
   @Override
   public Fileset loadFileset(NameIdentifier ident) throws NoSuchFilesetException {
-    NameIdentifier catalogIdent = getCatalogIdentifier(ident);
-    Fileset fileset =
-        doWithCatalog(
-            catalogIdent,
-            c -> c.doWithFilesetOps(f -> f.loadFileset(ident)),
-            NoSuchFilesetException.class);
+    return TreeLockUtils.doWithTreeLock(
+        ident,
+        LockType.READ,
+        () -> {
+          NameIdentifier catalogIdent = getCatalogIdentifier(ident);
+          Fileset fileset =
+              doWithCatalog(
+                  catalogIdent,
+                  c -> c.doWithFilesetOps(f -> f.loadFileset(ident)),
+                  NoSuchFilesetException.class);
 
-    // Currently we only support maintaining the Fileset in the Gravitino's store.
-    return EntityCombinedFileset.of(fileset)
-        .withHiddenPropertiesSet(
-            getHiddenPropertyNames(
-                catalogIdent,
-                HasPropertyMetadata::filesetPropertiesMetadata,
-                fileset.properties()));
+          // Currently we only support maintaining the Fileset in the Gravitino's store.
+          return EntityCombinedFileset.of(fileset)
+              .withHiddenPropertiesSet(
+                  getHiddenPropertyNames(
+                      catalogIdent,
+                      HasPropertyMetadata::filesetPropertiesMetadata,
+                      fileset.properties()));
+        });
   }
 
   /**
@@ -99,35 +110,42 @@ public class FilesetOperationDispatcher extends OperationDispatcher implements F
       String storageLocation,
       Map<String, String> properties)
       throws NoSuchSchemaException, FilesetAlreadyExistsException {
-    NameIdentifier catalogIdent = getCatalogIdentifier(ident);
-    doWithCatalog(
-        catalogIdent,
-        c ->
-            c.doWithPropertiesMeta(
-                p -> {
-                  validatePropertyForCreate(p.filesetPropertiesMetadata(), properties);
-                  return null;
-                }),
-        IllegalArgumentException.class);
-    long uid = idGenerator.nextId();
-    StringIdentifier stringId = StringIdentifier.fromId(uid);
-    Map<String, String> updatedProperties =
-        StringIdentifier.newPropertiesWithId(stringId, properties);
+    return TreeLockUtils.doWithTreeLock(
+        NameIdentifier.of(ident.namespace().levels()),
+        LockType.WRITE,
+        () -> {
+          NameIdentifier catalogIdent = getCatalogIdentifier(ident);
+          doWithCatalog(
+              catalogIdent,
+              c ->
+                  c.doWithPropertiesMeta(
+                      p -> {
+                        validatePropertyForCreate(p.filesetPropertiesMetadata(), properties);
+                        return null;
+                      }),
+              IllegalArgumentException.class);
+          long uid = idGenerator.nextId();
+          StringIdentifier stringId = StringIdentifier.fromId(uid);
+          Map<String, String> updatedProperties =
+              StringIdentifier.newPropertiesWithId(stringId, properties);
 
-    Fileset createdFileset =
-        doWithCatalog(
-            catalogIdent,
-            c ->
-                c.doWithFilesetOps(
-                    f -> f.createFileset(ident, comment, type, storageLocation, updatedProperties)),
-            NoSuchSchemaException.class,
-            FilesetAlreadyExistsException.class);
-    return EntityCombinedFileset.of(createdFileset)
-        .withHiddenPropertiesSet(
-            getHiddenPropertyNames(
-                catalogIdent,
-                HasPropertyMetadata::filesetPropertiesMetadata,
-                createdFileset.properties()));
+          Fileset createdFileset =
+              doWithCatalog(
+                  catalogIdent,
+                  c ->
+                      c.doWithFilesetOps(
+                          f ->
+                              f.createFileset(
+                                  ident, comment, type, storageLocation, updatedProperties)),
+                  NoSuchSchemaException.class,
+                  FilesetAlreadyExistsException.class);
+          return EntityCombinedFileset.of(createdFileset)
+              .withHiddenPropertiesSet(
+                  getHiddenPropertyNames(
+                      catalogIdent,
+                      HasPropertyMetadata::filesetPropertiesMetadata,
+                      createdFileset.properties()));
+        });
   }
 
   /**
@@ -148,21 +166,27 @@ public class FilesetOperationDispatcher extends OperationDispatcher implements F
   @Override
   public Fileset alterFileset(NameIdentifier ident, FilesetChange... changes)
       throws NoSuchFilesetException, IllegalArgumentException {
-    validateAlterProperties(ident, HasPropertyMetadata::filesetPropertiesMetadata, changes);
 
-    NameIdentifier catalogIdent = getCatalogIdentifier(ident);
-    Fileset alteredFileset =
-        doWithCatalog(
-            catalogIdent,
-            c -> c.doWithFilesetOps(f -> f.alterFileset(ident, changes)),
-            NoSuchFilesetException.class,
-            IllegalArgumentException.class);
-    return EntityCombinedFileset.of(alteredFileset)
-        .withHiddenPropertiesSet(
-            getHiddenPropertyNames(
-                catalogIdent,
-                HasPropertyMetadata::filesetPropertiesMetadata,
-                alteredFileset.properties()));
+    return TreeLockUtils.doWithTreeLock(
+        NameIdentifier.of(ident.namespace().levels()),
+        LockType.WRITE,
+        () -> {
+          validateAlterProperties(ident, HasPropertyMetadata::filesetPropertiesMetadata, changes);
+
+          NameIdentifier catalogIdent = getCatalogIdentifier(ident);
+          Fileset alteredFileset =
+              doWithCatalog(
+                  catalogIdent,
+                  c -> c.doWithFilesetOps(f -> f.alterFileset(ident, changes)),
+                  NoSuchFilesetException.class,
+                  IllegalArgumentException.class);
+          return EntityCombinedFileset.of(alteredFileset)
+              .withHiddenPropertiesSet(
+                  getHiddenPropertyNames(
+                      catalogIdent,
+                      HasPropertyMetadata::filesetPropertiesMetadata,
+                      alteredFileset.properties()));
+        });
   }
 
   /**
@@ -176,9 +200,13 @@ public class FilesetOperationDispatcher extends OperationDispatcher implements F
    */
   @Override
   public boolean dropFileset(NameIdentifier ident) {
-    return doWithCatalog(
-        getCatalogIdentifier(ident),
-        c -> c.doWithFilesetOps(f -> f.dropFileset(ident)),
-        NonEmptyEntityException.class);
+    return TreeLockUtils.doWithTreeLock(
+        NameIdentifier.of(ident.namespace().levels()),
+        LockType.WRITE,
+        () ->
+            doWithCatalog(
+                getCatalogIdentifier(ident),
+                c -> c.doWithFilesetOps(f -> f.dropFileset(ident)),
+                NonEmptyEntityException.class));
   }
 }

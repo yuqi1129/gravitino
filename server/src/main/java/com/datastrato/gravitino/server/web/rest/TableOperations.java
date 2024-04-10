@@ -19,8 +19,6 @@ import com.datastrato.gravitino.dto.responses.DropResponse;
 import com.datastrato.gravitino.dto.responses.EntityListResponse;
 import com.datastrato.gravitino.dto.responses.TableResponse;
 import com.datastrato.gravitino.dto.util.DTOConverters;
-import com.datastrato.gravitino.lock.LockType;
-import com.datastrato.gravitino.lock.TreeLockUtils;
 import com.datastrato.gravitino.metrics.MetricNames;
 import com.datastrato.gravitino.rel.Table;
 import com.datastrato.gravitino.rel.TableChange;
@@ -68,11 +66,7 @@ public class TableOperations {
           httpRequest,
           () -> {
             Namespace tableNS = Namespace.ofTable(metalake, catalog, schema);
-            NameIdentifier[] idents =
-                TreeLockUtils.doWithTreeLock(
-                    NameIdentifier.of(metalake, catalog, schema),
-                    LockType.READ,
-                    () -> dispatcher.listTables(tableNS));
+            NameIdentifier[] idents = dispatcher.listTables(tableNS);
             return Utils.ok(new EntityListResponse(idents));
           });
 
@@ -97,21 +91,16 @@ public class TableOperations {
             request.validate();
             NameIdentifier ident =
                 NameIdentifier.ofTable(metalake, catalog, schema, request.getName());
-
             Table table =
-                TreeLockUtils.doWithTreeLock(
-                    NameIdentifier.of(metalake, catalog, schema),
-                    LockType.WRITE,
-                    () ->
-                        dispatcher.createTable(
-                            ident,
-                            fromDTOs(request.getColumns()),
-                            request.getComment(),
-                            request.getProperties(),
-                            fromDTOs(request.getPartitioning()),
-                            fromDTO(request.getDistribution()),
-                            fromDTOs(request.getSortOrders()),
-                            fromDTOs(request.getIndexes())));
+                dispatcher.createTable(
+                    ident,
+                    fromDTOs(request.getColumns()),
+                    request.getComment(),
+                    request.getProperties(),
+                    fromDTOs(request.getPartitioning()),
+                    fromDTO(request.getDistribution()),
+                    fromDTOs(request.getSortOrders()),
+                    fromDTOs(request.getIndexes()));
             return Utils.ok(new TableResponse(DTOConverters.toDTO(table)));
           });
 
@@ -136,9 +125,7 @@ public class TableOperations {
           httpRequest,
           () -> {
             NameIdentifier ident = NameIdentifier.ofTable(metalake, catalog, schema, table);
-            Table t =
-                TreeLockUtils.doWithTreeLock(
-                    ident, LockType.READ, () -> dispatcher.loadTable(ident));
+            Table t = dispatcher.loadTable(ident);
             return Utils.ok(new TableResponse(DTOConverters.toDTO(t)));
           });
     } catch (Exception e) {
@@ -167,11 +154,7 @@ public class TableOperations {
                 request.getUpdates().stream()
                     .map(TableUpdateRequest::tableChange)
                     .toArray(TableChange[]::new);
-            Table t =
-                TreeLockUtils.doWithTreeLock(
-                    NameIdentifier.of(metalake, catalog, schema),
-                    LockType.WRITE,
-                    () -> dispatcher.alterTable(ident, changes));
+            Table t = dispatcher.alterTable(ident, changes);
             return Utils.ok(new TableResponse(DTOConverters.toDTO(t)));
           });
 
@@ -196,11 +179,7 @@ public class TableOperations {
           httpRequest,
           () -> {
             NameIdentifier ident = NameIdentifier.ofTable(metalake, catalog, schema, table);
-            boolean dropped =
-                TreeLockUtils.doWithTreeLock(
-                    NameIdentifier.of(metalake, catalog, schema),
-                    LockType.WRITE,
-                    () -> purge ? dispatcher.purgeTable(ident) : dispatcher.dropTable(ident));
+            boolean dropped = purge ? dispatcher.purgeTable(ident) : dispatcher.dropTable(ident);
             if (!dropped) {
               LOG.warn("Failed to drop table {} under schema {}", table, schema);
             }

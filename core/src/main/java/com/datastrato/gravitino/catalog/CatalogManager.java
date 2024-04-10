@@ -30,6 +30,8 @@ import com.datastrato.gravitino.exceptions.NoSuchCatalogException;
 import com.datastrato.gravitino.exceptions.NoSuchEntityException;
 import com.datastrato.gravitino.exceptions.NoSuchMetalakeException;
 import com.datastrato.gravitino.file.FilesetCatalog;
+import com.datastrato.gravitino.lock.LockType;
+import com.datastrato.gravitino.lock.TreeLockUtils;
 import com.datastrato.gravitino.messaging.TopicCatalog;
 import com.datastrato.gravitino.meta.AuditInfo;
 import com.datastrato.gravitino.meta.CatalogEntity;
@@ -227,32 +229,43 @@ public class CatalogManager implements SupportsCatalogs, Closeable {
   @Override
   public NameIdentifier[] listCatalogs(Namespace namespace) throws NoSuchMetalakeException {
     NameIdentifier metalakeIdent = NameIdentifier.of(namespace.levels());
-    checkMetalakeExists(metalakeIdent);
+    return TreeLockUtils.doWithTreeLock(
+        metalakeIdent,
+        LockType.READ,
+        () -> {
+          checkMetalakeExists(metalakeIdent);
 
-    try {
-      return store.list(namespace, CatalogEntity.class, EntityType.CATALOG).stream()
-          .map(entity -> NameIdentifier.of(namespace, entity.name()))
-          .toArray(NameIdentifier[]::new);
+          try {
+            return store.list(namespace, CatalogEntity.class, EntityType.CATALOG).stream()
+                .map(entity -> NameIdentifier.of(namespace, entity.name()))
+                .toArray(NameIdentifier[]::new);
 
-    } catch (IOException ioe) {
-      LOG.error("Failed to list catalogs in metalake {}", metalakeIdent, ioe);
-      throw new RuntimeException(ioe);
-    }
+          } catch (IOException ioe) {
+            LOG.error("Failed to list catalogs in metalake {}", metalakeIdent, ioe);
+            throw new RuntimeException(ioe);
+          }
+        });
   }
 
   @Override
   public Catalog[] listCatalogsInfo(Namespace namespace) throws NoSuchMetalakeException {
     NameIdentifier metalakeIdent = NameIdentifier.of(namespace.levels());
-    checkMetalakeExists(metalakeIdent);
 
-    try {
-      return store.list(namespace, CatalogEntity.class, EntityType.CATALOG).stream()
-          .map(CatalogEntity::toCatalogInfo)
-          .toArray(Catalog[]::new);
-    } catch (IOException ioe) {
-      LOG.error("Failed to list catalogs in metalake {}", metalakeIdent, ioe);
-      throw new RuntimeException(ioe);
-    }
+    return TreeLockUtils.doWithTreeLock(
+        metalakeIdent,
+        LockType.READ,
+        () -> {
+          checkMetalakeExists(metalakeIdent);
+
+          try {
+            return store.list(namespace, CatalogEntity.class, EntityType.CATALOG).stream()
+                .map(CatalogEntity::toCatalogInfo)
+                .toArray(Catalog[]::new);
+          } catch (IOException ioe) {
+            LOG.error("Failed to list catalogs in metalake {}", metalakeIdent, ioe);
+            throw new RuntimeException(ioe);
+          }
+        });
   }
 
   /**
@@ -264,7 +277,8 @@ public class CatalogManager implements SupportsCatalogs, Closeable {
    */
   @Override
   public Catalog loadCatalog(NameIdentifier ident) throws NoSuchCatalogException {
-    return loadCatalogAndWrap(ident).catalog;
+    return TreeLockUtils.doWithTreeLock(
+        ident, LockType.READ, () -> loadCatalogAndWrap(ident).catalog);
   }
 
   /**
@@ -288,57 +302,64 @@ public class CatalogManager implements SupportsCatalogs, Closeable {
       Map<String, String> properties)
       throws NoSuchMetalakeException, CatalogAlreadyExistsException {
 
-    if (Entity.SYSTEM_CATALOG_RESERVED_NAME.equals(ident.name())) {
-      throw new IllegalArgumentException("Can't create a catalog with with reserved name `system`");
-    }
+    return TreeLockUtils.doWithTreeLock(
+        NameIdentifier.of(ident.namespace().levels()),
+        LockType.WRITE,
+        () -> {
+          if (Entity.SYSTEM_CATALOG_RESERVED_NAME.equals(ident.name())) {
+            throw new IllegalArgumentException(
+                "Can't create a catalog with with reserved name `system`");
+          }
 
-    // load catalog-related configuration from catalog-specific configuration file
-    Map<String, String> catalogSpecificConfig = loadCatalogSpecificConfig(properties, provider);
-    Map<String, String> mergedConfig = mergeConf(properties, catalogSpecificConfig);
+          // load catalog-related configuration from catalog-specific configuration file
+          Map<String, String> catalogSpecificConfig =
+              loadCatalogSpecificConfig(properties, provider);
+          Map<String, String> mergedConfig = mergeConf(properties, catalogSpecificConfig);
 
-    long uid = idGenerator.nextId();
-    StringIdentifier stringId = StringIdentifier.fromId(uid);
-    Instant now = Instant.now();
-    String creator = PrincipalUtils.getCurrentPrincipal().getName();
-    CatalogEntity e =
-        CatalogEntity.builder()
-            .withId(uid)
-            .withName(ident.name())
-            .withNamespace(ident.namespace())
-            .withType(type)
-            .withProvider(provider)
-            .withComment(comment)
-            .withProperties(StringIdentifier.newPropertiesWithId(stringId, mergedConfig))
-            .withAuditInfo(
-                AuditInfo.builder()
-                    .withCreator(creator)
-                    .withCreateTime(now)
-                    .withLastModifier(creator)
-                    .withLastModifiedTime(now)
-                    .build())
-            .build();
+          long uid = idGenerator.nextId();
+          StringIdentifier stringId = StringIdentifier.fromId(uid);
+          Instant now = Instant.now();
+          String creator = PrincipalUtils.getCurrentPrincipal().getName();
+          CatalogEntity e =
+              CatalogEntity.builder()
+                  .withId(uid)
+                  .withName(ident.name())
+                  .withNamespace(ident.namespace())
+                  .withType(type)
+                  .withProvider(provider)
+                  .withComment(comment)
+                  .withProperties(StringIdentifier.newPropertiesWithId(stringId, mergedConfig))
+                  .withAuditInfo(
+                      AuditInfo.builder()
+                          .withCreator(creator)
+                          .withCreateTime(now)
+                          .withLastModifier(creator)
+                          .withLastModifiedTime(now)
+                          .build())
+                  .build();
 
-    try {
-      NameIdentifier metalakeIdent = NameIdentifier.of(ident.namespace().levels());
-      if (!store.exists(metalakeIdent, EntityType.METALAKE)) {
-        LOG.warn("Metalake {} does not exist", metalakeIdent);
-        throw new NoSuchMetalakeException(METALAKE_DOES_NOT_EXIST_MSG, metalakeIdent);
-      }
+          try {
+            NameIdentifier metalakeIdent = NameIdentifier.of(ident.namespace().levels());
+            if (!store.exists(metalakeIdent, EntityType.METALAKE)) {
+              LOG.warn("Metalake {} does not exist", metalakeIdent);
+              throw new NoSuchMetalakeException(METALAKE_DOES_NOT_EXIST_MSG, metalakeIdent);
+            }
 
-      // TODO: should avoid a race condition here
-      CatalogWrapper wrapper = catalogCache.get(ident, id -> createCatalogWrapper(e));
-      store.put(e, false /* overwrite */);
-      return wrapper.catalog;
-    } catch (EntityAlreadyExistsException e1) {
-      LOG.warn("Catalog {} already exists", ident, e1);
-      throw new CatalogAlreadyExistsException("Catalog %s already exists", ident);
-    } catch (IllegalArgumentException | NoSuchMetalakeException e2) {
-      throw e2;
-    } catch (Exception e3) {
-      catalogCache.invalidate(ident);
-      LOG.error("Failed to create catalog {}", ident, e3);
-      throw new RuntimeException(e3);
-    }
+            // TODO: should avoid a race condition here
+            CatalogWrapper wrapper = catalogCache.get(ident, id -> createCatalogWrapper(e));
+            store.put(e, false /* overwrite */);
+            return wrapper.catalog;
+          } catch (EntityAlreadyExistsException e1) {
+            LOG.warn("Catalog {} already exists", ident, e1);
+            throw new CatalogAlreadyExistsException("Catalog %s already exists", ident);
+          } catch (IllegalArgumentException | NoSuchMetalakeException e2) {
+            throw e2;
+          } catch (Exception e3) {
+            catalogCache.invalidate(ident);
+            LOG.error("Failed to create catalog {}", ident, e3);
+            throw new RuntimeException(e3);
+          }
+        });
   }
 
   private Pair<Map<String, String>, Map<String, String>> getCatalogAlterProperty(
@@ -375,78 +396,84 @@ public class CatalogManager implements SupportsCatalogs, Closeable {
       throws NoSuchCatalogException, IllegalArgumentException {
     // There could be a race issue that someone is using the catalog from cache while we are
     // updating it.
+    return TreeLockUtils.doWithTreeLock(
+        NameIdentifier.of(ident.namespace().levels()),
+        LockType.WRITE,
+        () -> {
+          CatalogWrapper catalogWrapper = loadCatalogAndWrap(ident);
+          if (catalogWrapper == null) {
+            throw new NoSuchCatalogException(CATALOG_DOES_NOT_EXIST_MSG, ident);
+          }
 
-    CatalogWrapper catalogWrapper = loadCatalogAndWrap(ident);
-    if (catalogWrapper == null) {
-      throw new NoSuchCatalogException(CATALOG_DOES_NOT_EXIST_MSG, ident);
-    }
+          try {
+            catalogWrapper.doWithPropertiesMeta(
+                f -> {
+                  Pair<Map<String, String>, Map<String, String>> alterProperty =
+                      getCatalogAlterProperty(changes);
+                  validatePropertyForAlter(
+                      f.catalogPropertiesMetadata(),
+                      alterProperty.getLeft(),
+                      alterProperty.getRight());
+                  return null;
+                });
+          } catch (IllegalArgumentException e1) {
+            throw e1;
+          } catch (Exception e) {
+            LOG.error("Failed to alter catalog {}", ident, e);
+            throw new RuntimeException(e);
+          }
 
-    try {
-      catalogWrapper.doWithPropertiesMeta(
-          f -> {
-            Pair<Map<String, String>, Map<String, String>> alterProperty =
-                getCatalogAlterProperty(changes);
-            validatePropertyForAlter(
-                f.catalogPropertiesMetadata(), alterProperty.getLeft(), alterProperty.getRight());
-            return null;
-          });
-    } catch (IllegalArgumentException e1) {
-      throw e1;
-    } catch (Exception e) {
-      LOG.error("Failed to alter catalog {}", ident, e);
-      throw new RuntimeException(e);
-    }
+          catalogCache.invalidate(ident);
+          try {
+            CatalogEntity updatedCatalog =
+                store.update(
+                    ident,
+                    CatalogEntity.class,
+                    EntityType.CATALOG,
+                    catalog -> {
+                      CatalogEntity.Builder newCatalogBuilder =
+                          CatalogEntity.builder()
+                              .withId(catalog.id())
+                              .withName(catalog.name())
+                              .withNamespace(ident.namespace())
+                              .withType(catalog.getType())
+                              .withProvider(catalog.getProvider())
+                              .withComment(catalog.getComment());
 
-    catalogCache.invalidate(ident);
-    try {
-      CatalogEntity updatedCatalog =
-          store.update(
-              ident,
-              CatalogEntity.class,
-              EntityType.CATALOG,
-              catalog -> {
-                CatalogEntity.Builder newCatalogBuilder =
-                    CatalogEntity.builder()
-                        .withId(catalog.id())
-                        .withName(catalog.name())
-                        .withNamespace(ident.namespace())
-                        .withType(catalog.getType())
-                        .withProvider(catalog.getProvider())
-                        .withComment(catalog.getComment());
+                      AuditInfo newInfo =
+                          AuditInfo.builder()
+                              .withCreator(catalog.auditInfo().creator())
+                              .withCreateTime(catalog.auditInfo().createTime())
+                              .withLastModifier(PrincipalUtils.getCurrentPrincipal().getName())
+                              .withLastModifiedTime(Instant.now())
+                              .build();
+                      newCatalogBuilder.withAuditInfo(newInfo);
 
-                AuditInfo newInfo =
-                    AuditInfo.builder()
-                        .withCreator(catalog.auditInfo().creator())
-                        .withCreateTime(catalog.auditInfo().createTime())
-                        .withLastModifier(PrincipalUtils.getCurrentPrincipal().getName())
-                        .withLastModifiedTime(Instant.now())
-                        .build();
-                newCatalogBuilder.withAuditInfo(newInfo);
+                      Map<String, String> newProps =
+                          catalog.getProperties() == null
+                              ? new HashMap<>()
+                              : new HashMap<>(catalog.getProperties());
+                      newCatalogBuilder = updateEntity(newCatalogBuilder, newProps, changes);
 
-                Map<String, String> newProps =
-                    catalog.getProperties() == null
-                        ? new HashMap<>()
-                        : new HashMap<>(catalog.getProperties());
-                newCatalogBuilder = updateEntity(newCatalogBuilder, newProps, changes);
+                      return newCatalogBuilder.build();
+                    });
+            return catalogCache.get(
+                    updatedCatalog.nameIdentifier(), id -> createCatalogWrapper(updatedCatalog))
+                .catalog;
 
-                return newCatalogBuilder.build();
-              });
-      return catalogCache.get(
-              updatedCatalog.nameIdentifier(), id -> createCatalogWrapper(updatedCatalog))
-          .catalog;
+          } catch (NoSuchEntityException ne) {
+            LOG.warn("Catalog {} does not exist", ident, ne);
+            throw new NoSuchCatalogException(CATALOG_DOES_NOT_EXIST_MSG, ident);
 
-    } catch (NoSuchEntityException ne) {
-      LOG.warn("Catalog {} does not exist", ident, ne);
-      throw new NoSuchCatalogException(CATALOG_DOES_NOT_EXIST_MSG, ident);
+          } catch (IllegalArgumentException iae) {
+            LOG.warn("Failed to alter catalog {} with unknown change", ident, iae);
+            throw iae;
 
-    } catch (IllegalArgumentException iae) {
-      LOG.warn("Failed to alter catalog {} with unknown change", ident, iae);
-      throw iae;
-
-    } catch (IOException ioe) {
-      LOG.error("Failed to alter catalog {}", ident, ioe);
-      throw new RuntimeException(ioe);
-    }
+          } catch (IOException ioe) {
+            LOG.error("Failed to alter catalog {}", ident, ioe);
+            throw new RuntimeException(ioe);
+          }
+        });
   }
 
   /**
@@ -457,15 +484,20 @@ public class CatalogManager implements SupportsCatalogs, Closeable {
    */
   @Override
   public boolean dropCatalog(NameIdentifier ident) {
-    // There could be a race issue that someone is using the catalog while we are dropping it.
-    catalogCache.invalidate(ident);
+    return TreeLockUtils.doWithTreeLock(
+        NameIdentifier.of(ident.namespace().levels()),
+        LockType.WRITE,
+        () -> {
+          // There could be a race issue that someone is using the catalog while we are dropping it.
+          catalogCache.invalidate(ident);
 
-    try {
-      return store.delete(ident, EntityType.CATALOG);
-    } catch (IOException ioe) {
-      LOG.error("Failed to drop catalog {}", ident, ioe);
-      throw new RuntimeException(ioe);
-    }
+          try {
+            return store.delete(ident, EntityType.CATALOG);
+          } catch (IOException ioe) {
+            LOG.error("Failed to drop catalog {}", ident, ioe);
+            throw new RuntimeException(ioe);
+          }
+        });
   }
 
   /**
