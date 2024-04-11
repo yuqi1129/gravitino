@@ -67,11 +67,11 @@ public class PartitionOperations {
           httpRequest,
           () -> {
             NameIdentifier tableIdent = NameIdentifier.of(metalake, catalog, schema, table);
+            Table loadTable = dispatcher.loadTable(tableIdent);
             return TreeLockUtils.doWithTreeLock(
                 tableIdent,
                 LockType.READ,
                 () -> {
-                  Table loadTable = dispatcher.loadTable(tableIdent);
                   if (verbose) {
                     Partition[] partitions = loadTable.supportPartitions().listPartitions();
                     return Utils.ok(new PartitionListResponse(toDTOs(partitions)));
@@ -102,14 +102,14 @@ public class PartitionOperations {
           httpRequest,
           () -> {
             NameIdentifier tableIdent = NameIdentifier.of(metalake, catalog, schema, table);
-            return TreeLockUtils.doWithTreeLock(
-                tableIdent,
-                LockType.READ,
-                () -> {
-                  Table loadTable = dispatcher.loadTable(tableIdent);
-                  Partition p = loadTable.supportPartitions().getPartition(partition);
-                  return Utils.ok(new PartitionResponse(DTOConverters.toDTO(p)));
-                });
+            Table loadTable = dispatcher.loadTable(tableIdent);
+
+            Partition p =
+                TreeLockUtils.doWithTreeLock(
+                    tableIdent,
+                    LockType.READ,
+                    () -> loadTable.supportPartitions().getPartition(partition));
+            return Utils.ok(new PartitionResponse(DTOConverters.toDTO(p)));
           });
     } catch (Exception e) {
       return ExceptionHandlers.handlePartitionException(OperationType.GET, "", table, e);
@@ -134,18 +134,16 @@ public class PartitionOperations {
           httpRequest,
           () -> {
             NameIdentifier tableIdent = NameIdentifier.of(metalake, catalog, schema, table);
-            return TreeLockUtils.doWithTreeLock(
-                tableIdent,
-                LockType.WRITE,
-                () -> {
-                  Table loadTable = dispatcher.loadTable(tableIdent);
-                  Partition p =
-                      loadTable
-                          .supportPartitions()
-                          .addPartition(fromDTO(request.getPartitions()[0]));
-                  return Utils.ok(
-                      new PartitionListResponse(new PartitionDTO[] {DTOConverters.toDTO(p)}));
-                });
+            Table loadTable = dispatcher.loadTable(tableIdent);
+            Partition p =
+                TreeLockUtils.doWithTreeLock(
+                    NameIdentifier.of(tableIdent.namespace().levels()),
+                    LockType.WRITE,
+                    () ->
+                        loadTable
+                            .supportPartitions()
+                            .addPartition(fromDTO(request.getPartitions()[0])));
+            return Utils.ok(new PartitionListResponse(new PartitionDTO[] {DTOConverters.toDTO(p)}));
           });
     } catch (Exception e) {
       return ExceptionHandlers.handlePartitionException(OperationType.CREATE, "", table, e);
@@ -169,24 +167,25 @@ public class PartitionOperations {
           httpRequest,
           () -> {
             NameIdentifier tableIdent = NameIdentifier.of(metalake, catalog, schema, table);
-            return TreeLockUtils.doWithTreeLock(
-                tableIdent,
-                LockType.WRITE,
-                () -> {
-                  Table loadTable = dispatcher.loadTable(tableIdent);
-                  boolean dropped =
-                      purge
-                          ? loadTable.supportPartitions().purgePartition(partition)
-                          : loadTable.supportPartitions().dropPartition(partition);
-                  if (!dropped) {
-                    LOG.warn(
-                        "Failed to drop partition {} under table {} under schema {}",
-                        partition,
-                        table,
-                        schema);
-                  }
-                  return Utils.ok(new DropResponse(dropped));
-                });
+            Table loadTable = dispatcher.loadTable(tableIdent);
+
+            boolean dropped =
+                TreeLockUtils.doWithTreeLock(
+                    NameIdentifier.of(tableIdent.namespace().levels()),
+                    LockType.WRITE,
+                    () ->
+                        purge
+                            ? loadTable.supportPartitions().purgePartition(partition)
+                            : loadTable.supportPartitions().dropPartition(partition));
+
+            if (!dropped) {
+              LOG.warn(
+                  "Failed to drop partition {} under table {} under schema {}",
+                  partition,
+                  table,
+                  schema);
+            }
+            return Utils.ok(new DropResponse(dropped));
           });
     } catch (Exception e) {
       return ExceptionHandlers.handlePartitionException(OperationType.DROP, "", table, e);
