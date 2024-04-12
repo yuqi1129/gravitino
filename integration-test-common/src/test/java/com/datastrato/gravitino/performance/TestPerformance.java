@@ -208,6 +208,18 @@ public class TestPerformance {
     }
   }
 
+  public void dropTable(String tableName) {
+    Request request = new Request.Builder().url(LOAD_TABLE_URL + tableName).delete().build();
+    try (Response response = client.newCall(request).execute()) {
+      if (200 != response.code()) {
+        increment("createTable");
+      }
+    } catch (Exception e) {
+      increment("createTable");
+    }
+  }
+
+
   private void loadTable(String tableName) {
     Request request = new Request.Builder().url(LOAD_TABLE_URL + tableName).build();
 
@@ -241,7 +253,16 @@ public class TestPerformance {
 
   @Test
   void testCreateTable() {
-    createTable("test_table_1");
+    for (int i = 0; i < 500; i++) {
+      createTable(String.format("test_table_%s", i));
+    }
+  }
+
+  @Test
+  void testDropTable() {
+    for (int i = 0; i < 500; i++) {
+      dropTable(String.format("test_table_%s", i));
+    }
   }
 
   private CompletionService<Integer> createCompletionService() {
