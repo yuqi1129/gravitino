@@ -253,15 +253,20 @@ public class TestPerformance {
 
   @Test
   void testCreateTable() {
-    for (int i = 0; i < 500; i++) {
+    for (int i = 0; i < 3000; i++) {
       createTable(String.format("test_table_%s", i));
     }
   }
 
   @Test
-  void testDropTable() {
-    for (int i = 0; i < 500; i++) {
+  void testDropTable() throws Exception {
+//    for (int i = 0; i < 1500; i++) {
+//      dropTable(String.format("test_table_%s", i));
+//    }
+
+    for (int i = 1500; i < 3000; i++) {
       dropTable(String.format("test_table_%s", i));
+      Thread.sleep(10);
     }
   }
 
