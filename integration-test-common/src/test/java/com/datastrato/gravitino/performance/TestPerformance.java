@@ -270,6 +270,15 @@ public class TestPerformance {
     }
   }
 
+  @Test
+  void testAlterCatalog() throws Exception {
+    for (int i = 0; i < 3000; i++) {
+      System.out.println("Start to alter catalog");
+      alterCatalog();
+      Thread.sleep(100);
+    }
+  }
+
   private CompletionService<Integer> createCompletionService() {
     ThreadPoolExecutor executor =
         new ThreadPoolExecutor(
