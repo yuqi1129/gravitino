@@ -52,10 +52,13 @@ public class TestPerformance {
   private static final String LOAD_TABLE_URL =
       "http://localhost:8090/api/metalakes/test/catalogs/mysql_catalog/schemas/db1/tables/";
 
+  private static final String LOAD_TOPIC_URL =
+      "http://localhost:8090/api/metalakes/test/catalogs/kafka_2024042401/schemas/default/topics/";
+
   private static final Multimap<String, Long> timeMap =
       MultimapBuilder.linkedHashKeys().arrayListValues().build();
   private static final Map<String, Long> failedMap = Maps.newConcurrentMap();
-  private static final int repeatTimes = 100;
+  private static final int repeatTimes = 1000;
 
   static {
     failedMap.put("listMetalakes", 0L);
@@ -234,6 +237,20 @@ public class TestPerformance {
     }
   }
 
+  private void loadTopic(String topicName) {
+    Request request = new Request.Builder().url(LOAD_TOPIC_URL + topicName).build();
+
+    Call call = client.newCall(request);
+
+    try (Response response = call.execute()) {
+      if (200 != response.code()) {
+        increment("loadTable");
+      }
+    } catch (Exception e) {
+      increment("loadTable");
+    }
+  }
+
   @Test
   void testLoadTable() {
     loadTable("test_table_1_1");
@@ -274,6 +291,7 @@ public class TestPerformance {
   void testAlterCatalog() throws Exception {
     for (int i = 0; i < 3000; i++) {
       System.out.println("Start to alter catalog");
+      loadTopic("topic1");
       alterCatalog();
       Thread.sleep(100);
     }
