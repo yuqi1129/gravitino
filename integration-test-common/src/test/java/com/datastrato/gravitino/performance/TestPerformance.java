@@ -41,10 +41,10 @@ public class TestPerformance {
       "http://localhost:8090/api/metalakes/test/catalogs/mysql_catalog";
 
   private static final String LOAD_SCHEMA_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/mysql_catalog/schemas/db1";
+      "http://localhost:8090/api/metalakes/test/catalogs/pg_catalog/schemas/db10";
 
   private static final String ALTER_CATALOG_URL =
-      "http://localhost:8090/api/metalakes/test/catalogs/mysql_catalog";
+      "http://localhost:8090/api/metalakes/test/catalogs/pg_catalog";
 
   private static final String LIST_TABLE_URL =
       "http://localhost:8090/api/metalakes/test/catalogs/mysql_catalog/schemas/db1/tables";
@@ -291,7 +291,8 @@ public class TestPerformance {
   void testAlterCatalog() throws Exception {
     for (int i = 0; i < 3000; i++) {
       System.out.println("Start to alter catalog");
-      loadTopic("topic1");
+//      loadTopic("topic1");
+      loadSchema();
       alterCatalog();
       Thread.sleep(100);
     }
