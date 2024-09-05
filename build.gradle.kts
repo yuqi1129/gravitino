@@ -434,7 +434,10 @@ subprojects {
       jvmArgs = listOf("-Xmx4G")
       useJUnitPlatform()
       jvmArgs(project.property("extraJvmArgs") as List<*>)
-      finalizedBy(tasks.getByName("jacocoTestReport"))
+
+      if (project.name != "integration-test-common") {
+        finalizedBy(tasks.getByName("jacocoTestReport"))
+      }
     }
   }
 
@@ -534,7 +537,7 @@ tasks.cyclonedxBom {
 }
 
 jacoco {
-  toolVersion = "0.8.10"
+  toolVersion = "0.8.12"
   reportsDirectory.set(layout.buildDirectory.dir("JacocoReport"))
 }
 
