@@ -144,6 +144,10 @@ public class GravitonEnv {
       catalogManager.close();
     }
 
+    if (config != null) {
+      LOG.info("Gravitino xxxx....");
+    }
+
     LOG.info("Graviton Environment is shut down.");
   }
 }
