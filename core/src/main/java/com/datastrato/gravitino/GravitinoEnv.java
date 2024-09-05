@@ -199,6 +199,11 @@ public class GravitinoEnv {
     if (metricsSystem != null) {
       metricsSystem.close();
     }
+    
+    
+    if (config != null) {
+      LOG.info("Gravitino xxxx....");
+    }
 
     LOG.info("Gravitino Environment is shut down.");
   }
