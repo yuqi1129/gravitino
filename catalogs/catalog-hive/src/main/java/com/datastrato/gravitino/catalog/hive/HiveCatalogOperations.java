@@ -6,9 +6,12 @@ package com.datastrato.gravitino.catalog.hive;
 
 import static com.datastrato.gravitino.catalog.hive.HiveCatalogPropertiesMeta.CLIENT_POOL_CACHE_EVICTION_INTERVAL_MS;
 import static com.datastrato.gravitino.catalog.hive.HiveCatalogPropertiesMeta.CLIENT_POOL_SIZE;
+import static com.datastrato.gravitino.catalog.hive.HiveCatalogPropertiesMeta.LIST_ALL_TABLES;
 import static com.datastrato.gravitino.catalog.hive.HiveCatalogPropertiesMeta.METASTORE_URIS;
 import static com.datastrato.gravitino.catalog.hive.HiveCatalogPropertiesMeta.PRINCIPAL;
+import static com.datastrato.gravitino.catalog.hive.HiveTable.ICEBERG_TABLE_TYPE_VALUE;
 import static com.datastrato.gravitino.catalog.hive.HiveTable.SUPPORT_TABLE_TYPES;
+import static com.datastrato.gravitino.catalog.hive.HiveTable.TABLE_TYPE_PROP;
 import static com.datastrato.gravitino.catalog.hive.HiveTablePropertiesMetadata.COMMENT;
 import static com.datastrato.gravitino.catalog.hive.HiveTablePropertiesMetadata.TABLE_TYPE;
 import static com.datastrato.gravitino.connector.BaseCatalog.CATALOG_BYPASS_PREFIX;
@@ -20,7 +23,7 @@ import com.datastrato.gravitino.catalog.hive.HiveTablePropertiesMetadata.TableTy
 import com.datastrato.gravitino.catalog.hive.converter.ToHiveType;
 import com.datastrato.gravitino.connector.CatalogInfo;
 import com.datastrato.gravitino.connector.CatalogOperations;
-import com.datastrato.gravitino.connector.PropertiesMetadata;
+import com.datastrato.gravitino.connector.HasPropertyMetadata;
 import com.datastrato.gravitino.connector.ProxyPlugin;
 import com.datastrato.gravitino.exceptions.NoSuchCatalogException;
 import com.datastrato.gravitino.exceptions.NoSuchSchemaException;
@@ -92,15 +95,12 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
 
   private CatalogInfo info;
 
-  private HiveTablePropertiesMetadata tablePropertiesMetadata;
-
-  private HiveCatalogPropertiesMeta catalogPropertiesMetadata;
-
-  private HiveSchemaPropertiesMetadata schemaPropertiesMetadata;
+  private HasPropertyMetadata propertiesMetadata;
 
   private ScheduledThreadPoolExecutor checkTgtExecutor;
   private String kerberosRealm;
   private ProxyPlugin proxyPlugin;
+  boolean listAllTables = true;
 
   // Map that maintains the mapping of keys in Gravitino to that in Hive, for example, users
   // will only need to set the configuration 'METASTORE_URL' in Gravitino and Gravitino will change
@@ -113,14 +113,15 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
    *
    * @param conf The configuration map for the Hive catalog operations.
    * @param info The catalog info associated with this operations instance.
+   * @param propertiesMetadata The properties metadata of Hive catalog.
    * @throws RuntimeException if initialization fails.
    */
   @Override
-  public void initialize(Map<String, String> conf, CatalogInfo info) throws RuntimeException {
+  public void initialize(
+      Map<String, String> conf, CatalogInfo info, HasPropertyMetadata propertiesMetadata)
+      throws RuntimeException {
     this.info = info;
-    this.tablePropertiesMetadata = new HiveTablePropertiesMetadata();
-    this.catalogPropertiesMetadata = new HiveCatalogPropertiesMeta();
-    this.schemaPropertiesMetadata = new HiveSchemaPropertiesMetadata();
+    this.propertiesMetadata = propertiesMetadata;
 
     // Key format like gravitino.bypass.a.b
     Map<String, String> byPassConfig = Maps.newHashMap();
@@ -151,6 +152,8 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
 
     this.clientPool =
         new CachedClientPool(getClientPoolSize(conf), hiveConf, getCacheEvictionInterval(conf));
+
+    this.listAllTables = enableListAllTables(conf);
   }
 
   private void initKerberosIfNecessary(Map<String, String> conf, Configuration hadoopConf) {
@@ -174,7 +177,9 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
 
         String keytabUri =
             (String)
-                catalogPropertiesMetadata.getOrDefault(conf, HiveCatalogPropertiesMeta.KEY_TAB_URI);
+                propertiesMetadata
+                    .catalogPropertiesMetadata()
+                    .getOrDefault(conf, HiveCatalogPropertiesMeta.KEY_TAB_URI);
         Preconditions.checkArgument(StringUtils.isNotBlank(keytabUri), "Keytab uri can't be blank");
         // TODO: Support to download the file from Kerberos HDFS
         Preconditions.checkArgument(
@@ -182,14 +187,16 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
 
         int fetchKeytabFileTimeout =
             (int)
-                catalogPropertiesMetadata.getOrDefault(
-                    conf, HiveCatalogPropertiesMeta.FETCH_TIMEOUT_SEC);
+                propertiesMetadata
+                    .catalogPropertiesMetadata()
+                    .getOrDefault(conf, HiveCatalogPropertiesMeta.FETCH_TIMEOUT_SEC);
 
         FetchFileUtils.fetchFileFromUri(keytabUri, keytabFile, fetchKeytabFileTimeout, hadoopConf);
 
         hiveConf.setVar(ConfVars.METASTORE_KERBEROS_KEYTAB_FILE, keytabFile.getAbsolutePath());
 
-        String catalogPrincipal = (String) catalogPropertiesMetadata.getOrDefault(conf, PRINCIPAL);
+        String catalogPrincipal =
+            (String) propertiesMetadata.catalogPropertiesMetadata().getOrDefault(conf, PRINCIPAL);
         Preconditions.checkArgument(
             StringUtils.isNotBlank(catalogPrincipal), "The principal can't be blank");
         @SuppressWarnings("null")
@@ -212,8 +219,9 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
 
         int checkInterval =
             (int)
-                catalogPropertiesMetadata.getOrDefault(
-                    conf, HiveCatalogPropertiesMeta.CHECK_INTERVAL_SEC);
+                propertiesMetadata
+                    .catalogPropertiesMetadata()
+                    .getOrDefault(conf, HiveCatalogPropertiesMeta.CHECK_INTERVAL_SEC);
 
         checkTgtExecutor.scheduleAtFixedRate(
             () -> {
@@ -253,14 +261,21 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
 
   @VisibleForTesting
   int getClientPoolSize(Map<String, String> conf) {
-    return (int) catalogPropertiesMetadata.getOrDefault(conf, CLIENT_POOL_SIZE);
+    return (int)
+        propertiesMetadata.catalogPropertiesMetadata().getOrDefault(conf, CLIENT_POOL_SIZE);
   }
 
   long getCacheEvictionInterval(Map<String, String> conf) {
     return (long)
-        catalogPropertiesMetadata.getOrDefault(conf, CLIENT_POOL_CACHE_EVICTION_INTERVAL_MS);
+        propertiesMetadata
+            .catalogPropertiesMetadata()
+            .getOrDefault(conf, CLIENT_POOL_CACHE_EVICTION_INTERVAL_MS);
   }
 
+  boolean enableListAllTables(Map<String, String> conf) {
+    return (boolean)
+        propertiesMetadata.catalogPropertiesMetadata().getOrDefault(conf, LIST_ALL_TABLES);
+  }
   /** Closes the Hive catalog and releases the associated client pool. */
   @Override
   public void close() {
@@ -516,7 +531,18 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
       return clientPool.run(
           c ->
               c.getTableObjectsByName(schemaIdent.name(), allTables).stream()
-                  .filter(tb -> SUPPORT_TABLE_TYPES.contains(tb.getTableType()))
+                  .filter(
+                      tb -> {
+                        boolean isSupportTable = SUPPORT_TABLE_TYPES.contains(tb.getTableType());
+                        if (!isSupportTable) {
+                          return false;
+                        }
+                        if (!listAllTables) {
+                          Map<String, String> parameters = tb.getParameters();
+                          return isHiveTable(parameters);
+                        }
+                        return true;
+                      })
                   .map(tb -> NameIdentifier.of(namespace, tb.getTableName()))
                   .toArray(NameIdentifier[]::new));
     } catch (UnknownDBException e) {
@@ -530,6 +556,22 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
     } catch (InterruptedException e) {
       throw new RuntimeException(e);
     }
+  }
+
+  boolean isHiveTable(Map<String, String> tableParameters) {
+    if (isIcebergTable(tableParameters)) return false;
+    return true;
+  }
+
+  boolean isIcebergTable(Map<String, String> tableParameters) {
+    if (tableParameters != null) {
+      boolean isIcebergTable =
+          ICEBERG_TABLE_TYPE_VALUE.equalsIgnoreCase(tableParameters.get(TABLE_TYPE_PROP));
+      if (isIcebergTable) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -695,7 +737,9 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
     validatePartitionForCreate(columns, partitioning);
     validateDistributionAndSort(distribution, sortOrders);
 
-    TableType tableType = (TableType) tablePropertiesMetadata.getOrDefault(properties, TABLE_TYPE);
+    TableType tableType =
+        (TableType)
+            propertiesMetadata.tablePropertiesMetadata().getOrDefault(properties, TABLE_TYPE);
     Preconditions.checkArgument(
         SUPPORT_TABLE_TYPES.contains(tableType.name()),
         "Unsupported table type: " + tableType.name());
@@ -726,7 +770,7 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
               .build();
       clientPool.run(
           c -> {
-            c.createTable(hiveTable.toHiveTable(tablePropertiesMetadata));
+            c.createTable(hiveTable.toHiveTable(propertiesMetadata.tablePropertiesMetadata()));
             return null;
           });
 
@@ -766,7 +810,7 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
       // TODO(@Minghuang): require a table lock to avoid race condition
       HiveTable table = (HiveTable) loadTable(tableIdent);
       org.apache.hadoop.hive.metastore.api.Table alteredHiveTable =
-          table.toHiveTable(tablePropertiesMetadata);
+          table.toHiveTable(propertiesMetadata.tablePropertiesMetadata());
 
       validateColumnChangeForAlter(changes, alteredHiveTable);
 
@@ -1041,33 +1085,6 @@ public class HiveCatalogOperations implements CatalogOperations, SupportsSchemas
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
-  }
-
-  @Override
-  public PropertiesMetadata tablePropertiesMetadata() throws UnsupportedOperationException {
-    return tablePropertiesMetadata;
-  }
-
-  @Override
-  public PropertiesMetadata catalogPropertiesMetadata() throws UnsupportedOperationException {
-    return catalogPropertiesMetadata;
-  }
-
-  @Override
-  public PropertiesMetadata schemaPropertiesMetadata() throws UnsupportedOperationException {
-    return schemaPropertiesMetadata;
-  }
-
-  @Override
-  public PropertiesMetadata filesetPropertiesMetadata() throws UnsupportedOperationException {
-    throw new UnsupportedOperationException(
-        "Hive catalog does not support fileset properties metadata");
-  }
-
-  @Override
-  public PropertiesMetadata topicPropertiesMetadata() throws UnsupportedOperationException {
-    throw new UnsupportedOperationException(
-        "Hive catalog does not support topic properties metadata");
   }
 
   CachedClientPool getClientPool() {
