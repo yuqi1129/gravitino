@@ -199,8 +199,7 @@ public class GravitinoEnv {
     if (metricsSystem != null) {
       metricsSystem.close();
     }
-    
-    
+
     if (config != null) {
       LOG.info("Gravitino xxxx....");
     }
