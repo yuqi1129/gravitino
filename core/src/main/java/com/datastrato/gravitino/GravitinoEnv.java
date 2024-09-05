@@ -359,6 +359,7 @@ public class GravitinoEnv {
     if (eventListenerManager != null) {
       eventListenerManager.stop();
     }
+    LOG.info("");
 
     LOG.info("Gravitino Environment is shut down.");
   }
