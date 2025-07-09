@@ -64,6 +64,7 @@ dependencies {
   testImplementation(libs.testcontainers)
   testImplementation(libs.calcite.core)
   testImplementation(libs.jsqlparser)
+  testImplementation(libs.druid)
 
   testRuntimeOnly(libs.junit.jupiter.engine)
 
