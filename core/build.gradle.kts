@@ -62,6 +62,8 @@ dependencies {
   testImplementation(libs.mysql.driver)
   testImplementation(libs.postgresql.driver)
   testImplementation(libs.testcontainers)
+  testImplementation(libs.calcite.core)
+  testImplementation(libs.jsqlparser)
 
   testRuntimeOnly(libs.junit.jupiter.engine)
 
