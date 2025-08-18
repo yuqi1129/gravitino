@@ -51,14 +51,14 @@ jobs:
             mcp_server_changes:
               - mcp-server/**
 
-    - name: Compute mcp_server_changes_with_source
-      id: compute
-      run: |
-        if [[ "${{ steps.filter.outputs.mcp_server_changes }}" == "true" && "${{ steps.filter.outputs.source_changes }}" == "false" ]]; then
-          echo "result=true" >> $GITHUB_OUTPUT
-        else
-          echo "result=false" >> $GITHUB_OUTPUT
-        fi
+      - name: Compute mcp_server_changes_with_source
+        id: compute
+        run: |
+          if [[ "${{ steps.filter.outputs.mcp_server_changes }}" == "true" && "${{ steps.filter.outputs.source_changes }}" == "false" ]]; then
+            echo "result=true" >> $GITHUB_OUTPUT
+          else
+            echo "result=false" >> $GITHUB_OUTPUT
+          fi
     outputs:
       source_changes: ${{ steps.filter.outputs.source_changes }}
       spark_connector_changes: ${{ steps.filter.outputs.spark_connector_changes }}
