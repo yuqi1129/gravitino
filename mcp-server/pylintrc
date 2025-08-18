@@ -93,3 +93,5 @@ variable-naming-style=snake_case
 
 # Naming Style for Module
 module-naming-style=snake_case
+
+# Naming Style for Instance Variable
