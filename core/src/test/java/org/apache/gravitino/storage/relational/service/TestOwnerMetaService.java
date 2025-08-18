@@ -28,6 +28,7 @@ import org.apache.gravitino.meta.BaseMetalake;
 import org.apache.gravitino.meta.CatalogEntity;
 import org.apache.gravitino.meta.FilesetEntity;
 import org.apache.gravitino.meta.GroupEntity;
+import org.apache.gravitino.meta.ModelEntity;
 import org.apache.gravitino.meta.RoleEntity;
 import org.apache.gravitino.meta.SchemaEntity;
 import org.apache.gravitino.meta.TableEntity;
@@ -215,5 +216,305 @@ class TestOwnerMetaService extends TestJDBCBackend {
     entity = OwnerMetaService.getInstance().getOwner(role.nameIdentifier(), role.type()).get();
     Assertions.assertTrue(entity instanceof UserEntity);
     Assertions.assertEquals("user", ((UserEntity) entity).name());
+  }
+
+  @Test
+  public void testDeleteMetadataObject() throws IOException {
+    String metalakeName = "metalake";
+    AuditInfo auditInfo =
+        AuditInfo.builder().withCreator("creator").withCreateTime(Instant.now()).build();
+    BaseMetalake metalake =
+        createBaseMakeLake(RandomIdGenerator.INSTANCE.nextId(), metalakeName, auditInfo);
+    backend.insert(metalake, false);
+
+    CatalogEntity catalog =
+        createCatalog(
+            RandomIdGenerator.INSTANCE.nextId(), Namespace.of("metalake"), "catalog", auditInfo);
+    backend.insert(catalog, false);
+
+    SchemaEntity schema =
+        createSchemaEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog"),
+            "schema",
+            auditInfo);
+    backend.insert(schema, false);
+
+    FilesetEntity fileset =
+        createFilesetEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "fileset",
+            auditInfo);
+    backend.insert(fileset, false);
+    TableEntity table =
+        createTableEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "table",
+            auditInfo);
+    backend.insert(table, false);
+    TopicEntity topic =
+        createTopicEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "topic",
+            auditInfo);
+    backend.insert(topic, false);
+    ModelEntity model =
+        createModelEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "model",
+            "comment",
+            1,
+            null,
+            auditInfo);
+    backend.insert(model, false);
+
+    UserEntity user =
+        createUserEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            AuthorizationUtils.ofUserNamespace(metalakeName),
+            "user",
+            auditInfo);
+    backend.insert(user, false);
+
+    OwnerMetaService.getInstance()
+        .setOwner(catalog.nameIdentifier(), catalog.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(schema.nameIdentifier(), schema.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(table.nameIdentifier(), table.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(fileset.nameIdentifier(), fileset.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(topic.nameIdentifier(), topic.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(model.nameIdentifier(), model.type(), user.nameIdentifier(), user.type());
+
+    Assertions.assertEquals(6, countAllOwnerRel(user.id()));
+    Assertions.assertEquals(6, countActiveOwnerRel(user.id()));
+
+    // Test to delete model
+    ModelMetaService.getInstance().deleteModel(model.nameIdentifier());
+    Assertions.assertEquals(6, countAllOwnerRel(user.id()));
+    Assertions.assertEquals(5, countActiveOwnerRel(user.id()));
+
+    // Test to delete table
+    TableMetaService.getInstance().deleteTable(table.nameIdentifier());
+    Assertions.assertEquals(6, countAllOwnerRel(user.id()));
+    Assertions.assertEquals(4, countActiveOwnerRel(user.id()));
+
+    // Test to delete topic
+    TopicMetaService.getInstance().deleteTopic(topic.nameIdentifier());
+    Assertions.assertEquals(6, countAllOwnerRel(user.id()));
+    Assertions.assertEquals(3, countActiveOwnerRel(user.id()));
+
+    // Test to delete fileset
+    FilesetMetaService.getInstance().deleteFileset(fileset.nameIdentifier());
+    Assertions.assertEquals(6, countAllOwnerRel(user.id()));
+    Assertions.assertEquals(2, countActiveOwnerRel(user.id()));
+
+    // Test to delete schema
+    SchemaMetaService.getInstance().deleteSchema(schema.nameIdentifier(), false);
+    Assertions.assertEquals(6, countAllOwnerRel(user.id()));
+    Assertions.assertEquals(1, countActiveOwnerRel(user.id()));
+
+    // Test to delete catalog
+    CatalogMetaService.getInstance().deleteCatalog(catalog.nameIdentifier(), false);
+    Assertions.assertEquals(6, countAllOwnerRel(user.id()));
+    Assertions.assertEquals(0, countActiveOwnerRel(user.id()));
+
+    // Test to delete catalog with cascade mode
+    catalog =
+        createCatalog(
+            RandomIdGenerator.INSTANCE.nextId(), Namespace.of("metalake"), "catalog", auditInfo);
+    backend.insert(catalog, false);
+
+    schema =
+        createSchemaEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog"),
+            "schema",
+            auditInfo);
+    backend.insert(schema, false);
+
+    fileset =
+        createFilesetEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "fileset",
+            auditInfo);
+    backend.insert(fileset, false);
+    table =
+        createTableEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "table",
+            auditInfo);
+    backend.insert(table, false);
+    topic =
+        createTopicEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "topic",
+            auditInfo);
+    backend.insert(topic, false);
+    model =
+        createModelEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "model",
+            "comment",
+            1,
+            null,
+            auditInfo);
+    backend.insert(model, false);
+
+    OwnerMetaService.getInstance()
+        .setOwner(catalog.nameIdentifier(), catalog.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(schema.nameIdentifier(), schema.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(table.nameIdentifier(), table.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(fileset.nameIdentifier(), fileset.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(topic.nameIdentifier(), topic.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(model.nameIdentifier(), model.type(), user.nameIdentifier(), user.type());
+
+    CatalogMetaService.getInstance().deleteCatalog(catalog.nameIdentifier(), true);
+    Assertions.assertEquals(12, countAllOwnerRel(user.id()));
+    Assertions.assertEquals(0, countActiveOwnerRel(user.id()));
+
+    // Test to delete schema with cascade mode
+    catalog =
+        createCatalog(
+            RandomIdGenerator.INSTANCE.nextId(), Namespace.of("metalake"), "catalog", auditInfo);
+    backend.insert(catalog, false);
+
+    schema =
+        createSchemaEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog"),
+            "schema",
+            auditInfo);
+    backend.insert(schema, false);
+
+    fileset =
+        createFilesetEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "fileset",
+            auditInfo);
+    backend.insert(fileset, false);
+
+    table =
+        createTableEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "table",
+            auditInfo);
+    backend.insert(table, false);
+
+    topic =
+        createTopicEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "topic",
+            auditInfo);
+    backend.insert(topic, false);
+
+    model =
+        createModelEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "model",
+            "comment",
+            1,
+            null,
+            auditInfo);
+    backend.insert(model, false);
+
+    OwnerMetaService.getInstance()
+        .setOwner(schema.nameIdentifier(), schema.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(catalog.nameIdentifier(), catalog.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(table.nameIdentifier(), table.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(fileset.nameIdentifier(), fileset.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(topic.nameIdentifier(), topic.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(model.nameIdentifier(), model.type(), user.nameIdentifier(), user.type());
+
+    SchemaMetaService.getInstance().deleteSchema(schema.nameIdentifier(), true);
+    Assertions.assertEquals(18, countAllOwnerRel(user.id()));
+    Assertions.assertEquals(1, countActiveOwnerRel(user.id()));
+
+    // Test to delete user
+    schema =
+        createSchemaEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog"),
+            "schema",
+            auditInfo);
+    backend.insert(schema, false);
+
+    fileset =
+        createFilesetEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "fileset",
+            auditInfo);
+    backend.insert(fileset, false);
+    table =
+        createTableEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "table",
+            auditInfo);
+    backend.insert(table, false);
+    topic =
+        createTopicEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "topic",
+            auditInfo);
+
+    backend.insert(topic, false);
+
+    model =
+        createModelEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of("metalake", "catalog", "schema"),
+            "model",
+            "comment",
+            1,
+            null,
+            auditInfo);
+    backend.insert(model, false);
+
+    OwnerMetaService.getInstance()
+        .setOwner(schema.nameIdentifier(), schema.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(catalog.nameIdentifier(), catalog.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(table.nameIdentifier(), table.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(fileset.nameIdentifier(), fileset.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(topic.nameIdentifier(), topic.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(model.nameIdentifier(), model.type(), user.nameIdentifier(), user.type());
+    OwnerMetaService.getInstance()
+        .setOwner(model.nameIdentifier(), model.type(), user.nameIdentifier(), user.type());
+
+    UserMetaService.getInstance().deleteUser(user.nameIdentifier());
+    Assertions.assertEquals(25, countAllOwnerRel(user.id()));
+    Assertions.assertEquals(0, countActiveOwnerRel(user.id()));
   }
 }

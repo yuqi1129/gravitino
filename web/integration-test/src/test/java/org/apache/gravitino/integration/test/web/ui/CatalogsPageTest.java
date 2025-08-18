@@ -30,13 +30,11 @@ import org.apache.gravitino.Catalog;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.client.GravitinoAdminClient;
 import org.apache.gravitino.client.GravitinoMetalake;
-import org.apache.gravitino.file.Fileset;
 import org.apache.gravitino.integration.test.container.ContainerSuite;
 import org.apache.gravitino.integration.test.container.TrinoITContainers;
-import org.apache.gravitino.integration.test.util.AbstractIT;
 import org.apache.gravitino.integration.test.web.ui.pages.CatalogsPage;
 import org.apache.gravitino.integration.test.web.ui.pages.MetalakePage;
-import org.apache.gravitino.integration.test.web.ui.utils.AbstractWebIT;
+import org.apache.gravitino.integration.test.web.ui.utils.BaseWebIT;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.expressions.NamedReference;
 import org.apache.gravitino.rel.expressions.distributions.Distribution;
@@ -60,9 +58,9 @@ import org.openqa.selenium.By;
 
 @Tag("gravitino-docker-test")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-public class CatalogsPageTest extends AbstractWebIT {
-  MetalakePage metalakePage = new MetalakePage();
-  CatalogsPage catalogsPage = new CatalogsPage();
+public class CatalogsPageTest extends BaseWebIT {
+  private MetalakePage metalakePage;
+  private CatalogsPage catalogsPage;
 
   protected static TrinoITContainers trinoITContainers;
   protected static GravitinoAdminClient gravitinoClient;
@@ -91,9 +89,11 @@ public class CatalogsPageTest extends AbstractWebIT {
   private static final String FILESET_CATALOG_NAME = "catalog_fileset";
   private static final String SCHEMA_NAME = "default";
   private static final String SCHEMA_NAME_FILESET = "schema_fileset";
+  private static final String FILESET_DEFAULT_LOCATION = "fileset_location";
   private static final String FILESET_NAME = "fileset1";
   private static final String TABLE_NAME = "table1";
   private static final String TABLE_NAME_2 = "table2";
+  private static final String TABLE_NAME_3 = "table3";
   private static final String COLUMN_NAME = "column";
   private static final String COLUMN_NAME_2 = "column_2";
   private static final String PROPERTIES_KEY1 = "key1";
@@ -115,33 +115,21 @@ public class CatalogsPageTest extends AbstractWebIT {
   private static String defaultBaseLocation;
 
   @BeforeAll
-  public static void before() throws Exception {
-    gravitinoClient = AbstractIT.getGravitinoClient();
+  public void before() throws Exception {
+    gravitinoClient = getGravitinoClient();
 
-    gravitinoUri = String.format("http://127.0.0.1:%d", AbstractIT.getGravitinoServerPort());
+    gravitinoUri = String.format("http://127.0.0.1:%d", getGravitinoServerPort());
 
     trinoITContainers = ContainerSuite.getTrinoITContainers();
-    trinoITContainers.launch(AbstractIT.getGravitinoServerPort());
+    trinoITContainers.launch(getGravitinoServerPort());
 
     hiveMetastoreUri = trinoITContainers.getHiveMetastoreUri();
     hdfsUri = trinoITContainers.getHdfsUri();
     mysqlUri = trinoITContainers.getMysqlUri();
     postgresqlUri = trinoITContainers.getPostgresqlUri();
-  }
 
-  /**
-   * Create the specified schema
-   *
-   * @param metalakeName The name of the Metalake where the schema will be created.
-   * @param catalogName The name of the Catalog where the schema will be created.
-   * @param schemaName The name of the Schema where the schema will be created.
-   */
-  void createSchema(String metalakeName, String catalogName, String schemaName) {
-    Map<String, String> properties = Maps.newHashMap();
-    properties.put(PROPERTIES_KEY1, PROPERTIES_VALUE1);
-    GravitinoMetalake metalake = gravitinoClient.loadMetalake(metalakeName);
-    Catalog catalog = metalake.loadCatalog(catalogName);
-    catalog.asSchemas().createSchema(schemaName, "comment", properties);
+    metalakePage = new MetalakePage(driver);
+    catalogsPage = new CatalogsPage(driver);
   }
 
   /**
@@ -213,31 +201,6 @@ public class CatalogsPageTest extends AbstractWebIT {
     return defaultBaseLocation(schemaName) + "/" + filesetName;
   }
 
-  /**
-   * Creates a fileset within the specified Metalake, Catalog, Schema, and Fileset names.
-   *
-   * @param metalakeName The name of the Metalake.
-   * @param catalogName The name of the Catalog.
-   * @param schemaName The name of the Schema.
-   * @param filesetName The name of the Fileset.
-   */
-  void createFileset(
-      String metalakeName, String catalogName, String schemaName, String filesetName) {
-    Map<String, String> properties = Maps.newHashMap();
-    properties.put(PROPERTIES_KEY1, PROPERTIES_VALUE1);
-    String storageLocation = storageLocation(schemaName, filesetName);
-    GravitinoMetalake metalake = gravitinoClient.loadMetalake(metalakeName);
-    Catalog catalog_fileset = metalake.loadCatalog(catalogName);
-    catalog_fileset
-        .asFilesetCatalog()
-        .createFileset(
-            NameIdentifier.of(schemaName, filesetName),
-            "comment",
-            Fileset.Type.MANAGED,
-            storageLocation,
-            properties);
-  }
-
   @AfterAll
   public static void after() {
     try {
@@ -267,7 +230,8 @@ public class CatalogsPageTest extends AbstractWebIT {
     catalogsPage.setCatalogFixedProp("metastore.uris", hiveMetastoreUri);
     clickAndWait(catalogsPage.handleSubmitCatalogBtn);
     // delete catalog
-    catalogsPage.clickDeleteCatalogBtn(DEFAULT_CATALOG_NAME);
+    catalogsPage.clickInUseSwitch(DEFAULT_CATALOG_NAME);
+    catalogsPage.clickDeleteBtn(DEFAULT_CATALOG_NAME);
     clickAndWait(catalogsPage.confirmDeleteBtn);
     Assertions.assertTrue(catalogsPage.verifyEmptyTableData());
   }
@@ -281,9 +245,9 @@ public class CatalogsPageTest extends AbstractWebIT {
     catalogsPage.setCatalogCommentField("catalog comment");
     catalogsPage.setCatalogFixedProp("metastore.uris", hiveMetastoreUri);
     catalogsPage.addCatalogPropsBtn.click();
-    catalogsPage.setCatalogPropsAt(1, "key1", "value1");
+    catalogsPage.setPropsAt(1, "key1", "value1");
     catalogsPage.addCatalogPropsBtn.click();
-    catalogsPage.setCatalogPropsAt(2, "key2", "value2");
+    catalogsPage.setPropsAt(2, "key2", "value2");
     clickAndWait(catalogsPage.handleSubmitCatalogBtn);
     // load catalog
     GravitinoMetalake metalake = gravitinoClient.loadMetalake(METALAKE_NAME);
@@ -580,6 +544,33 @@ public class CatalogsPageTest extends AbstractWebIT {
 
   @Test
   @Order(19)
+  public void testCreateTableByUI() throws InterruptedException {
+    String schemaNode =
+        String.format(
+            "{{%s}}{{%s}}{{%s}}{{%s}}",
+            METALAKE_NAME, MODIFIED_HIVE_CATALOG_NAME, CATALOG_TYPE_RELATIONAL, SCHEMA_NAME);
+    catalogsPage.clickTreeNode(schemaNode);
+    // 1. create table in hive catalog without partition/sort order/distribution
+    clickAndWait(catalogsPage.createTableBtn);
+    catalogsPage.setTableNameField(TABLE_NAME_3);
+    catalogsPage.setTableCommentField("table comment for ui");
+    catalogsPage.setTableColumnsAt(0, COLUMN_NAME, "byte");
+    clickAndWait(catalogsPage.handleSubmitTableBtn);
+    Assertions.assertTrue(catalogsPage.verifyShowDataItemInList(TABLE_NAME_3, false));
+  }
+
+  @Test
+  @Order(20)
+  public void testDropTableByUI() throws InterruptedException {
+    // delete table of hive catalog
+    catalogsPage.clickDeleteBtn(TABLE_NAME_3);
+    clickAndWait(catalogsPage.confirmDeleteBtn);
+    // verify table list without table name 3
+    Assertions.assertTrue(catalogsPage.verifyNoDataItemInList(TABLE_NAME_3, false));
+  }
+
+  @Test
+  @Order(21)
   public void testOtherRelationalCatalogTreeNode() throws InterruptedException {
     String icebergNode =
         String.format(
@@ -599,7 +590,7 @@ public class CatalogsPageTest extends AbstractWebIT {
   }
 
   @Test
-  @Order(20)
+  @Order(22)
   public void testSelectMetalake() throws InterruptedException {
     catalogsPage.metalakeSelectChange(METALAKE_SELECT_NAME);
     Assertions.assertTrue(catalogsPage.verifyEmptyTableData());
@@ -609,16 +600,18 @@ public class CatalogsPageTest extends AbstractWebIT {
   }
 
   @Test
-  @Order(21)
-  public void testFilesetCatalogTreeNode() throws InterruptedException {
-    // 1. create schema and fileset of fileset catalog
-    createSchema(METALAKE_NAME, FILESET_CATALOG_NAME, SCHEMA_NAME_FILESET);
-    createFileset(METALAKE_NAME, FILESET_CATALOG_NAME, SCHEMA_NAME_FILESET, FILESET_NAME);
-    // 2. click fileset catalog tree node
+  @Order(23)
+  public void testCreateFilesetSchema() throws InterruptedException {
+    // 1. click fileset catalog tree node
     String filesetCatalogNode =
         String.format(
             "{{%s}}{{%s}}{{%s}}", METALAKE_NAME, FILESET_CATALOG_NAME, CATALOG_TYPE_FILESET);
     catalogsPage.clickTreeNode(filesetCatalogNode);
+    // 2. click create schema button
+    clickAndWait(catalogsPage.createSchemaBtn);
+    catalogsPage.setSchemaNameField(SCHEMA_NAME_FILESET);
+    catalogsPage.setCatalogCommentField("fileset schema comment");
+    clickAndWait(catalogsPage.handleSubmitSchemaBtn);
     // 3. verify show table title、 schema name and tree node
     Assertions.assertTrue(catalogsPage.verifyShowTableTitle(CATALOG_TABLE_TITLE));
     Assertions.assertTrue(catalogsPage.verifyShowDataItemInList(SCHEMA_NAME_FILESET, false));
@@ -631,16 +624,30 @@ public class CatalogsPageTest extends AbstractWebIT {
             FILESET_CATALOG_NAME,
             SCHEMA_NAME_FILESET);
     Assertions.assertTrue(catalogsPage.verifyTreeNodes(treeNodes));
-    // 4. click schema tree node
+  }
+
+  @Test
+  @Order(24)
+  public void testCreateFileset() throws InterruptedException {
+    // 1. click schema tree node
     String filesetSchemaNode =
         String.format(
             "{{%s}}{{%s}}{{%s}}{{%s}}",
             METALAKE_NAME, FILESET_CATALOG_NAME, CATALOG_TYPE_FILESET, SCHEMA_NAME_FILESET);
     catalogsPage.clickTreeNode(filesetSchemaNode);
-    // 5. verify show table title、 fileset name and tree node
+    // 2. create fileset
+    clickAndWait(catalogsPage.createFilesetBtn);
+    catalogsPage.setFilesetNameField(FILESET_NAME);
+    String storageLocation = storageLocation(SCHEMA_NAME_FILESET, FILESET_NAME);
+    catalogsPage.setFilesetStorageLocationField(0, FILESET_DEFAULT_LOCATION, storageLocation);
+    catalogsPage.setFilesetCommentField("fileset comment");
+    catalogsPage.addFilesetPropsBtn.click();
+    catalogsPage.setPropsAt(0, PROPERTIES_KEY1, PROPERTIES_VALUE1);
+    clickAndWait(catalogsPage.handleSubmitFilesetBtn);
+    // 3. verify show table title、 fileset name and tree node
     Assertions.assertTrue(catalogsPage.verifyShowTableTitle(SCHEMA_FILESET_TITLE));
     Assertions.assertTrue(catalogsPage.verifyShowDataItemInList(FILESET_NAME, false));
-    treeNodes =
+    List<String> treeNodes =
         Arrays.asList(
             MODIFIED_HIVE_CATALOG_NAME,
             ICEBERG_CATALOG_NAME,
@@ -650,7 +657,7 @@ public class CatalogsPageTest extends AbstractWebIT {
             SCHEMA_NAME_FILESET,
             FILESET_NAME);
     Assertions.assertTrue(catalogsPage.verifyTreeNodes(treeNodes));
-    // 6. click fileset tree node
+    // 4. click fileset tree node
     String filesetNode =
         String.format(
             "{{%s}}{{%s}}{{%s}}{{%s}}{{%s}}",
@@ -660,7 +667,9 @@ public class CatalogsPageTest extends AbstractWebIT {
             SCHEMA_NAME_FILESET,
             FILESET_NAME);
     catalogsPage.clickTreeNode(filesetNode);
-    // 7. verify show tab details
+    // 5. verify Files tab is shown by default, then switch to Details and verify details content
+    Assertions.assertTrue(catalogsPage.verifyShowFilesContent());
+    clickAndWait(catalogsPage.tabDetailsBtn);
     Assertions.assertTrue(catalogsPage.verifyShowDetailsContent());
     Assertions.assertTrue(
         catalogsPage.verifyShowPropertiesItemInList(
@@ -671,7 +680,7 @@ public class CatalogsPageTest extends AbstractWebIT {
   }
 
   @Test
-  @Order(22)
+  @Order(25)
   public void testBackHomePage() throws InterruptedException {
     clickAndWait(catalogsPage.backHomeBtn);
     Assertions.assertTrue(catalogsPage.verifyBackHomePage());

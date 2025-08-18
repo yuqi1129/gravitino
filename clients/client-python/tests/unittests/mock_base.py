@@ -19,7 +19,9 @@ import json
 from unittest.mock import patch
 
 from gravitino import GravitinoMetalake, Catalog, Fileset
-from gravitino.catalog.fileset_catalog import FilesetCatalog
+from gravitino.client.fileset_catalog import FilesetCatalog
+from gravitino.client.generic_fileset import GenericFileset
+from gravitino.client.generic_model_catalog import GenericModelCatalog
 from gravitino.dto.fileset_dto import FilesetDTO
 from gravitino.dto.audit_dto import AuditDTO
 from gravitino.dto.metalake_dto import MetalakeDTO
@@ -40,10 +42,12 @@ def mock_load_metalake():
         _properties={"k": "v"},
         _audit=audit_dto,
     )
-    return GravitinoMetalake(metalake_dto)
+    return GravitinoMetalake(
+        metalake_dto, HTTPClient("http://localhost:9090", is_debug=True)
+    )
 
 
-def mock_load_fileset_catalog():
+def mock_load_catalog(name: str):
     audit_dto = AuditDTO(
         _creator="test",
         _create_time="2022-01-01T00:00:00Z",
@@ -53,16 +57,32 @@ def mock_load_fileset_catalog():
 
     namespace = Namespace.of("metalake_demo")
 
-    catalog = FilesetCatalog(
-        namespace=namespace,
-        name="fileset_catalog",
-        catalog_type=Catalog.Type.FILESET,
-        provider="hadoop",
-        comment="this is test",
-        properties={"k": "v"},
-        audit=audit_dto,
-        rest_client=HTTPClient("http://localhost:9090", is_debug=True),
-    )
+    catalog = None
+    if name == "fileset_catalog":
+        catalog = FilesetCatalog(
+            namespace=namespace,
+            name=name,
+            catalog_type=Catalog.Type.FILESET,
+            provider="hadoop",
+            comment="this is test",
+            properties={"k": "v"},
+            audit=audit_dto,
+            rest_client=HTTPClient("http://localhost:9090", is_debug=True),
+        )
+    elif name == "model_catalog":
+        catalog = GenericModelCatalog(
+            namespace=namespace,
+            name=name,
+            catalog_type=Catalog.Type.MODEL,
+            provider="hadoop",
+            comment="this is test",
+            properties={"k": "v"},
+            audit=audit_dto,
+            rest_client=HTTPClient("http://localhost:9090", is_debug=True),
+        )
+    else:
+        raise ValueError(f"Unknown catalog name: {name}")
+
     return catalog
 
 
@@ -77,11 +97,16 @@ def mock_load_fileset(name: str, location: str):
         _name=name,
         _type=Fileset.Type.MANAGED,
         _comment="this is test",
-        _properties={"k": "v"},
-        _storage_location=location,
+        _properties={
+            "k": "v",
+            Fileset.PROPERTY_DEFAULT_LOCATION_NAME: Fileset.LOCATION_NAME_UNKNOWN,
+        },
+        _storage_locations={Fileset.LOCATION_NAME_UNKNOWN: location},
         _audit=audit_dto,
     )
-    return fileset
+    return GenericFileset(
+        fileset, None, Namespace.of("metalake_demo", "fileset_catalog", "tmp")
+    )
 
 
 def mock_data(cls):
@@ -91,7 +116,11 @@ def mock_data(cls):
     )
     @patch(
         "gravitino.client.gravitino_metalake.GravitinoMetalake.load_catalog",
-        return_value=mock_load_fileset_catalog(),
+        side_effect=mock_load_catalog,
+    )
+    @patch(
+        "gravitino.client.fileset_catalog.FilesetCatalog.load_fileset",
+        return_value=mock_load_fileset("fileset", ""),
     )
     @patch(
         "gravitino.client.gravitino_client_base.GravitinoClientBase.check_version",
@@ -104,5 +133,4 @@ def mock_data(cls):
 
 
 def mock_name_identifier_json(name, namespace):
-
     return json.dumps({"name": name, "namespace": namespace}).encode("utf-8")

@@ -34,6 +34,7 @@ from tests.integration.integration_test_env import (
     check_gravitino_server_status,
 )
 from tests.integration.containers.oauth2_container import OAuth2Container
+from tests.integration.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +46,10 @@ DOCKER_TEST = os.environ.get("DOCKER_TEST")
     "Skipping tests when DOCKER_TEST=false",
 )
 class TestOAuth2(IntegrationTestEnv, TestCommonAuth):
-
     oauth2_container: OAuth2Container = None
 
     @classmethod
     def setUpClass(cls):
-
         cls._get_gravitino_home()
 
         cls.oauth2_container = OAuth2Container()
@@ -89,11 +88,10 @@ class TestOAuth2(IntegrationTestEnv, TestCommonAuth):
 
     @classmethod
     def _get_default_sign_key(cls) -> str:
-
         jwk_uri = f"{cls.oauth2_server_uri}/oauth2/jwks"
 
         # Get JWK from OAuth2 Server
-        res = requests.get(jwk_uri).json()
+        res = requests.get(jwk_uri, timeout=Config.REQUEST["TIMEOUT"]).json()
         key = res["keys"][0]
 
         # Convert JWK to PEM
@@ -155,7 +153,6 @@ class TestOAuth2(IntegrationTestEnv, TestCommonAuth):
         self.init_test_env()
 
     def init_test_env(self):
-
         self.gravitino_admin_client.create_metalake(
             self.metalake_name, comment="", properties={}
         )

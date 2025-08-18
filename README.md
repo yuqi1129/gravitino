@@ -17,7 +17,7 @@
   under the License.
 -->
 
-# Apache Gravitino™ (incubating)
+# Apache Gravitino™
 
 [![GitHub Actions Build](https://github.com/apache/gravitino/actions/workflows/build.yml/badge.svg)](https://github.com/apache/gravitino/actions/workflows/build.yml)
 [![GitHub Actions Integration Test](https://github.com/apache/gravitino/actions/workflows/integration-test.yml/badge.svg)](https://github.com/apache/gravitino/actions/workflows/integration-test.yml)
@@ -30,106 +30,116 @@
 
 ## Introduction
 
-Apache Gravitino is a high-performance, geo-distributed, and federated metadata lake. It manages metadata directly in different sources, types, and regions and provides users with unified metadata access for data and AI assets.
+Apache Gravitino is a high-performance, geo-distributed, and federated metadata lake. It manages metadata directly in different sources, types, and regions, providing users with unified metadata access for data and AI assets.
 
 ![Gravitino Architecture](docs/assets/gravitino-architecture.png)
 
-Gravitino aims to provide several key features:
+## 🚀 Key Features
 
-* Single Source of Truth for multi-regional data with geo-distributed architecture support.
-* Unified Data and AI asset management for both users and engines.
-* Security in one place, centralizing the security for different sources.
-* Built-in data management and data access management.
+- **Unified Metadata Management**: Manage diverse metadata sources through a single model and API (e.g., Hive, MySQL, HDFS, S3).
+- **End-to-End Data Governance**: Features like access control, auditing, and discovery across all metadata assets.
+- **Direct Metadata Integration**: Changes in underlying systems are immediately reflected via Gravitino’s connectors.
+- **Geo-Distribution Support**: Share metadata across regions and clouds to support global architectures.
+- **Multi-Engine Compatibility**: Seamlessly integrates with query engines without modifying SQL dialects.
+- **AI Asset Management (WIP)**: Support for AI model and feature tracking.
 
-## Contributing to Apache Gravitino
+## 🌐 Common Use Cases
 
-Gravitino is open source software available under the Apache 2.0 license. For information on how to contribute to Gravitino, please see the [Contribution guidelines](CONTRIBUTING.md).
+- Federated metadata discovery across data lakes and data warehouses
+- Multi-region metadata synchronization for hybrid or multi-cloud setups
+- Data and AI asset governance with unified audit and access control
+- Plug-and-play access for engines like Trino or Spark
+- Support for evolving metadata standards, including AI model lineage
 
-## Online documentation
+## 📚 Documentation
 
-The latest Gravitino documentation is in the [doc folder](docs). This README file only contains basic setup instructions.
+The latest Gravitino documentation is available at [gravitino.apache.org/docs/latest](https://gravitino.apache.org/docs/latest/).
 
-## Building Apache Gravitino
+This README provides a basic overview; visit the site for full installation, configuration, and development documentation.
 
-You can build Gravitino using Gradle. Currently, you can build Gravitino on Linux and macOS, and Windows isn't supported.
+## 🧪 Quick Start
 
-To build Gravitino, please run:
+### Use Gravitino Playground (Recommended)
 
-```shell
-./gradlew clean build -x test
-```
+Gravitino provides a Docker Compose–based playground for a full-stack experience.  
+Clone or download the [Gravitino Playground repository](https://github.com/apache/gravitino-playground) and follow its [README](https://github.com/apache/gravitino-playground/blob/main/README.md).
 
-If you want to build a distribution package, please run:
+### Run Gravitino Locally
 
-```shell
-./gradlew compileDistribution -x test
-```
+1. [Download](https://gravitino.apache.org/downloads) and extract a binary release.
+2. Edit `conf/gravitino.conf` to configure settings.
+3. Start the server:
 
-to build a distribution package.
-
-Or:
-
-```shell
-./gradlew assembleDistribution -x test
-```
-
-to build a compressed distribution package.
-
-The directory `distribution` contains the generated binary distribution package.
-
-Please see [How to build Gravitino](docs/how-to-build.md) for details on building and testing Gravitino.
-
-## Quick start
-
-### Configure and start the Apache Gravitino server
-
-If you already have a binary distribution package, go to the decompressed package directory.
-
-Before starting the Gravitino server, please configure the Gravitino server configuration file. The
-configuration file, `gravitino.conf`, is in the `conf` directory and follows the standard property file format. You can modify the configuration within this file.
-
-To start the Gravitino server, please run:
-
-```shell
+```bash
 ./bin/gravitino.sh start
 ```
 
-To stop the Gravitino server, please run:
+4. To stop:
 
-```shell
+```bash
 ./bin/gravitino.sh stop
 ```
 
-Alternatively, to run the Gravitino server in the frontend, please run:
+Press `CTRL+C` to stop.
 
-```shell
-./bin/gravitino.sh run
+## 🧊 Iceberg REST Catalog
+
+Gravitino provides a native Iceberg REST catalog service.  
+See: [Iceberg REST catalog service](https://gravitino.apache.org/docs/latest/iceberg-rest-service/)
+
+## 🔌 Trino Integration
+
+Gravitino includes a Trino connector for federated metadata access.  
+See: [Using Trino with Gravitino](https://gravitino.apache.org/docs/latest/trino-connector/index/)
+
+## 🛠️ Building from Source
+
+Gravitino uses Gradle. Windows is not currently supported.
+
+Clean build without tests:
+
+```bash
+./gradlew clean build -x test
 ```
 
-And press `CTRL+C` to stop the Gravitino server.
+Build a distribution:
 
-### Gravitino Iceberg REST catalog service
+```bash
+./gradlew compileDistribution -x test
+```
 
-Gravitino provides Iceberg REST catalog service to manage Iceberg. For more details, please refer to [Gravitino Iceberg REST catalog service](docs/iceberg-rest-service.md).
+Or compressed package:
 
-### Using Trino with Apache Gravitino
+```bash
+./gradlew assembleDistribution -x test
+```
 
-Gravitino provides a Trino connector to access the metadata in Gravitino. To use Trino with Gravitino, please follow the [trino-gravitino-connector doc](docs/trino-connector/index.md).
+Artifacts are output to the `distribution/` directory.
 
-## Development guide
+More build options: [How to build Gravitino](https://gravitino.apache.org/docs/latest/how-to-build/)
 
-1. [How to build Gravitino](docs/how-to-build.md)
-2. [How to test Gravitino](docs/how-to-test.md)
-3. [How to publish Docker images](docs/publish-docker-images.md)
+## 👨‍💻 Developer Resources
 
-## License
+- [How to build Gravitino](https://gravitino.apache.org/docs/latest/how-to-build/)
+- [How to test Gravitino](https://gravitino.apache.org/docs/latest/how-to-test/)
+- [Publish Docker images](https://gravitino.apache.org/docs/latest/publish-docker-images)
 
-Gravitino is licensed under the Apache License Version 2.0. For details, see the [LICENSE](LICENSE).
+## 🤝 Contributing
 
-## ASF Incubator disclaimer
+We welcome all kinds of contributions—code, documentation, testing, connectors, and more!
 
-Apache Gravitino is an effort undergoing incubation at The Apache Software Foundation (ASF), sponsored by the Apache Incubator. Incubation is required for all newly accepted projects until a further review indicates that the infrastructure, communications, and decision making process have stabilized in a manner consistent with other successful ASF projects. While incubation status is not necessarily a reflection of the completeness or stability of the code, it does indicate that the project has yet to be fully endorsed by the ASF.
+To get started, please read our [CONTRIBUTING.md](CONTRIBUTING.md) guide.
 
-<sub>Apache®, Apache Gravitino&trade;, Apache Hadoop&reg;, Apache Hive&trade;, Apache Iceberg&trade;, Apache Kafka&reg;, Apache Spark&trade;, Apache Submarine&trade;, Apache Thrift&trade; and Apache Zeppelin&trade; are either registered trademarks or trademarks of the Apache Software Foundation in the United States and/or other countries.</sub>
+## 🔗 ASF Resources
+
+- 📬 Mailing List: [dev@gravitino.apache.org](mailto:dev@gravitino.apache.org) ([subscribe](mailto:dev-subscribe@gravitino.apache.org))
+- 🐞 Issue Tracker: [GitHub Issues](https://github.com/apache/gravitino/issues)
+
+## 🪪 License
+
+Apache Gravitino is licensed under the Apache License, Version 2.0.  
+See the [LICENSE](LICENSE) file for details.
+
+<sub>Apache®, Apache Gravitino™, Apache Hadoop®, Apache Hive™, Apache Iceberg™, Apache Kafka®, Apache Spark™, Apache Submarine™, Apache Thrift™, and Apache Zeppelin™ are trademarks of the Apache Software Foundation in the United States and/or other countries.</sub>
 
 <img src="https://analytics.apache.org/matomo.php?idsite=62&rec=1&bots=1&action_name=ReadMe" style="border:0;" alt="" />

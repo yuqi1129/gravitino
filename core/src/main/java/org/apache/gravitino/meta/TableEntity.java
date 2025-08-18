@@ -20,7 +20,8 @@ package org.apache.gravitino.meta;
 
 import com.google.common.base.Objects;
 import com.google.common.collect.Maps;
-import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import lombok.ToString;
 import org.apache.gravitino.Auditable;
@@ -28,6 +29,7 @@ import org.apache.gravitino.Entity;
 import org.apache.gravitino.Field;
 import org.apache.gravitino.HasIdentifier;
 import org.apache.gravitino.Namespace;
+import org.apache.gravitino.utils.CollectionUtils;
 
 /** A class representing a table entity in Apache Gravitino. */
 @ToString
@@ -38,7 +40,7 @@ public class TableEntity implements Entity, Auditable, HasIdentifier {
   public static final Field AUDIT_INFO =
       Field.required("audit_info", AuditInfo.class, "The audit details of the table");
   public static final Field COLUMNS =
-      Field.optional("columns", ColumnEntity[].class, "The columns of the table");
+      Field.optional("columns", List.class, "The columns of the table");
 
   private Long id;
 
@@ -48,7 +50,7 @@ public class TableEntity implements Entity, Auditable, HasIdentifier {
 
   private Namespace namespace;
 
-  private ColumnEntity[] columns;
+  private List<ColumnEntity> columns;
 
   /**
    * Returns a map of the fields and their corresponding values for this table.
@@ -116,7 +118,7 @@ public class TableEntity implements Entity, Auditable, HasIdentifier {
     return namespace;
   }
 
-  public ColumnEntity[] columns() {
+  public List<ColumnEntity> columns() {
     return columns;
   }
 
@@ -134,12 +136,12 @@ public class TableEntity implements Entity, Auditable, HasIdentifier {
         && Objects.equal(name, baseTable.name)
         && Objects.equal(namespace, baseTable.namespace)
         && Objects.equal(auditInfo, baseTable.auditInfo)
-        && Arrays.equals(columns, baseTable.columns);
+        && CollectionUtils.isEqualCollection(columns, baseTable.columns);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hashCode(id, name, auditInfo, Arrays.hashCode(columns));
+    return Objects.hashCode(id, name, auditInfo, columns, namespace);
   }
 
   public static class Builder {
@@ -170,13 +172,18 @@ public class TableEntity implements Entity, Auditable, HasIdentifier {
       return this;
     }
 
-    public Builder withColumns(ColumnEntity[] columns) {
+    public Builder withColumns(List<ColumnEntity> columns) {
       tableEntity.columns = columns;
       return this;
     }
 
     public TableEntity build() {
       tableEntity.validate();
+
+      if (tableEntity.columns == null) {
+        tableEntity.columns = Collections.emptyList();
+      }
+
       return tableEntity;
     }
   }

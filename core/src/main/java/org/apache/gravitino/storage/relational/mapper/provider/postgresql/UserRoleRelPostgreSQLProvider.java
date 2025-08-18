@@ -25,6 +25,7 @@ import static org.apache.gravitino.storage.relational.mapper.UserRoleRelMapper.U
 import java.util.List;
 import org.apache.gravitino.storage.relational.mapper.provider.base.UserRoleRelBaseSQLProvider;
 import org.apache.gravitino.storage.relational.po.UserRoleRelPO;
+import org.apache.ibatis.annotations.Param;
 
 public class UserRoleRelPostgreSQLProvider extends UserRoleRelBaseSQLProvider {
   @Override
@@ -91,12 +92,22 @@ public class UserRoleRelPostgreSQLProvider extends UserRoleRelBaseSQLProvider {
         + " #{item.deletedAt})"
         + "</foreach>"
         + " ON CONFLICT (user_id, role_id, deleted_at) DO UPDATE SET"
-        + " user_id = VALUES(user_id),"
-        + " role_id = VALUES(role_id),"
-        + " audit_info = VALUES(audit_info),"
-        + " current_version = VALUES(current_version),"
-        + " last_version = VALUES(last_version),"
-        + " deleted_at = VALUES(deleted_at)"
+        + " user_id = EXCLUDED.user_id,"
+        + " role_id = EXCLUDED.role_id,"
+        + " audit_info = EXCLUDED.audit_info,"
+        + " current_version = EXCLUDED.current_version,"
+        + " last_version = EXCLUDED.last_version,"
+        + " deleted_at = EXCLUDED.deleted_at"
         + "</script>";
+  }
+
+  @Override
+  public String deleteUserRoleRelMetasByLegacyTimeline(
+      @Param("legacyTimeline") Long legacyTimeline, @Param("limit") int limit) {
+    return "DELETE FROM "
+        + USER_ROLE_RELATION_TABLE_NAME
+        + " WHERE id IN (SELECT id FROM "
+        + USER_ROLE_RELATION_TABLE_NAME
+        + " WHERE deleted_at > 0 AND deleted_at < #{legacyTimeline} LIMIT #{limit})";
   }
 }

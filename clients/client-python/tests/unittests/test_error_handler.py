@@ -35,6 +35,10 @@ from gravitino.exceptions.base import (
     UnsupportedOperationException,
     ConnectionFailedException,
     CatalogAlreadyExistsException,
+    NoSuchCredentialException,
+)
+from gravitino.exceptions.handlers.credential_error_handler import (
+    CREDENTIAL_ERROR_HANDLER,
 )
 
 from gravitino.exceptions.handlers.rest_error_handler import REST_ERROR_HANDLER
@@ -45,9 +49,7 @@ from gravitino.exceptions.handlers.schema_error_handler import SCHEMA_ERROR_HAND
 
 
 class TestErrorHandler(unittest.TestCase):
-
     def test_rest_error_handler(self):
-
         with self.assertRaises(RESTException):
             REST_ERROR_HANDLER.handle(
                 ErrorResponse.generate_error_response(RESTException, "mock error")
@@ -102,7 +104,6 @@ class TestErrorHandler(unittest.TestCase):
             )
 
     def test_fileset_error_handler(self):
-
         with self.assertRaises(NoSuchFilesetException):
             FILESET_ERROR_HANDLER.handle(
                 ErrorResponse.generate_error_response(
@@ -127,8 +128,25 @@ class TestErrorHandler(unittest.TestCase):
                 ErrorResponse.generate_error_response(Exception, "mock error")
             )
 
-    def test_metalake_error_handler(self):
+    def test_credential_error_handler(self):
+        with self.assertRaises(NoSuchCredentialException):
+            CREDENTIAL_ERROR_HANDLER.handle(
+                ErrorResponse.generate_error_response(
+                    NoSuchCredentialException, "mock error"
+                )
+            )
 
+        with self.assertRaises(InternalError):
+            CREDENTIAL_ERROR_HANDLER.handle(
+                ErrorResponse.generate_error_response(InternalError, "mock error")
+            )
+
+        with self.assertRaises(RESTException):
+            CREDENTIAL_ERROR_HANDLER.handle(
+                ErrorResponse.generate_error_response(Exception, "mock error")
+            )
+
+    def test_metalake_error_handler(self):
         with self.assertRaises(NoSuchMetalakeException):
             METALAKE_ERROR_HANDLER.handle(
                 ErrorResponse.generate_error_response(
@@ -154,7 +172,6 @@ class TestErrorHandler(unittest.TestCase):
             )
 
     def test_catalog_error_handler(self):
-
         with self.assertRaises(ConnectionFailedException):
             CATALOG_ERROR_HANDLER.handle(
                 ErrorResponse.generate_error_response(
@@ -194,7 +211,6 @@ class TestErrorHandler(unittest.TestCase):
             )
 
     def test_schema_error_handler(self):
-
         with self.assertRaises(NoSuchCatalogException):
             SCHEMA_ERROR_HANDLER.handle(
                 ErrorResponse.generate_error_response(

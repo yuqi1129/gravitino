@@ -23,7 +23,7 @@ import static org.apache.gravitino.connector.TestCatalogOperations.FAIL_CREATE;
 import com.google.common.collect.ImmutableMap;
 import java.util.Map;
 import org.apache.gravitino.connector.BaseCatalog;
-import org.apache.gravitino.connector.BasePropertiesMetadata;
+import org.apache.gravitino.connector.BaseCatalogPropertiesMetadata;
 import org.apache.gravitino.connector.CatalogOperations;
 import org.apache.gravitino.connector.PropertiesMetadata;
 import org.apache.gravitino.connector.PropertyEntry;
@@ -38,6 +38,15 @@ public class TestCatalog extends BaseCatalog<TestCatalog> {
 
   private static final TestFilesetPropertiesMetadata FILESET_PROPERTIES_METADATA =
       new TestFilesetPropertiesMetadata();
+
+  public static final String PROPERTY_KEY1 = "key1";
+  public static final String PROPERTY_KEY2 = "key2";
+  public static final String PROPERTY_KEY3 = "key3";
+  public static final String PROPERTY_KEY4 = "key4";
+  public static final String PROPERTY_RESERVED_KEY = "reserved_key";
+  public static final String PROPERTY_HIDDEN_KEY = "hidden_key";
+  public static final String PROPERTY_KEY5_PREFIX = "key5-";
+  public static final String PROPERTY_KEY6_PREFIX = "key6-";
 
   public TestCatalog() {}
 
@@ -68,19 +77,32 @@ public class TestCatalog extends BaseCatalog<TestCatalog> {
 
   @Override
   public PropertiesMetadata catalogPropertiesMetadata() throws UnsupportedOperationException {
-    return new BasePropertiesMetadata() {
+    return new BaseCatalogPropertiesMetadata() {
       @Override
       protected Map<String, PropertyEntry<?>> specificPropertyEntries() {
         return ImmutableMap.<String, PropertyEntry<?>>builder()
             .put(
-                "key1",
-                PropertyEntry.stringPropertyEntry("key1", "value1", true, true, null, false, false))
-            .put(
-                "key2",
+                PROPERTY_KEY1,
                 PropertyEntry.stringPropertyEntry(
-                    "key2", "value2", true, false, null, false, false))
+                    PROPERTY_KEY1,
+                    "value1" /* description */,
+                    true /* required */,
+                    true /* immutable */,
+                    null /* default value*/,
+                    false /* hidden */,
+                    false /* reserved */))
             .put(
-                "key3",
+                PROPERTY_KEY2,
+                PropertyEntry.stringPropertyEntry(
+                    PROPERTY_KEY2,
+                    "value2" /* description */,
+                    true /* required */,
+                    false /* immutable */,
+                    null /* default value*/,
+                    false /* hidden */,
+                    false /* reserved */))
+            .put(
+                PROPERTY_KEY3,
                 new PropertyEntry.Builder<Integer>()
                     .withDecoder(Integer::parseInt)
                     .withEncoder(Object::toString)
@@ -91,39 +113,60 @@ public class TestCatalog extends BaseCatalog<TestCatalog> {
                     .withImmutable(true)
                     .withJavaType(Integer.class)
                     .withRequired(false)
-                    .withName("key3")
+                    .withName(PROPERTY_KEY3)
                     .build())
             .put(
-                "key4",
+                PROPERTY_KEY4,
                 PropertyEntry.stringPropertyEntry(
-                    "key4", "value4", false, false, "value4", false, false))
+                    PROPERTY_KEY4, "value4", false, false, "value4", false, false))
             .put(
-                "reserved_key",
+                PROPERTY_RESERVED_KEY,
                 PropertyEntry.stringPropertyEntry(
-                    "reserved_key", "reserved_key", false, true, "reserved_value", false, true))
+                    PROPERTY_RESERVED_KEY,
+                    "reserved_key" /* description */,
+                    false /* required */,
+                    true /* immutable */,
+                    "reserved_value" /* default value*/,
+                    false /* hidden */,
+                    true /* reserved */))
             .put(
-                "hidden_key",
+                PROPERTY_HIDDEN_KEY,
                 PropertyEntry.stringPropertyEntry(
-                    "hidden_key", "hidden_key", false, false, "hidden_value", true, false))
+                    PROPERTY_HIDDEN_KEY,
+                    "hidden_key" /* description */,
+                    false /* required */,
+                    false /* immutable */,
+                    "hidden_value" /* default value*/,
+                    true /* hidden */,
+                    false /* reserved */))
             .put(
                 FAIL_CREATE,
                 PropertyEntry.booleanPropertyEntry(
                     FAIL_CREATE,
                     "Whether an exception needs to be thrown on creation",
-                    false,
-                    false,
-                    false,
-                    false,
-                    false))
+                    false /* required */,
+                    false /* immutable */,
+                    false /* default value*/,
+                    false /* hidden */,
+                    false /* reserved */))
             .put(
-                AUTHORIZATION_PROVIDER,
-                PropertyEntry.stringImmutablePropertyEntry(
-                    Catalog.AUTHORIZATION_PROVIDER,
-                    "The name of the authorization provider for Gravitino",
-                    false,
-                    null,
-                    false,
-                    false))
+                PROPERTY_KEY5_PREFIX,
+                PropertyEntry.stringRequiredPropertyPrefixEntry(
+                    PROPERTY_KEY5_PREFIX,
+                    "property with prefix 'key5-'",
+                    false /* immutable */,
+                    null /* default value*/,
+                    false /* hidden */,
+                    false /* reserved */))
+            .put(
+                PROPERTY_KEY6_PREFIX,
+                PropertyEntry.stringImmutablePropertyPrefixEntry(
+                    PROPERTY_KEY6_PREFIX,
+                    "property with prefix 'key6-'",
+                    false /* required */,
+                    null /* default value*/,
+                    false /* hidden */,
+                    false /* reserved */))
             .build();
       }
     };
@@ -141,6 +184,16 @@ public class TestCatalog extends BaseCatalog<TestCatalog> {
 
   @Override
   public PropertiesMetadata topicPropertiesMetadata() throws UnsupportedOperationException {
+    return BASE_PROPERTIES_METADATA;
+  }
+
+  @Override
+  public PropertiesMetadata modelPropertiesMetadata() throws UnsupportedOperationException {
+    return BASE_PROPERTIES_METADATA;
+  }
+
+  @Override
+  public PropertiesMetadata modelVersionPropertiesMetadata() throws UnsupportedOperationException {
     return BASE_PROPERTIES_METADATA;
   }
 }

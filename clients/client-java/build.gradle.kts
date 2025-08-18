@@ -25,16 +25,14 @@ plugins {
 dependencies {
   implementation(project(":api"))
   implementation(project(":common"))
-  implementation(libs.protobuf.java.util) {
-    exclude("com.google.guava", "guava")
-      .because("Brings in Guava for Android, which we don't want (and breaks multimaps).")
-  }
   implementation(libs.jackson.databind)
   implementation(libs.jackson.annotations)
   implementation(libs.jackson.datatype.jdk8)
   implementation(libs.jackson.datatype.jsr310)
   implementation(libs.guava)
-  implementation(libs.httpclient5)
+  implementation(libs.httpclient5) {
+    exclude(group = "org.slf4j")
+  }
   implementation(libs.commons.lang3)
 
   compileOnly(libs.lombok)
@@ -73,7 +71,8 @@ tasks.test {
   if (skipITs) {
     exclude("**/integration/test/**")
   } else {
-    dependsOn(":catalogs:catalog-hadoop:jar", ":catalogs:catalog-hadoop:runtimeJars")
+    dependsOn(":catalogs:catalog-fileset:jar", ":catalogs:catalog-fileset:runtimeJars")
+    dependsOn(":catalogs:catalog-model:jar", ":catalogs:catalog-model:runtimeJars")
     dependsOn(":catalogs:catalog-hive:jar", ":catalogs:catalog-hive:runtimeJars")
     dependsOn(":catalogs:catalog-kafka:jar", ":catalogs:catalog-kafka:runtimeJars")
   }

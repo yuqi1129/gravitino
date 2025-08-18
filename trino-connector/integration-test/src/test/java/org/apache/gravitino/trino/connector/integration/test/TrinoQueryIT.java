@@ -46,41 +46,40 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 @Tag("gravitino-docker-test")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class TrinoQueryIT extends TrinoQueryITBase {
   private static final Logger LOG = LoggerFactory.getLogger(TrinoQueryIT.class);
 
-  static String testsetsDir = "";
-  AtomicInteger passCount = new AtomicInteger(0);
-  AtomicInteger totalCount = new AtomicInteger(0);
-  static boolean exitOnFailed = true;
+  protected static String testsetsDir;
+  protected AtomicInteger passCount = new AtomicInteger(0);
+  protected AtomicInteger totalCount = new AtomicInteger(0);
+  protected static boolean exitOnFailed = true;
 
   // key: tester name, value: tester result
-  private static Map<String, TestStatus> allTestStatus = new TreeMap<>();
+  private static final Map<String, TestStatus> allTestStatus = new TreeMap<>();
 
-  private static int testParallelism = 2;
+  private static final int testParallelism = 2;
 
   static Map<String, String> queryParams = new HashMap<>();
 
   static Set<String> ciTestsets = new HashSet<>();
 
+  static TrinoQueryITBase trinoQueryITBase;
+
   static {
     testsetsDir = TrinoQueryIT.class.getClassLoader().getResource("trino-ci-testset").getPath();
     testsetsDir = ITUtils.joinPath(testsetsDir, "testsets");
-
-    ciTestsets.add("hive");
-    ciTestsets.add("lakehouse-iceberg");
-    ciTestsets.add("jdbc-mysql");
-    ciTestsets.add("jdbc-postgresql");
-    ciTestsets.add("tpch");
   }
 
   @BeforeAll
-  public static void setup() throws Exception {
-    TrinoQueryITBase.setup();
+  public void setup() throws Exception {
+    trinoQueryITBase = new TrinoQueryITBase();
+    trinoQueryITBase.setup();
     cleanupTestEnv();
 
     queryParams.put("mysql_uri", mysqlUri);
@@ -163,7 +162,7 @@ public class TrinoQueryIT extends TrinoQueryITBase {
     sqls = removeSqlComments(sqls);
 
     Matcher sqlMatcher =
-        Pattern.compile("(\\w.*?);", Pattern.DOTALL | Pattern.UNIX_LINES).matcher(sqls);
+        Pattern.compile("([<\\w].*?);", Pattern.DOTALL | Pattern.UNIX_LINES).matcher(sqls);
     while (sqlMatcher.find()) {
       String sql = sqlMatcher.group(1);
       sql = resolveParameters(sql);
@@ -222,7 +221,7 @@ public class TrinoQueryIT extends TrinoQueryITBase {
     String testResults = TrinoQueryITBase.readFileToString(resultFileName);
 
     Matcher sqlMatcher =
-        Pattern.compile("(\\w.*?);", Pattern.DOTALL | Pattern.UNIX_LINES).matcher(sqls);
+        Pattern.compile("([<\\w].*?);", Pattern.DOTALL | Pattern.UNIX_LINES).matcher(sqls);
     Matcher resultMatcher =
         Pattern.compile("((\".*?\")\\n{2,})|((\\S.*?)\\n{2,})", Pattern.DOTALL | Pattern.UNIX_LINES)
             .matcher(testResults);
@@ -276,8 +275,8 @@ public class TrinoQueryIT extends TrinoQueryITBase {
    * actual result matches the query failed result. 3. The expected result is a regular expression,
    * and the actual result matches the regular expression.
    *
-   * @param expectResult
-   * @param result
+   * @param expectResult the expected result
+   * @param result the actual result
    * @return false if the expected result is empty or the actual result does not match the expected.
    *     For {@literal <BLANK_LINE>} case, return true if the actual result is empty. For {@literal
    *     <QUERY_FAILED>} case, replace the placeholder with "^Query \\w+ failed.*: " and do match.
@@ -339,7 +338,7 @@ public class TrinoQueryIT extends TrinoQueryITBase {
   @Test
   public void testSql() throws Exception {
     ExecutorService executor = Executors.newFixedThreadPool(testParallelism);
-    CompletionService completionService = new ExecutorCompletionService<>(executor);
+    CompletionService<Integer> completionService = new ExecutorCompletionService<>(executor);
 
     String[] testSetNames =
         Arrays.stream(TrinoQueryITBase.listDirectory(testsetsDir))
@@ -358,7 +357,7 @@ public class TrinoQueryIT extends TrinoQueryITBase {
 
   public void testSql(String testSetDirName, String catalog, String testerPrefix) throws Exception {
     ExecutorService executor = Executors.newFixedThreadPool(testParallelism);
-    CompletionService completionService = new ExecutorCompletionService<>(executor);
+    CompletionService<Integer> completionService = new ExecutorCompletionService<>(executor);
 
     totalCount.addAndGet(getTesterCount(testSetDirName, catalog, testerPrefix));
     List<Future<Integer>> futures =
@@ -370,7 +369,7 @@ public class TrinoQueryIT extends TrinoQueryITBase {
 
   private void waitForCompleted(
       ExecutorService executor,
-      CompletionService completionService,
+      CompletionService<Integer> completionService,
       List<Future<Integer>> allFutures) {
     for (int i = 0; i < allFutures.size(); i++) {
       try {
@@ -406,7 +405,7 @@ public class TrinoQueryIT extends TrinoQueryITBase {
   }
 
   public List<Future<Integer>> runOneTestset(
-      CompletionService completionService,
+      CompletionService<Integer> completionService,
       String testSetDirName,
       String catalog,
       String testerFilter)

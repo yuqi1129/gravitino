@@ -22,7 +22,7 @@ info:
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
-  version: 0.7.0-incubating-SNAPSHOT
+  version: 1.0.0-SNAPSHOT
   description: |
     Defines the specification for the first version of the Gravitino REST API.
 
@@ -65,8 +65,20 @@ paths:
   /metalakes/{metalake}/objects/{metadataObjectType}/{metadataObjectFullName}/tags:
     $ref: "./tags.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1objects~1%7BmetadataObjectType%7D~1%7BmetadataObjectFullName%7D~1tags"
 
+  /metalakes/{metalake}/policies:
+    $ref: "./policies.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1policies"
+
+  /metalakes/{metalake}/policies/{policy}:
+    $ref: "./policies.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1policies~1%7Bpolicy%7D"
+
+  /metalakes/{metalake}/policies/{policy}/objects:
+    $ref: "./policies.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1policies~1%7Bpolicy%7D~1objects"
+
   /metalakes/{metalake}/objects/{metadataObjectType}/{metadataObjectFullName}/roles:
     $ref: "./roles.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1objects~1%7BmetadataObjectType%7D~1%7BmetadataObjectFullName%7D~1roles"
+
+  /metalakes/{metalake}/objects/{metadataObjectType}/{metadataObjectFullName}/credentials:
+    $ref: "./credentials.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1objects~1%7BmetadataObjectType%7D~1%7BmetadataObjectFullName%7D~1credentials"
 
   /metalakes/{metalake}/objects/{metadataObjectType}/{metadataObjectFullName}/tags/{tag}:
     $ref: "./tags.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1objects~1%7BmetadataObjectType%7D~1%7BmetadataObjectFullName%7D~1tags~1%7Btag%7D"
@@ -95,7 +107,7 @@ paths:
   /metalakes/{metalake}/catalogs/{catalog}/schemas/{schema}/tables/{table}:
     $ref: "./tables.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1catalogs~1%7Bcatalog%7D~1schemas~1%7Bschema%7D~1tables~1%7Btable%7D"
 
-  /metalaskes/{metalake}/catalogs/{catalog}/schemas/{schema}/tables/{table}/partitions:
+  /metalakes/{metalake}/catalogs/{catalog}/schemas/{schema}/tables/{table}/partitions:
     $ref: "./partitions.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1catalogs~1%7Bcatalog%7D~1schemas~1%7Bschema%7D~1tables~1%7Btable%7D~1partitions"
 
   /metalakes/{metalake}/catalogs/{catalog}/schemas/{schema}/tables/{table}/partitions/{partition}:
@@ -107,12 +119,29 @@ paths:
   /metalakes/{metalake}/catalogs/{catalog}/schemas/{schema}/filesets/{fileset}:
     $ref: "./filesets.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1catalogs~1%7Bcatalog%7D~1schemas~1%7Bschema%7D~1filesets~1%7Bfileset%7D"
 
+  /metalakes/{metalake}/catalogs/{catalog}/schemas/{schema}/filesets/{fileset}/files:
+    $ref: "./filesets.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1catalogs~1%7Bcatalog%7D~1schemas~1%7Bschema%7D~1filesets~1%7Bfileset%7D~1files"
+
   /metalakes/{metalake}/catalogs/{catalog}/schemas/{schema}/topics:
     $ref: "./topics.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1catalogs~1%7Bcatalog%7D~1schemas~1%7Bschema%7D~1topics"
 
   /metalakes/{metalake}/catalogs/{catalog}/schemas/{schema}/topics/{topic}:
     $ref: "./topics.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1catalogs~1%7Bcatalog%7D~1schemas~1%7Bschema%7D~1topics~1%7Btopic%7D"
 
+  /metalakes/{metalake}/catalogs/{catalog}/schemas/{schema}/models:
+    $ref: "./models.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1catalogs~1%7Bcatalog%7D~1schemas~1%7Bschema%7D~1models"
+
+  /metalakes/{metalake}/catalogs/{catalog}/schemas/{schema}/models/{model}:
+    $ref: "./models.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1catalogs~1%7Bcatalog%7D~1schemas~1%7Bschema%7D~1models~1%7Bmodel%7D"
+
+  /metalakes/{metalake}/catalogs/{catalog}/schemas/{schema}/models/{model}/versions:
+    $ref: "./models.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1catalogs~1%7Bcatalog%7D~1schemas~1%7Bschema%7D~1models~1%7Bmodel%7D~1versions"
+
+  /metalakes/{metalake}/catalogs/{catalog}/schemas/{schema}/models/{model}/versions/{version}:
+    $ref: "./models.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1catalogs~1%7Bcatalog%7D~1schemas~1%7Bschema%7D~1models~1%7Bmodel%7D~1versions~1%7Bversion%7D"
+
+  /metalakes/{metalake}/catalogs/{catalog}/schemas/{schema}/models/{model}/aliases/{alias}:
+    $ref: "./models.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1catalogs~1%7Bcatalog%7D~1schemas~1%7Bschema%7D~1models~1%7Bmodel%7D~1aliases~1%7Balias%7D"
 
   /metalakes/{metalake}/users:
     $ref: "./users.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1users"
@@ -152,6 +181,9 @@ paths:
 
   /metalakes/{metalake}/permissions/roles/{role}/{metadataObjectType}/{metadataObjectFullName}/revoke:
     $ref: "./permissions.yaml#/paths/~1metalakes~1%7Bmetalake%7D~1permissions~1roles~1%7Brole%7D~1%7BmetadataObjectType%7D~1%7BmetadataObjectFullName%7D~1revoke"
+
+  /lineage:
+    $ref: "./lineage.yaml#/paths/~1lineage"
 
 components:
 
@@ -362,6 +394,25 @@ components:
                 type: boolean
                 description: Whether the set operation was successful
 
+    BaseResponse:
+      description: Represents a response for a base operation
+      content:
+        application/vnd.gravitino.v1+json:
+          schema:
+            type: object
+            required:
+              - code
+            properties:
+              code:
+                type: integer
+                format: int32
+                description: Status code of the response
+                enum:
+                  - 0
+          example: {
+            "code": 0
+          }
+
   parameters:
     metalake:
       name: metalake
@@ -411,10 +462,26 @@ components:
       schema:
         type: string
 
+    model:
+      name: model
+      in: path
+      description: The name of the model
+      required: true
+      schema:
+        type: string
+
     tag:
       name: tag
       in: path
       description: The name of the tag
+      required: true
+      schema:
+        type: string
+
+    policy:
+      name: policy
+      in: path
+      description: The name of the policy
       required: true
       schema:
         type: string
@@ -450,14 +517,15 @@ components:
       schema:
         type: string
         enum:
+          - "METALAKE"
           - "CATALOG"
           - "SCHEMA"
           - "TABLE"
+          - "COLUMN"
           - "FILESET"
           - "TOPIC"
+          - "MODEL"
           - "ROLE"
-          - "METALAKE"
-
     metadataObjectFullName:
       name: metadataObjectFullName
       in: path
@@ -465,6 +533,15 @@ components:
       required: true
       schema:
         type: string
+
+    force:
+      name: force
+      in: query
+      description: Force the operation to be executed
+      required: false
+      schema:
+        type: boolean
+        default: false
 
   securitySchemes:
 

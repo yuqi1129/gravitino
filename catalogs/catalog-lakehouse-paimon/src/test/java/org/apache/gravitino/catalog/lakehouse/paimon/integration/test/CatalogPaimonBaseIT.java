@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.gravitino.Catalog;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Namespace;
@@ -46,13 +47,14 @@ import org.apache.gravitino.catalog.lakehouse.paimon.PaimonConfig;
 import org.apache.gravitino.catalog.lakehouse.paimon.ops.PaimonBackendCatalogWrapper;
 import org.apache.gravitino.catalog.lakehouse.paimon.utils.CatalogUtils;
 import org.apache.gravitino.client.GravitinoMetalake;
-import org.apache.gravitino.dto.util.DTOConverters;
 import org.apache.gravitino.exceptions.NoSuchSchemaException;
 import org.apache.gravitino.exceptions.SchemaAlreadyExistsException;
 import org.apache.gravitino.exceptions.TableAlreadyExistsException;
 import org.apache.gravitino.integration.test.container.ContainerSuite;
-import org.apache.gravitino.integration.test.util.AbstractIT;
+import org.apache.gravitino.integration.test.container.MySQLContainer;
+import org.apache.gravitino.integration.test.util.BaseIT;
 import org.apache.gravitino.integration.test.util.GravitinoITUtils;
+import org.apache.gravitino.integration.test.util.TestDatabaseName;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.Table;
 import org.apache.gravitino.rel.TableCatalog;
@@ -71,7 +73,9 @@ import org.apache.paimon.catalog.Catalog.DatabaseNotExistException;
 import org.apache.paimon.catalog.Identifier;
 import org.apache.paimon.schema.TableSchema;
 import org.apache.paimon.table.FileStoreTable;
+import org.apache.paimon.types.DataField;
 import org.apache.paimon.types.LocalZonedTimestampType;
+import org.apache.paimon.types.TimeType;
 import org.apache.paimon.types.TimestampType;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -84,15 +88,27 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.platform.commons.util.StringUtils;
 
-public abstract class CatalogPaimonBaseIT extends AbstractIT {
+public abstract class CatalogPaimonBaseIT extends BaseIT {
 
   protected static final ContainerSuite containerSuite = ContainerSuite.getInstance();
+  protected static final TestDatabaseName TEST_DB_NAME =
+      TestDatabaseName.PG_TEST_PAIMON_CATALOG_MULTIPLE_JDBC_LOAD;
+  protected static MySQLContainer mySQLContainer;
   protected String WAREHOUSE;
   protected String TYPE;
+  protected String URI;
+  protected String jdbcUser;
+  protected String jdbcPassword;
+  protected Catalog catalog;
+  protected org.apache.paimon.catalog.Catalog paimonCatalog;
+  protected SparkSession spark;
+  protected String metalakeName = GravitinoITUtils.genRandomName("paimon_it_metalake");
+  protected String catalogName = GravitinoITUtils.genRandomName("paimon_it_catalog");
+  protected String schemaName = GravitinoITUtils.genRandomName("paimon_it_schema");
+  protected static final String schema_comment = "schema_comment";
 
-  private static final String provider = "lakehouse-paimon";
+  protected static final String provider = "lakehouse-paimon";
   private static final String catalog_comment = "catalog_comment";
-  private static final String schema_comment = "schema_comment";
   private static final String table_comment = "table_comment";
   private static final String PAIMON_COL_NAME1 = "paimon_col_name1";
   private static final String PAIMON_COL_NAME2 = "paimon_col_name2";
@@ -100,16 +116,10 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
   private static final String PAIMON_COL_NAME4 = "paimon_col_name4";
   private static final String PAIMON_COL_NAME5 = "paimon_col_name5";
   private static final String alertTableName = "alert_table_name";
-  private String metalakeName = GravitinoITUtils.genRandomName("paimon_it_metalake");
-  private String catalogName = GravitinoITUtils.genRandomName("paimon_it_catalog");
-  private String schemaName = GravitinoITUtils.genRandomName("paimon_it_schema");
-  private String tableName = GravitinoITUtils.genRandomName("paimon_it_table");
   private static String INSERT_BATCH_WITHOUT_PARTITION_TEMPLATE = "INSERT INTO paimon.%s VALUES %s";
   private static final String SELECT_ALL_TEMPLATE = "SELECT * FROM paimon.%s";
-  private GravitinoMetalake metalake;
-  private Catalog catalog;
-  private org.apache.paimon.catalog.Catalog paimonCatalog;
-  protected SparkSession spark;
+  private static final String DEFAULT_DB = "default";
+  protected GravitinoMetalake metalake;
   private Map<String, String> catalogProperties;
 
   @BeforeAll
@@ -129,7 +139,9 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
   @AfterAll
   public void stop() {
     clearTableAndSchema();
+    metalake.disableCatalog(catalogName);
     metalake.dropCatalog(catalogName);
+    client.disableMetalake(metalakeName);
     client.dropMetalake(metalakeName);
     if (spark != null) {
       spark.close();
@@ -163,9 +175,7 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
 
     // load schema check.
     Schema schema = schemas.loadSchema(schemaIdent.name());
-    // database properties is empty for Paimon FilesystemCatalog.
-    Assertions.assertTrue(schema.properties().isEmpty());
-    Assertions.assertTrue(paimonCatalog.loadDatabaseProperties(schemaIdent.name()).isEmpty());
+    Assertions.assertEquals(testSchemaName, schema.name());
 
     Map<String, String> emptyMap = Collections.emptyMap();
     Assertions.assertThrows(
@@ -202,6 +212,7 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
 
   @Test
   void testCreateTableWithNullComment() {
+    String tableName = GravitinoITUtils.genRandomName("paimon_table_with_null_comment");
     Column[] columns = createColumns();
     NameIdentifier tableIdentifier = NameIdentifier.of(schemaName, tableName);
 
@@ -217,6 +228,8 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
   @Test
   void testCreateAndLoadPaimonTable()
       throws org.apache.paimon.catalog.Catalog.TableNotExistException {
+    String tableName = GravitinoITUtils.genRandomName("create_and_load_paimon_table");
+
     // Create table from Gravitino API
     Column[] columns = createColumns();
 
@@ -245,7 +258,7 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
     Assertions.assertEquals(createdTable.columns().length, columns.length);
 
     for (int i = 0; i < columns.length; i++) {
-      Assertions.assertEquals(DTOConverters.toDTO(columns[i]), createdTable.columns()[i]);
+      assertColumn(columns[i], createdTable.columns()[i]);
     }
 
     Table loadTable = tableCatalog.loadTable(tableIdentifier);
@@ -258,7 +271,7 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
     }
     Assertions.assertEquals(loadTable.columns().length, columns.length);
     for (int i = 0; i < columns.length; i++) {
-      Assertions.assertEquals(DTOConverters.toDTO(columns[i]), loadTable.columns()[i]);
+      assertColumn(columns[i], loadTable.columns()[i]);
     }
 
     // catalog load check
@@ -301,6 +314,8 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
   @Test
   void testCreateAndLoadPaimonPartitionedTable()
       throws org.apache.paimon.catalog.Catalog.TableNotExistException {
+    String tableName = GravitinoITUtils.genRandomName("create_and_load_paimon_partitioned_table");
+
     // Create table from Gravitino API
     Column[] columns = createColumns();
 
@@ -333,7 +348,7 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
     Assertions.assertEquals(createdTable.columns().length, columns.length);
 
     for (int i = 0; i < columns.length; i++) {
-      Assertions.assertEquals(DTOConverters.toDTO(columns[i]), createdTable.columns()[i]);
+      assertColumn(columns[i], createdTable.columns()[i]);
     }
 
     Table loadTable = tableCatalog.loadTable(tableIdentifier);
@@ -361,7 +376,7 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
     Assertions.assertArrayEquals(partitionKeys, loadedPartitionKeys);
     Assertions.assertEquals(loadTable.columns().length, columns.length);
     for (int i = 0; i < columns.length; i++) {
-      Assertions.assertEquals(DTOConverters.toDTO(columns[i]), loadTable.columns()[i]);
+      assertColumn(columns[i], loadTable.columns()[i]);
     }
 
     // catalog load check
@@ -390,6 +405,8 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
   @Test
   void testCreateAndLoadPaimonPrimaryKeyTable()
       throws org.apache.paimon.catalog.Catalog.TableNotExistException {
+    String tableName = GravitinoITUtils.genRandomName("create_and_load_paimon_primary_key_table");
+
     // Create table from Gravitino API
     Column[] columns = createColumns();
     ArrayList<Column> newColumns = new ArrayList<>(Arrays.asList(columns));
@@ -444,7 +461,7 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
     }
     Assertions.assertEquals(createdTable.columns().length, columns.length);
     for (int i = 0; i < columns.length; i++) {
-      Assertions.assertEquals(DTOConverters.toDTO(columns[i]), createdTable.columns()[i]);
+      assertColumn(columns[i], createdTable.columns()[i]);
     }
 
     Table loadTable = tableCatalog.loadTable(tableIdentifier);
@@ -473,7 +490,7 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
     }
     Assertions.assertEquals(loadTable.columns().length, columns.length);
     for (int i = 0; i < columns.length; i++) {
-      Assertions.assertEquals(DTOConverters.toDTO(columns[i]), loadTable.columns()[i]);
+      assertColumn(columns[i], loadTable.columns()[i]);
     }
 
     // catalog load check
@@ -527,13 +544,13 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
 
     Table loadTable = tableCatalog.loadTable(tableIdentifier);
     Assertions.assertEquals("paimon_column_1", loadTable.columns()[0].name());
-    Assertions.assertEquals(Types.TimestampType.withTimeZone(), loadTable.columns()[0].dataType());
+    Assertions.assertEquals(Types.TimestampType.withTimeZone(6), loadTable.columns()[0].dataType());
     Assertions.assertEquals("col_1_comment", loadTable.columns()[0].comment());
     Assertions.assertTrue(loadTable.columns()[0].nullable());
 
     Assertions.assertEquals("paimon_column_2", loadTable.columns()[1].name());
     Assertions.assertEquals(
-        Types.TimestampType.withoutTimeZone(), loadTable.columns()[1].dataType());
+        Types.TimestampType.withoutTimeZone(6), loadTable.columns()[1].dataType());
     Assertions.assertEquals("col_2_comment", loadTable.columns()[1].comment());
     Assertions.assertTrue(loadTable.columns()[1].nullable());
 
@@ -615,6 +632,8 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
 
   @Test
   public void testAlterPaimonTable() {
+    String tableName = GravitinoITUtils.genRandomName("alter_paimon_table");
+
     Column[] columns = createColumns();
     catalog
         .asTableCatalog()
@@ -712,11 +731,11 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
     // update column position
     Column col1 = Column.of("name", Types.StringType.get(), "comment");
     Column col2 = Column.of("address", Types.StringType.get(), "comment");
-    Column col3 = Column.of("date_of_birth", Types.DateType.get(), "comment");
+    Column col3 = Column.of("date_of_birth", Types.StringType.get(), "comment");
 
     Column[] newColumns = new Column[] {col1, col2, col3};
     NameIdentifier tableIdentifier =
-        NameIdentifier.of(schemaName, GravitinoITUtils.genRandomName("PaimonAlterTableIT"));
+        NameIdentifier.of(schemaName, GravitinoITUtils.genRandomName("new_alter_paimon_table"));
     catalog
         .asTableCatalog()
         .createTable(
@@ -838,6 +857,170 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
     }
   }
 
+  @Test
+  void testTimeTypePrecision() throws org.apache.paimon.catalog.Catalog.TableNotExistException {
+    String tableName = GravitinoITUtils.genRandomName("test_time_precision");
+    NameIdentifier tableIdentifier = NameIdentifier.of(schemaName, tableName);
+    Column[] columns = createColumns();
+    columns =
+        ArrayUtils.addAll(
+            columns,
+            // time type
+            Column.of("time_col", Types.TimeType.get()),
+            Column.of("time_col_0", Types.TimeType.of(0)),
+            Column.of("time_col_1", Types.TimeType.of(1)),
+            Column.of("time_col_3", Types.TimeType.of(3)),
+            Column.of("time_col_6", Types.TimeType.of(6)),
+            // timestamp type
+            Column.of("timestamp_col", Types.TimestampType.withTimeZone()),
+            Column.of("timestamp_col_0", Types.TimestampType.withTimeZone(0)),
+            Column.of("timestamp_col_1", Types.TimestampType.withTimeZone(1)),
+            Column.of("timestamp_col_3", Types.TimestampType.withTimeZone(3)),
+            Column.of("timestamp_col_6", Types.TimestampType.withTimeZone(6)),
+            // datetime type (without time zone)
+            Column.of("datetime_col", Types.TimestampType.withoutTimeZone()),
+            Column.of("datetime_col_0", Types.TimestampType.withoutTimeZone(0)),
+            Column.of("datetime_col_1", Types.TimestampType.withoutTimeZone(1)),
+            Column.of("datetime_col_3", Types.TimestampType.withoutTimeZone(3)),
+            Column.of("datetime_col_6", Types.TimestampType.withoutTimeZone(6)));
+
+    Map<String, String> properties = createProperties();
+    TableCatalog tableCatalog = catalog.asTableCatalog();
+    tableCatalog.createTable(
+        tableIdentifier,
+        columns,
+        table_comment,
+        properties,
+        Transforms.EMPTY_TRANSFORM,
+        Distributions.NONE,
+        new SortOrder[0]);
+
+    Table loadTable = tableCatalog.loadTable(tableIdentifier);
+
+    // Verify time type precisions
+    Column[] timeColumns =
+        Arrays.stream(loadTable.columns())
+            .filter(c -> c.name().startsWith("time_col"))
+            .toArray(Column[]::new);
+
+    Assertions.assertEquals(5, timeColumns.length);
+    for (Column column : timeColumns) {
+      switch (column.name()) {
+        case "time_col":
+          Assertions.assertEquals(Types.TimeType.of(0), column.dataType());
+          break;
+        case "time_col_0":
+          Assertions.assertEquals(Types.TimeType.of(0), column.dataType());
+          break;
+        case "time_col_1":
+          Assertions.assertEquals(Types.TimeType.of(1), column.dataType());
+          break;
+        case "time_col_3":
+          Assertions.assertEquals(Types.TimeType.of(3), column.dataType());
+          break;
+        case "time_col_6":
+          Assertions.assertEquals(Types.TimeType.of(6), column.dataType());
+          break;
+        default:
+          Assertions.fail("Unexpected time column: " + column.name());
+      }
+    }
+
+    // Verify timestamp type precisions
+    Column[] timestampColumns =
+        Arrays.stream(loadTable.columns())
+            .filter(c -> c.name().startsWith("timestamp_col"))
+            .toArray(Column[]::new);
+
+    Assertions.assertEquals(5, timestampColumns.length);
+    for (Column column : timestampColumns) {
+      switch (column.name()) {
+        case "timestamp_col":
+          Assertions.assertEquals(Types.TimestampType.withTimeZone(6), column.dataType());
+          break;
+        case "timestamp_col_0":
+          Assertions.assertEquals(Types.TimestampType.withTimeZone(0), column.dataType());
+          break;
+        case "timestamp_col_1":
+          Assertions.assertEquals(Types.TimestampType.withTimeZone(1), column.dataType());
+          break;
+        case "timestamp_col_3":
+          Assertions.assertEquals(Types.TimestampType.withTimeZone(3), column.dataType());
+          break;
+        case "timestamp_col_6":
+          Assertions.assertEquals(Types.TimestampType.withTimeZone(6), column.dataType());
+          break;
+        default:
+          Assertions.fail("Unexpected timestamp column: " + column.name());
+      }
+    }
+
+    // Verify datetime type precisions
+    Column[] datetimeColumns =
+        Arrays.stream(loadTable.columns())
+            .filter(c -> c.name().startsWith("datetime_col"))
+            .toArray(Column[]::new);
+
+    Assertions.assertEquals(5, datetimeColumns.length);
+    for (Column column : datetimeColumns) {
+      switch (column.name()) {
+        case "datetime_col":
+          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(6), column.dataType());
+          break;
+        case "datetime_col_0":
+          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(0), column.dataType());
+          break;
+        case "datetime_col_1":
+          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(1), column.dataType());
+          break;
+        case "datetime_col_3":
+          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(3), column.dataType());
+          break;
+        case "datetime_col_6":
+          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(6), column.dataType());
+          break;
+        default:
+          Assertions.fail("Unexpected datetime column: " + column.name());
+      }
+    }
+
+    // Verify Paimon catalog type conversion
+    org.apache.paimon.table.Table table =
+        paimonCatalog.getTable(Identifier.create(schemaName, tableName));
+    Assertions.assertInstanceOf(FileStoreTable.class, table);
+    FileStoreTable fileStoreTable = (FileStoreTable) table;
+    TableSchema schema = fileStoreTable.schema();
+
+    // Verify field types in Paimon schema
+    for (DataField field : schema.fields()) {
+      String fieldName = field.name();
+      org.apache.paimon.types.DataType fieldType = field.type();
+
+      if (fieldName.startsWith("time_col")) {
+        Assertions.assertInstanceOf(
+            TimeType.class,
+            fieldType,
+            String.format(
+                "Field %s should be TimeType but was %s",
+                fieldName, fieldType.getClass().getSimpleName()));
+      } else if (fieldName.startsWith("timestamp_col")) {
+        Assertions.assertInstanceOf(
+            LocalZonedTimestampType.class,
+            fieldType,
+            String.format(
+                "Field %s should be LocalZonedTimestampType but was %s",
+                fieldName, fieldType.getClass().getSimpleName()));
+      } else if (fieldName.startsWith("datetime_col")) {
+        Assertions.assertInstanceOf(
+            TimestampType.class,
+            fieldType,
+            String.format(
+                "Field %s should be TimestampType but was %s",
+                fieldName, fieldType.getClass().getSimpleName()));
+      }
+    }
+  }
+
   private static @NotNull List<String> getValues() {
     List<String> values = new ArrayList<>();
     for (int i = 1; i < 5; i++) {
@@ -857,16 +1040,21 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
   }
 
   private void clearTableAndSchema() {
-    if (catalog.asSchemas().schemaExists(schemaName)) {
-      catalog.asSchemas().dropSchema(schemaName, true);
-    }
+    SupportsSchemas supportsSchema = catalog.asSchemas();
+    Arrays.stream(supportsSchema.listSchemas())
+        .forEach(
+            schema -> {
+              // can not drop default database for hive backend.
+              if (!DEFAULT_DB.equalsIgnoreCase(schema)) {
+                supportsSchema.dropSchema(schema, true);
+              }
+            });
   }
 
   private void createMetalake() {
-    GravitinoMetalake createdMetalake =
-        client.createMetalake(metalakeName, "comment", Collections.emptyMap());
+    client.createMetalake(metalakeName, "comment", Collections.emptyMap());
     GravitinoMetalake loadMetalake = client.loadMetalake(metalakeName);
-    Assertions.assertEquals(createdMetalake, loadMetalake);
+    Assertions.assertEquals(metalakeName, loadMetalake.name());
 
     metalake = loadMetalake;
   }
@@ -889,7 +1077,7 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
 
     // Why needs this conversion? Because PaimonCatalogOperations#initialize will try to convert
     // Gravitino general S3 properties to Paimon specific S3 properties.
-    Map<String, String> copy = CatalogUtils.toPaimonCatalogProperties(catalogProperties);
+    Map<String, String> copy = CatalogUtils.toInnerProperty(catalogProperties, true);
 
     PaimonBackendCatalogWrapper paimonBackendCatalogWrapper =
         CatalogUtils.loadCatalogBackend(new PaimonConfig(copy));
@@ -903,10 +1091,8 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
     prop.put("key2", "val2");
 
     Schema createdSchema = catalog.asSchemas().createSchema(ident.name(), schema_comment, prop);
-    // database properties is empty for Paimon FilesystemCatalog.
     Schema loadSchema = catalog.asSchemas().loadSchema(ident.name());
     Assertions.assertEquals(createdSchema.name(), loadSchema.name());
-    Assertions.assertTrue(loadSchema.properties().isEmpty());
   }
 
   private Column[] createColumns() {
@@ -948,5 +1134,14 @@ public abstract class CatalogPaimonBaseIT extends AbstractIT {
                 "org.apache.paimon.spark.extensions.PaimonSparkSessionExtensions")
             .enableHiveSupport()
             .getOrCreate();
+  }
+
+  protected void assertColumn(Column expectedColumn, Column actualColumn) {
+    Assertions.assertEquals(expectedColumn.name(), actualColumn.name());
+    Assertions.assertEquals(expectedColumn.dataType(), actualColumn.dataType());
+    Assertions.assertEquals(expectedColumn.comment(), actualColumn.comment());
+    Assertions.assertEquals(expectedColumn.nullable(), actualColumn.nullable());
+    Assertions.assertEquals(expectedColumn.autoIncrement(), actualColumn.autoIncrement());
+    Assertions.assertEquals(expectedColumn.defaultValue(), actualColumn.defaultValue());
   }
 }

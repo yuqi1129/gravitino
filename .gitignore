@@ -27,6 +27,8 @@ replay_pid*
 **/.gradle
 **/.idea
 !/.idea/icon.svg
+!.idea/vcs.xml
+**/.vscode
 **/build
 gen
 **/.DS_Store
@@ -53,3 +55,7 @@ include clients/client-python/.gitignore
 **/metastore_db
 **/spark-warehouse
 derby.log
+
+web/node_modules
+web/dist
+web/.next

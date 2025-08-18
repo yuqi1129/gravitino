@@ -31,6 +31,8 @@ import org.apache.gravitino.Catalog;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Namespace;
 import org.apache.gravitino.audit.CallerContext;
+import org.apache.gravitino.credential.Credential;
+import org.apache.gravitino.credential.SupportsCredentials;
 import org.apache.gravitino.dto.AuditDTO;
 import org.apache.gravitino.dto.CatalogDTO;
 import org.apache.gravitino.dto.requests.FilesetCreateRequest;
@@ -42,6 +44,7 @@ import org.apache.gravitino.dto.responses.FileLocationResponse;
 import org.apache.gravitino.dto.responses.FilesetResponse;
 import org.apache.gravitino.exceptions.FilesetAlreadyExistsException;
 import org.apache.gravitino.exceptions.NoSuchFilesetException;
+import org.apache.gravitino.exceptions.NoSuchLocationNameException;
 import org.apache.gravitino.exceptions.NoSuchSchemaException;
 import org.apache.gravitino.file.Fileset;
 import org.apache.gravitino.file.FilesetChange;
@@ -52,7 +55,8 @@ import org.apache.gravitino.rest.RESTUtils;
  * example, schemas and filesets list, creation, update and deletion. A Fileset catalog is under the
  * metalake.
  */
-class FilesetCatalog extends BaseSchemaCatalog implements org.apache.gravitino.file.FilesetCatalog {
+class FilesetCatalog extends BaseSchemaCatalog
+    implements org.apache.gravitino.file.FilesetCatalog, SupportsCredentials {
 
   FilesetCatalog(
       Namespace namespace,
@@ -122,28 +126,23 @@ class FilesetCatalog extends BaseSchemaCatalog implements org.apache.gravitino.f
   }
 
   /**
-   * Create a fileset metadata in the catalog.
+   * Create a fileset metadata with multiple storage locations in the catalog.
    *
-   * <p>If the type of the fileset object is "MANAGED", the underlying storageLocation can be null,
-   * and Gravitino will manage the storage location based on the location of the schema.
-   *
-   * <p>If the type of the fileset object is "EXTERNAL", the underlying storageLocation must be set.
-   *
-   * @param ident A fileset identifier, which should be "schema.fileset" format.
+   * @param ident A fileset identifier.
    * @param comment The comment of the fileset.
    * @param type The type of the fileset.
-   * @param storageLocation The storage location of the fileset.
+   * @param storageLocations The location names and storage locations of the fileset.
    * @param properties The properties of the fileset.
    * @return The created fileset metadata
    * @throws NoSuchSchemaException If the schema does not exist.
    * @throws FilesetAlreadyExistsException If the fileset already exists.
    */
   @Override
-  public Fileset createFileset(
+  public Fileset createMultipleLocationFileset(
       NameIdentifier ident,
       String comment,
       Fileset.Type type,
-      String storageLocation,
+      Map<String, String> storageLocations,
       Map<String, String> properties)
       throws NoSuchSchemaException, FilesetAlreadyExistsException {
     checkFilesetNameIdentifier(ident);
@@ -151,12 +150,13 @@ class FilesetCatalog extends BaseSchemaCatalog implements org.apache.gravitino.f
     Namespace fullNamespace = getFilesetFullNamespace(ident.namespace());
     FilesetCreateRequest req =
         FilesetCreateRequest.builder()
-            .name(RESTUtils.encodeString(ident.name()))
+            .name(ident.name())
             .comment(comment)
             .type(type)
-            .storageLocation(storageLocation)
+            .storageLocations(storageLocations)
             .properties(properties)
             .build();
+    req.validate();
 
     FilesetResponse resp =
         restClient.post(
@@ -194,7 +194,7 @@ class FilesetCatalog extends BaseSchemaCatalog implements org.apache.gravitino.f
 
     FilesetResponse resp =
         restClient.put(
-            formatFilesetRequestPath(fullNamespace) + "/" + ident.name(),
+            formatFilesetRequestPath(fullNamespace) + "/" + RESTUtils.encodeString(ident.name()),
             req,
             FilesetResponse.class,
             Collections.emptyMap(),
@@ -220,7 +220,7 @@ class FilesetCatalog extends BaseSchemaCatalog implements org.apache.gravitino.f
     Namespace fullNamespace = getFilesetFullNamespace(ident.namespace());
     DropResponse resp =
         restClient.delete(
-            formatFilesetRequestPath(fullNamespace) + "/" + ident.name(),
+            formatFilesetRequestPath(fullNamespace) + "/" + RESTUtils.encodeString(ident.name()),
             DropResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.filesetErrorHandler());
@@ -235,12 +235,13 @@ class FilesetCatalog extends BaseSchemaCatalog implements org.apache.gravitino.f
    *
    * @param ident A fileset identifier.
    * @param subPath The sub path to the file or directory.
+   * @param locationName The name of the location to be accessed.
    * @return The actual location of the file or directory.
    * @throws NoSuchFilesetException If the fileset does not exist.
    */
   @Override
-  public String getFileLocation(NameIdentifier ident, String subPath)
-      throws NoSuchFilesetException {
+  public String getFileLocation(NameIdentifier ident, String subPath, String locationName)
+      throws NoSuchFilesetException, NoSuchLocationNameException {
     checkFilesetNameIdentifier(ident);
     Namespace fullNamespace = getFilesetFullNamespace(ident.namespace());
 
@@ -249,6 +250,9 @@ class FilesetCatalog extends BaseSchemaCatalog implements org.apache.gravitino.f
 
       Map<String, String> params = new HashMap<>();
       params.put("sub_path", RESTUtils.encodeString(subPath));
+      if (locationName != null) {
+        params.put("location_name", RESTUtils.encodeString(locationName));
+      }
       FileLocationResponse resp =
           restClient.get(
               formatFileLocationRequestPath(fullNamespace, ident.name()),
@@ -263,6 +267,16 @@ class FilesetCatalog extends BaseSchemaCatalog implements org.apache.gravitino.f
       // Clear the caller context
       CallerContext.CallerContextHolder.remove();
     }
+  }
+
+  @Override
+  public SupportsCredentials supportsCredentials() throws UnsupportedOperationException {
+    return this;
+  }
+
+  @Override
+  public Credential[] getCredentials() {
+    return objectCredentialOperations.getCredentials();
   }
 
   @VisibleForTesting

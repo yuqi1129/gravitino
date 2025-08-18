@@ -16,10 +16,13 @@ CREATE TABLE
    f12 bigint,
    f13 date,
    f14 time(6),
-   f15 timestamp(6)
+   f15 timestamp(6),
+   f16 timestamp(6) with time zone
 )
 COMMENT ''
 WITH (
+   format = 'PARQUET',
+   format_version = '2',
    location = 'hdfs://%/user/iceberg/warehouse/TrinoQueryIT/gt_db2%/tb01'
 )"
 
@@ -28,8 +31,8 @@ INSERT: 1 row
 
 INSERT: 1 row
 
-"Sample text 1","65","123.456","7.89","12.34","true","1000","1000","100000","2024-01-01","08:00:00.000000","2024-01-01 08:00:00.000000"
-"","","","","","","","","","","",""
+"Sample text 1","65","123.456","7.89","12.34","true","1000","1000","100000","2024-01-01","08:00:00.000000","2024-01-01 08:00:00.000000","2024-01-01 08:00:00.000000 UTC"
+"","","","","","","","","","","","",""
 
 CREATE TABLE
 
@@ -45,10 +48,13 @@ CREATE TABLE
    f12 bigint NOT NULL,
    f13 date NOT NULL,
    f14 time(6) NOT NULL,
-   f15 timestamp(6) NOT NULL
+   f15 timestamp(6) NOT NULL,
+   f16 timestamp(6) with time zone NOT NULL
 )
 COMMENT ''
 WITH (
+   format = 'PARQUET',
+   format_version = '2',
    location = 'hdfs://%/user/iceberg/warehouse/TrinoQueryIT/gt_db2%/tb02'
 )"
 

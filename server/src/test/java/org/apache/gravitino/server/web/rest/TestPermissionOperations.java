@@ -55,8 +55,8 @@ import org.apache.gravitino.dto.responses.GroupResponse;
 import org.apache.gravitino.dto.responses.RoleResponse;
 import org.apache.gravitino.dto.responses.UserResponse;
 import org.apache.gravitino.exceptions.IllegalPrivilegeException;
+import org.apache.gravitino.exceptions.IllegalRoleException;
 import org.apache.gravitino.exceptions.NoSuchMetalakeException;
-import org.apache.gravitino.exceptions.NoSuchRoleException;
 import org.apache.gravitino.exceptions.NoSuchUserException;
 import org.apache.gravitino.lock.LockManager;
 import org.apache.gravitino.meta.AuditInfo;
@@ -67,14 +67,13 @@ import org.apache.gravitino.metalake.MetalakeDispatcher;
 import org.apache.gravitino.rest.RESTUtils;
 import org.glassfish.hk2.utilities.binding.AbstractBinder;
 import org.glassfish.jersey.server.ResourceConfig;
-import org.glassfish.jersey.test.JerseyTest;
 import org.glassfish.jersey.test.TestProperties;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
-public class TestPermissionOperations extends JerseyTest {
+public class TestPermissionOperations extends BaseOperationsTest {
 
   private static final AccessControlManager manager = mock(AccessControlManager.class);
   private static final MetalakeDispatcher metalakeDispatcher = mock(MetalakeDispatcher.class);
@@ -135,8 +134,15 @@ public class TestPermissionOperations extends JerseyTest {
             .build();
     when(manager.grantRolesToUser(any(), any(), any())).thenReturn(userEntity);
 
-    RoleGrantRequest request = new RoleGrantRequest(Lists.newArrayList("role1"));
+    RoleGrantRequest illegalReq = new RoleGrantRequest(null);
+    Response illegalResp =
+        target("/metalakes/metalake1/permissions/users/user/grant")
+            .request(MediaType.APPLICATION_JSON_TYPE)
+            .accept("application/vnd.gravitino.v1+json")
+            .put(Entity.entity(illegalReq, MediaType.APPLICATION_JSON_TYPE));
+    Assertions.assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), illegalResp.getStatus());
 
+    RoleGrantRequest request = new RoleGrantRequest(Lists.newArrayList("role1"));
     Response resp =
         target("/metalakes/metalake1/permissions/users/user/grant")
             .request(MediaType.APPLICATION_JSON_TYPE)
@@ -186,8 +192,8 @@ public class TestPermissionOperations extends JerseyTest {
     Assertions.assertEquals(ErrorConstants.NOT_FOUND_CODE, errorResponse.getCode());
     Assertions.assertEquals(NoSuchUserException.class.getSimpleName(), errorResponse.getType());
 
-    // Test to throw NoSuchRoleException
-    doThrow(new NoSuchRoleException("mock error"))
+    // Test to throw IllegalRoleException
+    doThrow(new IllegalRoleException("mock error"))
         .when(manager)
         .grantRolesToUser(any(), any(), any());
     resp1 =
@@ -196,12 +202,12 @@ public class TestPermissionOperations extends JerseyTest {
             .accept("application/vnd.gravitino.v1+json")
             .put(Entity.entity(request, MediaType.APPLICATION_JSON_TYPE));
 
-    Assertions.assertEquals(Response.Status.NOT_FOUND.getStatusCode(), resp1.getStatus());
+    Assertions.assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), resp1.getStatus());
     Assertions.assertEquals(MediaType.APPLICATION_JSON_TYPE, resp1.getMediaType());
 
     errorResponse = resp1.readEntity(ErrorResponse.class);
-    Assertions.assertEquals(ErrorConstants.NOT_FOUND_CODE, errorResponse.getCode());
-    Assertions.assertEquals(NoSuchRoleException.class.getSimpleName(), errorResponse.getType());
+    Assertions.assertEquals(ErrorConstants.ILLEGAL_ARGUMENTS_CODE, errorResponse.getCode());
+    Assertions.assertEquals(IllegalRoleException.class.getSimpleName(), errorResponse.getType());
 
     // Test to throw internal RuntimeException
     doThrow(new RuntimeException("mock error")).when(manager).grantRolesToUser(any(), any(), any());
@@ -231,6 +237,15 @@ public class TestPermissionOperations extends JerseyTest {
                 AuditInfo.builder().withCreator("test").withCreateTime(Instant.now()).build())
             .build();
     when(manager.grantRolesToGroup(any(), any(), any())).thenReturn(groupEntity);
+
+    // Test with Illegal request
+    RoleGrantRequest illegalReq = new RoleGrantRequest(null);
+    Response illegalResp =
+        target("/metalakes/metalake1/permissions/groups/group/grant")
+            .request(MediaType.APPLICATION_JSON_TYPE)
+            .accept("application/vnd.gravitino.v1+json")
+            .put(Entity.entity(illegalReq, MediaType.APPLICATION_JSON_TYPE));
+    Assertions.assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), illegalResp.getStatus());
 
     RoleGrantRequest request = new RoleGrantRequest(Lists.newArrayList("role1"));
 
@@ -284,8 +299,8 @@ public class TestPermissionOperations extends JerseyTest {
     Assertions.assertEquals(ErrorConstants.NOT_FOUND_CODE, errorResponse.getCode());
     Assertions.assertEquals(NoSuchUserException.class.getSimpleName(), errorResponse.getType());
 
-    // Test to throw NoSuchRoleException
-    doThrow(new NoSuchRoleException("mock error"))
+    // Test to throw IllegalRoleException
+    doThrow(new IllegalRoleException("mock error"))
         .when(manager)
         .grantRolesToGroup(any(), any(), any());
     resp1 =
@@ -294,12 +309,12 @@ public class TestPermissionOperations extends JerseyTest {
             .accept("application/vnd.gravitino.v1+json")
             .put(Entity.entity(request, MediaType.APPLICATION_JSON_TYPE));
 
-    Assertions.assertEquals(Response.Status.NOT_FOUND.getStatusCode(), resp1.getStatus());
+    Assertions.assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), resp1.getStatus());
     Assertions.assertEquals(MediaType.APPLICATION_JSON_TYPE, resp1.getMediaType());
 
     errorResponse = resp1.readEntity(ErrorResponse.class);
-    Assertions.assertEquals(ErrorConstants.NOT_FOUND_CODE, errorResponse.getCode());
-    Assertions.assertEquals(NoSuchRoleException.class.getSimpleName(), errorResponse.getType());
+    Assertions.assertEquals(ErrorConstants.ILLEGAL_ARGUMENTS_CODE, errorResponse.getCode());
+    Assertions.assertEquals(IllegalRoleException.class.getSimpleName(), errorResponse.getType());
 
     // Test to throw internal RuntimeException
     doThrow(new RuntimeException("mock error"))
@@ -331,6 +346,16 @@ public class TestPermissionOperations extends JerseyTest {
                 AuditInfo.builder().withCreator("test").withCreateTime(Instant.now()).build())
             .build();
     when(manager.revokeRolesFromUser(any(), any(), any())).thenReturn(userEntity);
+
+    // Test with illegal request
+    RoleRevokeRequest illegalReq = new RoleRevokeRequest(null);
+    Response illegalResp =
+        target("/metalakes/metalake1/permissions/users/user1/revoke")
+            .request(MediaType.APPLICATION_JSON_TYPE)
+            .accept("application/vnd.gravitino.v1+json")
+            .put(Entity.entity(illegalReq, MediaType.APPLICATION_JSON_TYPE));
+    Assertions.assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), illegalResp.getStatus());
+
     RoleRevokeRequest request = new RoleRevokeRequest(Lists.newArrayList("role1"));
 
     Response resp =
@@ -362,6 +387,23 @@ public class TestPermissionOperations extends JerseyTest {
     ErrorResponse errorResponse = resp3.readEntity(ErrorResponse.class);
     Assertions.assertEquals(ErrorConstants.INTERNAL_ERROR_CODE, errorResponse.getCode());
     Assertions.assertEquals(RuntimeException.class.getSimpleName(), errorResponse.getType());
+
+    // Test to throw IllegalRoleException
+    doThrow(new IllegalRoleException("mock error"))
+        .when(manager)
+        .revokeRolesFromUser(any(), any(), any());
+    Response nsrResponse =
+        target("/metalakes/metalake1/permissions/users/user/revoke")
+            .request(MediaType.APPLICATION_JSON_TYPE)
+            .accept("application/vnd.gravitino.v1+json")
+            .put(Entity.entity(request, MediaType.APPLICATION_JSON_TYPE));
+
+    Assertions.assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), nsrResponse.getStatus());
+    Assertions.assertEquals(MediaType.APPLICATION_JSON_TYPE, nsrResponse.getMediaType());
+
+    errorResponse = nsrResponse.readEntity(ErrorResponse.class);
+    Assertions.assertEquals(ErrorConstants.ILLEGAL_ARGUMENTS_CODE, errorResponse.getCode());
+    Assertions.assertEquals(IllegalRoleException.class.getSimpleName(), errorResponse.getType());
   }
 
   @Test
@@ -376,6 +418,15 @@ public class TestPermissionOperations extends JerseyTest {
                 AuditInfo.builder().withCreator("test").withCreateTime(Instant.now()).build())
             .build();
     when(manager.revokeRolesFromGroup(any(), any(), any())).thenReturn(groupEntity);
+    // Test with illegal request
+    RoleRevokeRequest illegalReq = new RoleRevokeRequest(null);
+    Response illegalResp =
+        target("/metalakes/metalake1/permissions/groups/group1/revoke")
+            .request(MediaType.APPLICATION_JSON_TYPE)
+            .accept("application/vnd.gravitino.v1+json")
+            .put(Entity.entity(illegalReq, MediaType.APPLICATION_JSON_TYPE));
+    Assertions.assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), illegalResp.getStatus());
+
     RoleRevokeRequest request = new RoleRevokeRequest(Lists.newArrayList("role1"));
 
     Response resp =
@@ -407,6 +458,23 @@ public class TestPermissionOperations extends JerseyTest {
     ErrorResponse errorResponse = resp3.readEntity(ErrorResponse.class);
     Assertions.assertEquals(ErrorConstants.INTERNAL_ERROR_CODE, errorResponse.getCode());
     Assertions.assertEquals(RuntimeException.class.getSimpleName(), errorResponse.getType());
+
+    // Test to throw IllegalRoleException
+    doThrow(new IllegalRoleException("mock error"))
+        .when(manager)
+        .revokeRolesFromGroup(any(), any(), any());
+    Response nsrResponse =
+        target("/metalakes/metalake1/permissions/groups/group/revoke")
+            .request(MediaType.APPLICATION_JSON_TYPE)
+            .accept("application/vnd.gravitino.v1+json")
+            .put(Entity.entity(request, MediaType.APPLICATION_JSON_TYPE));
+
+    Assertions.assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), nsrResponse.getStatus());
+    Assertions.assertEquals(MediaType.APPLICATION_JSON_TYPE, nsrResponse.getMediaType());
+
+    errorResponse = nsrResponse.readEntity(ErrorResponse.class);
+    Assertions.assertEquals(ErrorConstants.ILLEGAL_ARGUMENTS_CODE, errorResponse.getCode());
+    Assertions.assertEquals(IllegalRoleException.class.getSimpleName(), errorResponse.getType());
   }
 
   @Test
@@ -504,6 +572,16 @@ public class TestPermissionOperations extends JerseyTest {
             .build();
     when(manager.revokePrivilegesFromRole(any(), any(), any(), any())).thenReturn(roleEntity);
     when(metalakeDispatcher.metalakeExists(any())).thenReturn(true);
+
+    // Test with illegal request
+    PrivilegeRevokeRequest illegalReq = new PrivilegeRevokeRequest(null);
+    Response illegalResp =
+        target("/metalakes/metalake1/permissions/roles/role1/metalake/metalake1/revoke")
+            .request(MediaType.APPLICATION_JSON_TYPE)
+            .accept("application/vnd.gravitino.v1+json")
+            .put(Entity.entity(illegalReq, MediaType.APPLICATION_JSON_TYPE));
+    Assertions.assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), illegalResp.getStatus());
+
     PrivilegeRevokeRequest request =
         new PrivilegeRevokeRequest(
             Lists.newArrayList(

@@ -32,6 +32,7 @@ import org.apache.gravitino.GravitinoEnv;
 import org.apache.gravitino.MetadataObject;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.authorization.AuthorizationUtils;
+import org.apache.gravitino.exceptions.IllegalMetadataObjectException;
 import org.apache.gravitino.exceptions.NoSuchMetadataObjectException;
 import org.apache.gravitino.exceptions.NoSuchRoleException;
 
@@ -49,6 +50,7 @@ public class MetadataObjectUtil {
           .put(MetadataObject.Type.FILESET, Entity.EntityType.FILESET)
           .put(MetadataObject.Type.COLUMN, Entity.EntityType.COLUMN)
           .put(MetadataObject.Type.ROLE, Entity.EntityType.ROLE)
+          .put(MetadataObject.Type.MODEL, Entity.EntityType.MODEL)
           .build();
 
   private MetadataObjectUtil() {}
@@ -68,6 +70,20 @@ public class MetadataObjectUtil {
             () ->
                 new IllegalArgumentException(
                     "Unknown metadata object type: " + metadataObject.type()));
+  }
+
+  /**
+   * Map the given {@link MetadataObject}'s type to the corresponding {@link Entity.EntityType}.
+   *
+   * @param type The metadata object type
+   * @return The entity type
+   * @throws IllegalArgumentException if the metadata object type is unknown
+   */
+  public static Entity.EntityType toEntityType(MetadataObject.Type type) {
+    Preconditions.checkArgument(type != null, "metadataObject type cannot be null");
+
+    return Optional.ofNullable(TYPE_TO_TYPE_MAP.get(type))
+        .orElseThrow(() -> new IllegalArgumentException("Unknown metadata object type: " + type));
   }
 
   /**
@@ -93,12 +109,10 @@ public class MetadataObjectUtil {
       case TABLE:
       case TOPIC:
       case FILESET:
+      case COLUMN:
+      case MODEL:
         String fullName = DOT.join(metalakeName, metadataObject.fullName());
         return NameIdentifier.parse(fullName);
-      case COLUMN:
-        throw new IllegalArgumentException(
-            "Cannot convert column metadata object to entity identifier: "
-                + metadataObject.fullName());
       default:
         throw new IllegalArgumentException(
             "Unknown metadata object type: " + metadataObject.type());
@@ -126,6 +140,9 @@ public class MetadataObjectUtil {
 
     switch (object.type()) {
       case METALAKE:
+        if (!metalake.equals(object.name())) {
+          throw new IllegalMetadataObjectException("The metalake object name must be %s", metalake);
+        }
         NameIdentifierUtil.checkMetalake(identifier);
         check(env.metalakeDispatcher().metalakeExists(identifier), exceptionToThrowSupplier);
         break;
@@ -150,9 +167,20 @@ public class MetadataObjectUtil {
         check(env.tableDispatcher().tableExists(identifier), exceptionToThrowSupplier);
         break;
 
+      case COLUMN:
+        NameIdentifierUtil.checkColumn(identifier);
+        NameIdentifier tableIdent = NameIdentifier.of(identifier.namespace().levels());
+        check(env.tableDispatcher().tableExists(tableIdent), exceptionToThrowSupplier);
+        break;
+
       case TOPIC:
         NameIdentifierUtil.checkTopic(identifier);
         check(env.topicDispatcher().topicExists(identifier), exceptionToThrowSupplier);
+        break;
+
+      case MODEL:
+        NameIdentifierUtil.checkModel(identifier);
+        check(env.modelDispatcher().modelExists(identifier), exceptionToThrowSupplier);
         break;
 
       case ROLE:

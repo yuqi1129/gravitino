@@ -37,7 +37,7 @@ You can check the relevant data source configuration in [data source properties]
 When you use the Gravitino with Trino. You can pass the Trino PostgreSQL connector configuration using prefix `trino.bypass.`. For example, using `trino.bypass.join-pushdown.strategy` to pass the `join-pushdown.strategy` to the Gravitino PostgreSQL catalog in Trino runtime.
 
 If you use JDBC catalog, you must provide `jdbc-url`, `jdbc-driver`, `jdbc-database`, `jdbc-user` and `jdbc-password` to catalog properties.
-Besides the [common catalog properties](./gravitino-server-config.md#gravitino-catalog-properties-configuration), the PostgreSQL catalog has the following properties:
+Besides the [common catalog properties](./gravitino-server-config.md#apache-gravitino-catalog-properties-configuration), the PostgreSQL catalog has the following properties:
 
 | Configuration item   | Description                                                                                                                                                        | Default value | Required | Since Version |
 |----------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------|----------|---------------|
@@ -88,33 +88,33 @@ Please refer to [Manage Relational Metadata Using Gravitino](./manage-relational
 - Support [column default value](./manage-relational-metadata-using-gravitino.md#table-column-default-value) and [auto-increment](./manage-relational-metadata-using-gravitino.md#table-column-auto-increment).
 - Doesn't support table property settings.
 
-#### Table column types
+### Table column types
 
-| Gravitino Type | PostgreSQL Type |
-|----------------|-----------------|
-| `Boolean`      | `Bool`          |
-| `Short`        | `Int2`          |
-| `Integer`      | `Int4`          |
-| `Long`         | `Int8`          |
-| `Float`        | `Float4`        |
-| `Double`       | `Float8`        |
-| `String`       | `Text`          |
-| `Date`         | `Date`          |
-| `Time`         | `Time`          |
-| `Timestamp`    | `Timestamp`     |
-| `Timestamp_tz` | `Timestamptz`   |
-| `Decimal`      | `Numeric`       |
-| `VarChar`      | `Varchar`       |
-| `FixedChar`    | `Bpchar`        |
-| `Binary`       | `Bytea`         |
-| `List`         | `Array`         |
+| Gravitino Type    | PostgreSQL Type  |
+|-------------------|------------------|
+| `Boolean`         | `Bool`           |
+| `Short`           | `Int2`           |
+| `Integer`         | `Int4`           |
+| `Long`            | `Int8`           |
+| `Float`           | `Float4`         |
+| `Double`          | `Float8`         |
+| `String`          | `Text`           |
+| `Date`            | `Date`           |
+| `Time(p)`         | `Time(p)`        |
+| `Timestamp(p)`    | `Timestamp(p)`   |
+| `Timestamp_tz(p)` | `Timestamptz(p)` |
+| `Decimal`         | `Numeric`        |
+| `VarChar`         | `Varchar`        |
+| `FixedChar`       | `Bpchar`         |
+| `Binary`          | `Bytea`          |
+| `List`            | `Array`          |
 
 :::info
 PostgreSQL doesn't support Gravitino `Fixed` `Struct` `Map` `IntervalDay` `IntervalYear` `Union` `UUID` type.
-Meanwhile, the data types other than listed above are mapped to Gravitino **[External Type](./manage-relational-metadata-using-gravitino.md#external-type)** that represents an unresolvable data type since 0.6.0.
+Meanwhile, the data types other than listed above are mapped to Gravitino **[External Type](./manage-relational-metadata-using-gravitino.md#external-type)** that represents an unresolvable data type since 0.6.0-incubating.
 :::
 
-#### Table column auto-increment
+### Table column auto-increment
 
 - Supports setting auto-increment.
 

@@ -18,11 +18,13 @@
  */
 package org.apache.gravitino.client;
 
+import static org.apache.gravitino.file.Fileset.LOCATION_NAME_UNKNOWN;
 import static org.apache.hc.core5.http.HttpStatus.SC_INTERNAL_SERVER_ERROR;
 import static org.apache.hc.core5.http.HttpStatus.SC_NOT_FOUND;
 import static org.apache.hc.core5.http.HttpStatus.SC_OK;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.google.common.collect.ImmutableMap;
 import java.util.Collections;
 import java.util.Locale;
 import org.apache.gravitino.Catalog;
@@ -46,6 +48,7 @@ import org.apache.gravitino.exceptions.NoSuchTagException;
 import org.apache.gravitino.exceptions.NotFoundException;
 import org.apache.gravitino.file.Fileset;
 import org.apache.gravitino.messaging.Topic;
+import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.Table;
 import org.apache.gravitino.rel.types.Types;
 import org.apache.gravitino.tag.SupportsTags;
@@ -68,6 +71,8 @@ public class TestSupportTags extends TestBase {
   private static Schema genericSchema;
 
   private static Table relationalTable;
+
+  private static Column genericColumn;
 
   private static Fileset genericFileset;
 
@@ -141,13 +146,15 @@ public class TestSupportTags extends TestBase {
                 .build(),
             client.restClient());
 
+    genericColumn = relationalTable.columns()[0];
+
     genericFileset =
         new GenericFileset(
             FilesetDTO.builder()
                 .name("fileset1")
                 .comment("comment1")
                 .type(Fileset.Type.EXTERNAL)
-                .storageLocation("s3://bucket/path")
+                .storageLocations(ImmutableMap.of(LOCATION_NAME_UNKNOWN, "s3://bucket/path"))
                 .properties(Collections.emptyMap())
                 .audit(AuditDTO.builder().withCreator("test").build())
                 .build(),
@@ -196,6 +203,14 @@ public class TestSupportTags extends TestBase {
   }
 
   @Test
+  public void testListTagsForColumn() throws JsonProcessingException {
+    testListTags(
+        genericColumn.supportsTags(),
+        MetadataObjects.of(
+            "catalog1.schema1.table1", genericColumn.name(), MetadataObject.Type.COLUMN));
+  }
+
+  @Test
   public void testListTagsForFileset() throws JsonProcessingException {
     testListTags(
         genericFileset.supportsTags(),
@@ -236,6 +251,14 @@ public class TestSupportTags extends TestBase {
     testListTagsInfo(
         relationalTable.supportsTags(),
         MetadataObjects.of("catalog1.schema1", relationalTable.name(), MetadataObject.Type.TABLE));
+  }
+
+  @Test
+  public void testListTagsInfoForColumn() throws JsonProcessingException {
+    testListTagsInfo(
+        genericColumn.supportsTags(),
+        MetadataObjects.of(
+            "catalog1.schema1.table1", genericColumn.name(), MetadataObject.Type.COLUMN));
   }
 
   @Test
@@ -282,6 +305,14 @@ public class TestSupportTags extends TestBase {
   }
 
   @Test
+  public void testGetTagForColumn() throws JsonProcessingException {
+    testGetTag(
+        genericColumn.supportsTags(),
+        MetadataObjects.of(
+            "catalog1.schema1.table1", genericColumn.name(), MetadataObject.Type.COLUMN));
+  }
+
+  @Test
   public void testGetTagForFileset() throws JsonProcessingException {
     testGetTag(
         genericFileset.supportsTags(),
@@ -322,6 +353,14 @@ public class TestSupportTags extends TestBase {
     testAssociateTags(
         relationalTable.supportsTags(),
         MetadataObjects.of("catalog1.schema1", relationalTable.name(), MetadataObject.Type.TABLE));
+  }
+
+  @Test
+  public void testAssociateTagsForColumn() throws JsonProcessingException {
+    testAssociateTags(
+        genericColumn.supportsTags(),
+        MetadataObjects.of(
+            "catalog1.schema1.table1", genericColumn.name(), MetadataObject.Type.COLUMN));
   }
 
   @Test

@@ -24,6 +24,8 @@ import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
 import javax.ws.rs.ext.ExceptionMapper;
 import javax.ws.rs.ext.Provider;
+import org.apache.gravitino.exceptions.IllegalNameIdentifierException;
+import org.apache.gravitino.exceptions.NoSuchCatalogException;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
@@ -51,12 +53,15 @@ public class IcebergExceptionMapper implements ExceptionMapper<Exception> {
       ImmutableMap.<Class<? extends Exception>, Integer>builder()
           .put(IllegalArgumentException.class, 400)
           .put(ValidationException.class, 400)
+          .put(IllegalNameIdentifierException.class, 400)
           .put(NamespaceNotEmptyException.class, 400)
           .put(NotAuthorizedException.class, 401)
+          .put(org.apache.gravitino.exceptions.ForbiddenException.class, 403)
           .put(ForbiddenException.class, 403)
           .put(NoSuchNamespaceException.class, 404)
           .put(NoSuchTableException.class, 404)
           .put(NoSuchIcebergTableException.class, 404)
+          .put(NoSuchCatalogException.class, 404)
           .put(UnsupportedOperationException.class, 406)
           .put(NoSuchViewException.class, 404)
           .put(AlreadyExistsException.class, 409)
@@ -68,6 +73,10 @@ public class IcebergExceptionMapper implements ExceptionMapper<Exception> {
 
   @Override
   public Response toResponse(Exception ex) {
+    return toRESTResponse(ex);
+  }
+
+  public static Response toRESTResponse(Exception ex) {
     int status =
         EXCEPTION_ERROR_CODES.getOrDefault(
             ex.getClass(), Status.INTERNAL_SERVER_ERROR.getStatusCode());

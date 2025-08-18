@@ -22,7 +22,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-import logging
 from typing import Tuple
 from urllib.request import Request, build_opener
 from urllib.parse import urlencode
@@ -32,16 +31,13 @@ import json as _json
 
 from gravitino.auth.auth_constants import AuthConstants
 from gravitino.auth.auth_data_provider import AuthDataProvider
+from gravitino.client.gravitino_client_config import GravitinoClientConfig
 from gravitino.typing import JSONType
-
-from gravitino.constants.timeout import TIMEOUT
 
 from gravitino.dto.responses.error_response import ErrorResponse
 from gravitino.dto.responses.oauth2_error_response import OAuth2ErrorResponse
 from gravitino.exceptions.base import RESTException, UnknownError
 from gravitino.exceptions.handlers.error_handler import ErrorHandler
-
-logger = logging.getLogger(__name__)
 
 
 class Response:
@@ -50,11 +46,6 @@ class Response:
         self._body = response.read()
         self._headers = response.info()
         self._url = response.url
-
-        logging.basicConfig(level=logging.DEBUG)
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.DEBUG)
-        logger.addHandler(console_handler)
 
     @property
     def status_code(self):
@@ -79,7 +70,6 @@ class Response:
 
 
 class HTTPClient:
-
     FORMDATA_HEADER = {
         "Content-Type": "application/x-www-form-urlencoded",
         "Accept": "application/vnd.gravitino.v1+json",
@@ -95,13 +85,16 @@ class HTTPClient:
         host,
         *,
         request_headers=None,
-        timeout=TIMEOUT,
+        client_config=None,
         is_debug=False,
         auth_data_provider: AuthDataProvider = None,
     ) -> None:
+        gravitino_client_config = GravitinoClientConfig.build_from_properties(
+            client_config
+        )
         self.host = host
         self.request_headers = request_headers or {}
-        self.timeout = timeout
+        self.timeout = gravitino_client_config.get_client_request_timeout()
         self.is_debug = is_debug
         self.auth_data_provider = auth_data_provider
 
@@ -238,6 +231,11 @@ class HTTPClient:
     def put(self, endpoint, json=None, error_handler=None, **kwargs):
         return self._request(
             "put", endpoint, json=json, error_handler=error_handler, **kwargs
+        )
+
+    def patch(self, endpoint, json=None, error_handler=None, **kwargs):
+        return self._request(
+            "patch", endpoint, json=json, error_handler=error_handler, **kwargs
         )
 
     def post_form(self, endpoint, data=None, error_handler=None, **kwargs):

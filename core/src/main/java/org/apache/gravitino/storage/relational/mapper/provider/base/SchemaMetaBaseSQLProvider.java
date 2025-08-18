@@ -20,6 +20,7 @@ package org.apache.gravitino.storage.relational.mapper.provider.base;
 
 import static org.apache.gravitino.storage.relational.mapper.SchemaMetaMapper.TABLE_NAME;
 
+import java.util.List;
 import org.apache.gravitino.storage.relational.po.SchemaPO;
 import org.apache.ibatis.annotations.Param;
 
@@ -33,6 +34,24 @@ public class SchemaMetaBaseSQLProvider {
         + " FROM "
         + TABLE_NAME
         + " WHERE catalog_id = #{catalogId} AND deleted_at = 0";
+  }
+
+  public String listSchemaPOsBySchemaIds(@Param("schemaIds") List<Long> schemaIds) {
+    return "<script>"
+        + "SELECT schema_id as schemaId, schema_name as schemaName,"
+        + " metalake_id as metalakeId, catalog_id as catalogId,"
+        + " schema_comment as schemaComment, properties, audit_info as auditInfo,"
+        + " current_version as currentVersion, last_version as lastVersion,"
+        + " deleted_at as deletedAt"
+        + " FROM "
+        + TABLE_NAME
+        + " WHERE schema_id in ("
+        + "<foreach collection='schemaIds' item='schemaId' separator=','>"
+        + "#{schemaId}"
+        + "</foreach>"
+        + ") "
+        + " AND deleted_at = 0"
+        + "</script>";
   }
 
   public String selectSchemaIdByCatalogIdAndName(
@@ -170,5 +189,22 @@ public class SchemaMetaBaseSQLProvider {
     return "DELETE FROM "
         + TABLE_NAME
         + " WHERE deleted_at > 0 AND deleted_at < #{legacyTimeline} LIMIT #{limit}";
+  }
+
+  public String selectSchemaIdByMetalakeNameAndCatalogNameAndSchemaName(
+      @Param("metalakeName") String metalakeName,
+      @Param("catalogName") String catalogName,
+      @Param("schemaName") String schemaName) {
+    return "SELECT metalake_meta.metalake_id as metalakeId, catalog_meta.catalog_id as catalogId, "
+        + " schema_id as schemaId"
+        + " FROM metalake_meta"
+        + " JOIN catalog_meta ON metalake_meta.metalake_id = catalog_meta.metalake_id"
+        + " JOIN schema_meta ON catalog_meta.catalog_id = schema_meta.catalog_id"
+        + " WHERE metalake_name = #{metalakeName}"
+        + " AND catalog_name = #{catalogName}"
+        + " AND schema_name = #{schemaName}"
+        + " AND schema_meta.deleted_at = 0"
+        + " AND catalog_meta.deleted_at = 0"
+        + " AND metalake_meta.deleted_at = 0";
   }
 }

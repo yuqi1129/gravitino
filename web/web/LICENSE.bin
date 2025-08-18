@@ -217,6 +217,7 @@
    doctrine
    eslint-visitor-keys
    human-signals
+   oidc-client-ts
    ts-interface-checker
    typescript
 
@@ -367,6 +368,8 @@
    buffer-crc32
    busboy
    call-bind
+   call-bind-apply-helpers
+   call-bound
    callsites
    camelcase-css
    cheerio
@@ -405,6 +408,7 @@
    dom-helpers
    dom-serializer
    duplexer
+   dunder-proto
    eastasianwidth
    end-of-stream
    enhanced-resolve
@@ -434,6 +438,7 @@
    eslint-plugin-react-hooks
    eslint-scope
    execa
+   fast-color
    fast-deep-equal
    fast-glob
    fast-json-stable-stringify
@@ -453,6 +458,7 @@
    function.prototype.name
    functions-have-names
    get-intrinsic
+   get-proto
    get-stream
    get-symbol-description
    get-tsconfig
@@ -532,6 +538,7 @@
    lodash.merge
    lodash-es
    loose-envify
+   math-intrinsics
    merge-stream
    micromatch
    minimist

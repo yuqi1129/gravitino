@@ -18,12 +18,16 @@
  */
 package org.apache.gravitino.meta;
 
+import static org.apache.gravitino.file.Fileset.LOCATION_NAME_UNKNOWN;
+
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.Map;
 import org.apache.gravitino.Catalog;
 import org.apache.gravitino.Field;
+import org.apache.gravitino.Namespace;
 import org.apache.gravitino.authorization.Privileges;
 import org.apache.gravitino.authorization.SecurableObjects;
 import org.apache.gravitino.file.Fileset;
@@ -165,7 +169,7 @@ public class TestEntity {
             .withName(fileName)
             .withAuditInfo(auditInfo)
             .withFilesetType(Fileset.Type.MANAGED)
-            .withStorageLocation("testLocation")
+            .withStorageLocations(ImmutableMap.of(LOCATION_NAME_UNKNOWN, "testLocation"))
             .withProperties(map)
             .build();
 
@@ -176,7 +180,10 @@ public class TestEntity {
     Assertions.assertEquals(Fileset.Type.MANAGED, fields.get(FilesetEntity.TYPE));
     Assertions.assertEquals(map, fields.get(FilesetEntity.PROPERTIES));
     Assertions.assertNull(fields.get(FilesetEntity.COMMENT));
-    Assertions.assertEquals("testLocation", fields.get(FilesetEntity.STORAGE_LOCATION));
+    Assertions.assertEquals(
+        "testLocation",
+        ((Map<String, String>) fields.get(FilesetEntity.STORAGE_LOCATIONS))
+            .get(LOCATION_NAME_UNKNOWN));
 
     FilesetEntity testFile1 =
         FilesetEntity.builder()
@@ -185,7 +192,7 @@ public class TestEntity {
             .withAuditInfo(auditInfo)
             .withFilesetType(Fileset.Type.MANAGED)
             .withComment("testComment")
-            .withStorageLocation("testLocation")
+            .withStorageLocations(ImmutableMap.of(LOCATION_NAME_UNKNOWN, "testLocation"))
             .build();
     Assertions.assertEquals("testComment", testFile1.comment());
     Assertions.assertNull(testFile1.properties());
@@ -193,17 +200,17 @@ public class TestEntity {
     Throwable exception =
         Assertions.assertThrows(
             IllegalArgumentException.class,
-            () -> {
-              FilesetEntity.builder()
-                  .withId(fileId)
-                  .withName(fileName)
-                  .withAuditInfo(auditInfo)
-                  .withFilesetType(Fileset.Type.EXTERNAL)
-                  .withProperties(map)
-                  .withComment("testComment")
-                  .build();
-            });
-    Assertions.assertEquals("Field storage_location is required", exception.getMessage());
+            () ->
+                FilesetEntity.builder()
+                    .withId(fileId)
+                    .withName(fileName)
+                    .withAuditInfo(auditInfo)
+                    .withFilesetType(Fileset.Type.EXTERNAL)
+                    .withProperties(map)
+                    .withComment("testComment")
+                    .build());
+    Assertions.assertEquals(
+        "The storage locations of the fileset entity must not be empty.", exception.getMessage());
   }
 
   @Test
@@ -333,5 +340,56 @@ public class TestEntity {
         TagEntity.builder().withId(1L).withName("tag2").withAuditInfo(auditInfo).build();
     Assertions.assertNull(tag2.comment());
     Assertions.assertNull(tag2.properties());
+  }
+
+  @Test
+  public void testHashCodeIncludesNamespace() {
+    AuditInfo audit = AuditInfo.builder().withCreator("test").withCreateTime(Instant.now()).build();
+
+    TableEntity table1 =
+        TableEntity.builder()
+            .withId(1L)
+            .withName("t")
+            .withNamespace(Namespace.of("catalog", "schema1"))
+            .withColumns(Collections.emptyList())
+            .withAuditInfo(audit)
+            .build();
+
+    TableEntity table2 =
+        TableEntity.builder()
+            .withId(1L)
+            .withName("t")
+            .withNamespace(Namespace.of("catalog", "schema2"))
+            .withColumns(Collections.emptyList())
+            .withAuditInfo(audit)
+            .build();
+
+    Assertions.assertNotEquals(
+        table1.hashCode(), table2.hashCode(), "hashCode should include namespace");
+  }
+
+  @Test
+  public void testHashCodeWithDifferentNamespaceHavingSameValues() {
+    AuditInfo audit = AuditInfo.builder().withCreator("test").withCreateTime(Instant.now()).build();
+
+    TableEntity table1 =
+        TableEntity.builder()
+            .withId(2L)
+            .withName("t")
+            .withNamespace(Namespace.of("catalog", "schema1"))
+            .withColumns(Collections.emptyList())
+            .withAuditInfo(audit)
+            .build();
+
+    TableEntity table2 =
+        TableEntity.builder()
+            .withId(2L)
+            .withName("t")
+            .withNamespace(Namespace.of("catalog", "schema1"))
+            .withColumns(Collections.emptyList())
+            .withAuditInfo(audit)
+            .build();
+
+    Assertions.assertEquals(table1.hashCode(), table2.hashCode(), "hashCode should be the same");
   }
 }

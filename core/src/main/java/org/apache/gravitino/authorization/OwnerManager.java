@@ -21,8 +21,10 @@ package org.apache.gravitino.authorization;
 import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
+import lombok.Getter;
 import org.apache.gravitino.Entity;
 import org.apache.gravitino.EntityStore;
+import org.apache.gravitino.GravitinoEnv;
 import org.apache.gravitino.MetadataObject;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.SupportsRelationOperations;
@@ -33,8 +35,8 @@ import org.apache.gravitino.lock.LockType;
 import org.apache.gravitino.lock.TreeLockUtils;
 import org.apache.gravitino.meta.GroupEntity;
 import org.apache.gravitino.meta.UserEntity;
-import org.apache.gravitino.storage.kv.KvEntityStore;
 import org.apache.gravitino.utils.MetadataObjectUtil;
+import org.apache.gravitino.utils.NameIdentifierUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,18 +45,12 @@ import org.slf4j.LoggerFactory;
  * owner. Because the post hook will call the methods. We shouldn't add the lock of the metadata
  * object. Otherwise, it will cause deadlock.
  */
-public class OwnerManager {
+public class OwnerManager implements OwnerDispatcher {
   private static final Logger LOG = LoggerFactory.getLogger(OwnerManager.class);
-  private final EntityStore store;
+  @Getter private final EntityStore store;
 
   public OwnerManager(EntityStore store) {
-    if (store instanceof KvEntityStore) {
-      String errorMsg =
-          "OwnerManager cannot run with kv entity store, please configure the entity "
-              + "store to use relational entity store and restart the Gravitino server";
-      LOG.error(errorMsg);
-      throw new RuntimeException(errorMsg);
-    } else if (store instanceof SupportsRelationOperations) {
+    if (store instanceof SupportsRelationOperations) {
       this.store = store;
     } else {
       String errorMsg =
@@ -65,14 +61,14 @@ public class OwnerManager {
     }
   }
 
+  @Override
   public void setOwner(
       String metalake, MetadataObject metadataObject, String ownerName, Owner.Type ownerType) {
+    NameIdentifier objectIdent = MetadataObjectUtil.toEntityIdent(metalake, metadataObject);
     try {
       Optional<Owner> originOwner = getOwner(metalake, metadataObject);
 
-      NameIdentifier objectIdent = MetadataObjectUtil.toEntityIdent(metalake, metadataObject);
       OwnerImpl newOwner = new OwnerImpl();
-
       if (ownerType == Owner.Type.USER) {
         NameIdentifier ownerIdent = AuthorizationUtils.ofUser(metalake, ownerName);
         TreeLockUtils.doWithTreeLock(
@@ -120,6 +116,7 @@ public class OwnerManager {
           metadataObject,
           authorizationPlugin ->
               authorizationPlugin.onOwnerSet(metadataObject, originOwner.orElse(null), newOwner));
+      originOwner.ifPresent(owner -> notifyOwnerChange(owner, metalake, metadataObject));
     } catch (NoSuchEntityException nse) {
       LOG.warn(
           "Metadata object {} or owner {} is not found", metadataObject.fullName(), ownerName, nse);
@@ -135,17 +132,49 @@ public class OwnerManager {
     }
   }
 
+  private void notifyOwnerChange(Owner oldOwner, String metalake, MetadataObject metadataObject) {
+    GravitinoAuthorizer gravitinoAuthorizer = GravitinoEnv.getInstance().gravitinoAuthorizer();
+    if (gravitinoAuthorizer != null) {
+      if (oldOwner.type() == Owner.Type.USER) {
+        try {
+          UserEntity userEntity =
+              GravitinoEnv.getInstance()
+                  .entityStore()
+                  .get(
+                      NameIdentifierUtil.ofUser(metalake, oldOwner.name()),
+                      Entity.EntityType.USER,
+                      UserEntity.class);
+          gravitinoAuthorizer.handleMetadataOwnerChange(
+              metalake,
+              userEntity.id(),
+              MetadataObjectUtil.toEntityIdent(metalake, metadataObject),
+              Entity.EntityType.valueOf(metadataObject.type().name()));
+        } catch (IOException e) {
+          LOG.warn(e.getMessage(), e);
+        }
+      } else {
+        throw new UnsupportedOperationException(
+            "Notification for Group Owner is not supported yet.");
+      }
+    }
+  }
+
+  @Override
   public Optional<Owner> getOwner(String metalake, MetadataObject metadataObject) {
+    NameIdentifier ident = MetadataObjectUtil.toEntityIdent(metalake, metadataObject);
+    OwnerImpl owner = new OwnerImpl();
     try {
-      OwnerImpl owner = new OwnerImpl();
-      NameIdentifier ident = MetadataObjectUtil.toEntityIdent(metalake, metadataObject);
       List<? extends Entity> entities =
-          store
-              .relationOperations()
-              .listEntitiesByRelation(
-                  SupportsRelationOperations.Type.OWNER_REL,
-                  ident,
-                  MetadataObjectUtil.toEntityType(metadataObject));
+          TreeLockUtils.doWithTreeLock(
+              ident,
+              LockType.READ,
+              () ->
+                  store
+                      .relationOperations()
+                      .listEntitiesByRelation(
+                          SupportsRelationOperations.Type.OWNER_REL,
+                          ident,
+                          MetadataObjectUtil.toEntityType(metadataObject)));
 
       if (entities.isEmpty()) {
         return Optional.empty();
@@ -153,7 +182,7 @@ public class OwnerManager {
 
       if (entities.size() != 1) {
         throw new IllegalStateException(
-            String.format("The number of the owner %s must be 1", metadataObject.fullName()));
+            String.format("The size of the owner's name %s must be 1", metadataObject.fullName()));
       }
 
       Entity entity = entities.get(0);

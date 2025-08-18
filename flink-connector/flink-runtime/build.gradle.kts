@@ -41,6 +41,14 @@ val scalaVersion: String = "2.12"
 val artifactName = "gravitino-${project.name}_$scalaVersion"
 val baseName = "${rootProject.name}-flink-connector-runtime-${flinkMajorVersion}_$scalaVersion"
 
+configurations.all {
+  resolutionStrategy.eachDependency {
+    if (requested.group == "org.apache.logging.log4j") {
+      throw GradleException("Dependency 'org.apache.logging.log4j' is not allowed.")
+    }
+  }
+}
+
 dependencies {
   implementation(project(":clients:client-java-runtime", configuration = "shadow"))
   implementation(project(":flink-connector:flink"))
@@ -56,7 +64,6 @@ tasks.withType<ShadowJar>(ShadowJar::class.java) {
   relocate("com.google", "org.apache.gravitino.shaded.com.google")
   relocate("google", "org.apache.gravitino.shaded.google")
   relocate("org.apache.hc", "org.apache.gravitino.shaded.org.apache.hc")
-  relocate("org.apache.commons", "org.apache.gravitino.shaded.org.apache.commons")
 }
 
 publishing {

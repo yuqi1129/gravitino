@@ -32,6 +32,7 @@ import org.apache.gravitino.catalog.lakehouse.iceberg.IcebergPropertiesUtils;
 import org.apache.gravitino.config.ConfigBuilder;
 import org.apache.gravitino.config.ConfigConstants;
 import org.apache.gravitino.config.ConfigEntry;
+import org.apache.gravitino.credential.CredentialConstants;
 import org.apache.gravitino.storage.OSSProperties;
 import org.apache.gravitino.storage.S3Properties;
 
@@ -53,7 +54,8 @@ public class IcebergConfig extends Config implements OverwriteDefaultConfig {
   public static final ConfigEntry<String> CATALOG_BACKEND_IMPL =
       new ConfigBuilder(IcebergConstants.CATALOG_BACKEND_IMPL)
           .doc(
-              "The fully-qualified class name of a custom catalog implementation, only worked if `catalog-backend` is `custom`")
+              "The fully-qualified class name of a custom catalog implementation, "
+                  + "only worked if `catalog-backend` is `custom`")
           .version(ConfigConstants.VERSION_0_7_0)
           .stringConf()
           .create();
@@ -63,7 +65,6 @@ public class IcebergConfig extends Config implements OverwriteDefaultConfig {
           .doc("Warehouse directory of catalog")
           .version(ConfigConstants.VERSION_0_2_0)
           .stringConf()
-          .checkValue(StringUtils::isNotBlank, ConfigConstants.NOT_BLANK_ERROR_MSG)
           .create();
 
   public static final ConfigEntry<String> CATALOG_URI =
@@ -143,6 +144,13 @@ public class IcebergConfig extends Config implements OverwriteDefaultConfig {
           .stringConf()
           .create();
 
+  public static final ConfigEntry<Boolean> S3_PATH_STYLE_ACCESS =
+      new ConfigBuilder(S3Properties.GRAVITINO_S3_PATH_STYLE_ACCESS)
+          .doc("Whether to use path style access for S3")
+          .version(ConfigConstants.VERSION_0_9_0)
+          .booleanConf()
+          .createWithDefault(false);
+
   public static final ConfigEntry<String> OSS_ENDPOINT =
       new ConfigBuilder(OSSProperties.GRAVITINO_OSS_ENDPOINT)
           .doc("The endpoint of Aliyun OSS service")
@@ -174,7 +182,8 @@ public class IcebergConfig extends Config implements OverwriteDefaultConfig {
   public static final ConfigEntry<Integer> ICEBERG_METRICS_STORE_RETAIN_DAYS =
       new ConfigBuilder(IcebergConstants.ICEBERG_METRICS_STORE_RETAIN_DAYS)
           .doc(
-              "The retain days of Iceberg metrics, the value not greater than 0 means retain forever")
+              "The retain days of Iceberg metrics, the value not greater than 0 means "
+                  + "retain forever")
           .version(ConfigConstants.VERSION_0_4_0)
           .intConf()
           .createWithDefault(-1);
@@ -201,18 +210,21 @@ public class IcebergConfig extends Config implements OverwriteDefaultConfig {
           .longConf()
           .createWithDefault(3600000L);
 
-  public static final ConfigEntry<String> ICEBERG_REST_CATALOG_PROVIDER =
-      new ConfigBuilder(IcebergConstants.ICEBERG_REST_CATALOG_PROVIDER)
+  public static final ConfigEntry<String> ICEBERG_REST_CATALOG_CONFIG_PROVIDER =
+      new ConfigBuilder(IcebergConstants.ICEBERG_REST_CATALOG_CONFIG_PROVIDER)
           .doc(
-              "Catalog provider class name, you can develop a class that implements `IcebergCatalogWrapperProvider` and add the corresponding jar file to the Iceberg REST service classpath directory.")
+              "Catalog provider class name, you can develop a class that implements "
+                  + "`IcebergConfigProvider` and add the corresponding jar file to the Iceberg "
+                  + "REST service classpath directory.")
           .version(ConfigConstants.VERSION_0_7_0)
           .stringConf()
-          .createWithDefault("config-based-provider");
+          .createWithDefault(IcebergConstants.STATIC_ICEBERG_CATALOG_CONFIG_PROVIDER_NAME);
 
   public static final ConfigEntry<String> GRAVITINO_URI =
       new ConfigBuilder(IcebergConstants.GRAVITINO_URI)
           .doc(
-              "The uri of Gravitino server address, only worked if `catalog-provider` is `gravitino-based-provider`.")
+              "The uri of Gravitino server address, only worked if `catalog-provider` is "
+                  + "`gravitino-based-provider`.")
           .version(ConfigConstants.VERSION_0_7_0)
           .stringConf()
           .create();
@@ -220,7 +232,8 @@ public class IcebergConfig extends Config implements OverwriteDefaultConfig {
   public static final ConfigEntry<String> GRAVITINO_METALAKE =
       new ConfigBuilder(IcebergConstants.GRAVITINO_METALAKE)
           .doc(
-              "The metalake name that `gravitino-based-provider` used to request to Gravitino, only worked if `catalog-provider` is `gravitino-based-provider`.")
+              "The metalake name that `gravitino-based-provider` used to request to Gravitino, "
+                  + "only worked if `catalog-provider` is `gravitino-based-provider`.")
           .version(ConfigConstants.VERSION_0_7_0)
           .stringConf()
           .create();
@@ -232,6 +245,22 @@ public class IcebergConfig extends Config implements OverwriteDefaultConfig {
           .stringConf()
           .toSequence()
           .createWithDefault(Collections.emptyList());
+
+  /**
+   * Configuration entry for the single credential-provider type for Iceberg.
+   *
+   * @deprecated use {@link CredentialConstants#CREDENTIAL_PROVIDERS} instead
+   */
+  @Deprecated
+  public static final ConfigEntry<String> CREDENTIAL_PROVIDER_TYPE =
+      new ConfigBuilder(CredentialConstants.CREDENTIAL_PROVIDER_TYPE)
+          .doc(
+              String.format(
+                  "Deprecated, please use %s instead, The credential provider type for Iceberg",
+                  CredentialConstants.CREDENTIAL_PROVIDERS))
+          .version(ConfigConstants.VERSION_0_7_0)
+          .stringConf()
+          .create();
 
   public String getJdbcDriver() {
     return get(JDBC_DRIVER);

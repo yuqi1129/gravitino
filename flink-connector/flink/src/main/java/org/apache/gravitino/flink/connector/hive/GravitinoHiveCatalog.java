@@ -18,13 +18,12 @@
  */
 package org.apache.gravitino.flink.connector.hive;
 
+import java.util.Map;
 import java.util.Optional;
 import javax.annotation.Nullable;
 import org.apache.flink.table.catalog.AbstractCatalog;
-import org.apache.flink.table.catalog.exceptions.CatalogException;
 import org.apache.flink.table.catalog.hive.HiveCatalog;
 import org.apache.flink.table.factories.Factory;
-import org.apache.gravitino.flink.connector.DefaultPartitionConverter;
 import org.apache.gravitino.flink.connector.PartitionConverter;
 import org.apache.gravitino.flink.connector.PropertiesConverter;
 import org.apache.gravitino.flink.connector.catalog.BaseCatalog;
@@ -41,22 +40,13 @@ public class GravitinoHiveCatalog extends BaseCatalog {
   GravitinoHiveCatalog(
       String catalogName,
       String defaultDatabase,
+      Map<String, String> catalogOptions,
+      PropertiesConverter propertiesConverter,
+      PartitionConverter partitionConverter,
       @Nullable HiveConf hiveConf,
       @Nullable String hiveVersion) {
-    super(catalogName, defaultDatabase);
+    super(catalogName, catalogOptions, defaultDatabase, propertiesConverter, partitionConverter);
     this.hiveCatalog = new HiveCatalog(catalogName, defaultDatabase, hiveConf, hiveVersion);
-  }
-
-  @Override
-  public void open() throws CatalogException {
-    super.open();
-    hiveCatalog.open();
-  }
-
-  @Override
-  public void close() throws CatalogException {
-    super.close();
-    hiveCatalog.close();
   }
 
   public HiveConf getHiveConf() {
@@ -66,16 +56,6 @@ public class GravitinoHiveCatalog extends BaseCatalog {
   @Override
   public Optional<Factory> getFactory() {
     return hiveCatalog.getFactory();
-  }
-
-  @Override
-  protected PropertiesConverter getPropertiesConverter() {
-    return HivePropertiesConverter.INSTANCE;
-  }
-
-  @Override
-  protected PartitionConverter getPartitionConverter() {
-    return DefaultPartitionConverter.INSTANCE;
   }
 
   @Override

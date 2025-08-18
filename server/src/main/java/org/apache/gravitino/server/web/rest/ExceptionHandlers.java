@@ -26,12 +26,24 @@ import org.apache.gravitino.exceptions.AlreadyExistsException;
 import org.apache.gravitino.exceptions.CatalogAlreadyExistsException;
 import org.apache.gravitino.exceptions.ConnectionFailedException;
 import org.apache.gravitino.exceptions.FilesetAlreadyExistsException;
+import org.apache.gravitino.exceptions.ForbiddenException;
 import org.apache.gravitino.exceptions.GroupAlreadyExistsException;
+import org.apache.gravitino.exceptions.InUseException;
+import org.apache.gravitino.exceptions.JobTemplateAlreadyExistsException;
 import org.apache.gravitino.exceptions.MetalakeAlreadyExistsException;
+import org.apache.gravitino.exceptions.MetalakeInUseException;
+import org.apache.gravitino.exceptions.MetalakeNotInUseException;
+import org.apache.gravitino.exceptions.ModelAlreadyExistsException;
+import org.apache.gravitino.exceptions.ModelVersionAliasesAlreadyExistException;
 import org.apache.gravitino.exceptions.NoSuchMetalakeException;
+import org.apache.gravitino.exceptions.NonEmptyCatalogException;
+import org.apache.gravitino.exceptions.NonEmptyMetalakeException;
 import org.apache.gravitino.exceptions.NonEmptySchemaException;
 import org.apache.gravitino.exceptions.NotFoundException;
+import org.apache.gravitino.exceptions.NotInUseException;
 import org.apache.gravitino.exceptions.PartitionAlreadyExistsException;
+import org.apache.gravitino.exceptions.PolicyAlreadyAssociatedException;
+import org.apache.gravitino.exceptions.PolicyAlreadyExistsException;
 import org.apache.gravitino.exceptions.RoleAlreadyExistsException;
 import org.apache.gravitino.exceptions.SchemaAlreadyExistsException;
 import org.apache.gravitino.exceptions.TableAlreadyExistsException;
@@ -114,6 +126,31 @@ public class ExceptionHandlers {
     return TagExceptionHandler.INSTANCE.handle(op, tag, parent, e);
   }
 
+  public static Response handlePolicyException(
+      OperationType op, String policy, String parent, Exception e) {
+    return PolicyExceptionHandler.INSTANCE.handle(op, policy, parent, e);
+  }
+
+  public static Response handleCredentialException(
+      OperationType op, String metadataObjectName, Exception e) {
+    return CredentialExceptionHandler.INSTANCE.handle(op, metadataObjectName, "", e);
+  }
+
+  public static Response handleModelException(
+      OperationType op, String model, String schema, Exception e) {
+    return ModelExceptionHandler.INSTANCE.handle(op, model, schema, e);
+  }
+
+  public static Response handleJobTemplateException(
+      OperationType op, String jobTemplate, String metalake, Exception e) {
+    return JobTemplateExceptionHandler.INSTANCE.handle(op, jobTemplate, metalake, e);
+  }
+
+  public static Response handleJobException(
+      OperationType op, String job, String metalake, Exception e) {
+    return JobExceptionHandler.INSTANCE.handle(op, job, metalake, e);
+  }
+
   public static Response handleTestConnectionException(Exception e) {
     ErrorResponse response;
     if (e instanceof IllegalArgumentException) {
@@ -127,6 +164,9 @@ public class ExceptionHandlers {
 
     } else if (e instanceof AlreadyExistsException) {
       response = ErrorResponse.alreadyExists(e.getClass().getSimpleName(), e.getMessage(), e);
+
+    } else if (e instanceof NotInUseException) {
+      response = ErrorResponse.notInUse(e.getClass().getSimpleName(), e.getMessage(), e);
 
     } else {
       return Utils.internalError(e.getMessage(), e);
@@ -177,6 +217,9 @@ public class ExceptionHandlers {
       } else if (e instanceof UnsupportedOperationException) {
         return Utils.unsupportedOperation(errorMsg, e);
 
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
       } else {
         return super.handle(op, partition, table, e);
       }
@@ -211,6 +254,12 @@ public class ExceptionHandlers {
 
       } else if (e instanceof UnsupportedOperationException) {
         return Utils.unsupportedOperation(errorMsg, e);
+
+      } else if (e instanceof ForbiddenException) {
+        return Utils.forbidden(errorMsg, e);
+
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
 
       } else {
         return super.handle(op, table, schema, e);
@@ -250,6 +299,12 @@ public class ExceptionHandlers {
       } else if (e instanceof UnsupportedOperationException) {
         return Utils.unsupportedOperation(errorMsg, e);
 
+      } else if (e instanceof ForbiddenException) {
+        return Utils.forbidden(errorMsg, e);
+
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
       } else {
         return super.handle(op, schema, catalog, e);
       }
@@ -282,8 +337,20 @@ public class ExceptionHandlers {
       } else if (e instanceof NotFoundException) {
         return Utils.notFound(errorMsg, e);
 
+      } else if (e instanceof ForbiddenException) {
+        return Utils.forbidden(errorMsg, e);
+
       } else if (e instanceof CatalogAlreadyExistsException) {
         return Utils.alreadyExists(errorMsg, e);
+
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
+      } else if (e instanceof InUseException) {
+        return Utils.inUse(errorMsg, e);
+
+      } else if (e instanceof NonEmptyCatalogException) {
+        return Utils.nonEmpty(errorMsg, e);
 
       } else {
         return super.handle(op, catalog, metalake, e);
@@ -316,6 +383,15 @@ public class ExceptionHandlers {
       } else if (e instanceof NoSuchMetalakeException) {
         return Utils.notFound(errorMsg, e);
 
+      } else if (e instanceof MetalakeNotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
+      } else if (e instanceof MetalakeInUseException) {
+        return Utils.inUse(errorMsg, e);
+
+      } else if (e instanceof NonEmptyMetalakeException) {
+        return Utils.nonEmpty(errorMsg, e);
+
       } else {
         return super.handle(op, metalake, parent, e);
       }
@@ -323,6 +399,7 @@ public class ExceptionHandlers {
   }
 
   private static class FilesetExceptionHandler extends BaseExceptionHandler {
+
     private static final ExceptionHandler INSTANCE = new FilesetExceptionHandler();
 
     private static String getFilesetErrorMsg(
@@ -346,6 +423,12 @@ public class ExceptionHandlers {
 
       } else if (e instanceof FilesetAlreadyExistsException) {
         return Utils.alreadyExists(errorMsg, e);
+
+      } else if (e instanceof ForbiddenException) {
+        return Utils.forbidden(errorMsg, e);
+
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
 
       } else {
         return super.handle(op, fileset, schema, e);
@@ -385,6 +468,9 @@ public class ExceptionHandlers {
       } else if (e instanceof UserAlreadyExistsException) {
         return Utils.alreadyExists(errorMsg, e);
 
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
       } else {
         return super.handle(op, user, metalake, e);
       }
@@ -416,6 +502,9 @@ public class ExceptionHandlers {
 
       } else if (e instanceof GroupAlreadyExistsException) {
         return Utils.alreadyExists(errorMsg, e);
+
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
 
       } else {
         return super.handle(op, group, metalake, e);
@@ -449,6 +538,12 @@ public class ExceptionHandlers {
       } else if (e instanceof RoleAlreadyExistsException) {
         return Utils.alreadyExists(errorMsg, e);
 
+      } else if (e instanceof ForbiddenException) {
+        return Utils.forbidden(errorMsg, e);
+
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
       } else {
         return super.handle(op, role, metalake, e);
       }
@@ -456,6 +551,7 @@ public class ExceptionHandlers {
   }
 
   private static class TopicExceptionHandler extends BaseExceptionHandler {
+
     private static final ExceptionHandler INSTANCE = new TopicExceptionHandler();
 
     private static String getTopicErrorMsg(
@@ -480,6 +576,12 @@ public class ExceptionHandlers {
       } else if (e instanceof TopicAlreadyExistsException) {
         return Utils.alreadyExists(errorMsg, e);
 
+      } else if (e instanceof ForbiddenException) {
+        return Utils.forbidden(errorMsg, e);
+
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
       } else {
         return super.handle(op, topic, schema, e);
       }
@@ -488,6 +590,7 @@ public class ExceptionHandlers {
 
   private static class UserPermissionOperationExceptionHandler
       extends BasePermissionExceptionHandler {
+
     private static final ExceptionHandler INSTANCE = new UserPermissionOperationExceptionHandler();
 
     @Override
@@ -543,8 +646,40 @@ public class ExceptionHandlers {
       } else if (e instanceof NotFoundException) {
         return Utils.notFound(errorMsg, e);
 
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
       } else {
         return super.handle(op, roles, parent, e);
+      }
+    }
+  }
+
+  private static class CredentialExceptionHandler extends BaseExceptionHandler {
+
+    private static final ExceptionHandler INSTANCE = new CredentialExceptionHandler();
+
+    private static String getCredentialErrorMsg(String parent, String reason) {
+      return String.format(
+          "Failed to get credentials under object [%s], reason [%s]", parent, reason);
+    }
+
+    @Override
+    public Response handle(OperationType op, String credential, String parent, Exception e) {
+      String errorMsg = getCredentialErrorMsg(parent, getErrorMsg(e));
+      LOG.warn(errorMsg, e);
+
+      if (e instanceof IllegalArgumentException) {
+        return Utils.illegalArguments(errorMsg, e);
+
+      } else if (e instanceof NotFoundException) {
+        return Utils.notFound(errorMsg, e);
+
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
+      } else {
+        return super.handle(op, credential, parent, e);
       }
     }
   }
@@ -578,13 +713,55 @@ public class ExceptionHandlers {
       } else if (e instanceof TagAlreadyAssociatedException) {
         return Utils.alreadyExists(errorMsg, e);
 
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
       } else {
         return super.handle(op, tag, parent, e);
       }
     }
   }
 
+  private static class PolicyExceptionHandler extends BaseExceptionHandler {
+
+    private static final ExceptionHandler INSTANCE = new PolicyExceptionHandler();
+
+    private static String getPolicyErrorMsg(
+        String policy, String operation, String parent, String reason) {
+      return String.format(
+          "Failed to operate policy(s)%s operation [%s] under object [%s], reason [%s]",
+          policy, operation, parent, reason);
+    }
+
+    @Override
+    public Response handle(OperationType op, String policy, String parent, Exception e) {
+      String formatted = StringUtil.isBlank(policy) ? "" : " [" + policy + "]";
+      String errorMsg = getPolicyErrorMsg(formatted, op.name(), parent, getErrorMsg(e));
+      LOG.warn(errorMsg, e);
+
+      if (e instanceof IllegalArgumentException) {
+        return Utils.illegalArguments(errorMsg, e);
+
+      } else if (e instanceof NotFoundException) {
+        return Utils.notFound(errorMsg, e);
+
+      } else if (e instanceof PolicyAlreadyExistsException) {
+        return Utils.alreadyExists(errorMsg, e);
+
+      } else if (e instanceof PolicyAlreadyAssociatedException) {
+        return Utils.alreadyExists(errorMsg, e);
+
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
+      } else {
+        return super.handle(op, policy, parent, e);
+      }
+    }
+  }
+
   private static class OwnerExceptionHandler extends BaseExceptionHandler {
+
     private static final ExceptionHandler INSTANCE = new OwnerExceptionHandler();
 
     private static String getOwnerErrorMsg(
@@ -605,8 +782,126 @@ public class ExceptionHandlers {
 
       } else if (e instanceof NotFoundException) {
         return Utils.notFound(errorMsg, e);
+
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
       } else {
         return super.handle(op, name, parent, e);
+      }
+    }
+  }
+
+  private static class ModelExceptionHandler extends BaseExceptionHandler {
+    private static final ExceptionHandler INSTANCE = new ModelExceptionHandler();
+
+    private static String getModelErrorMsg(
+        String model, String operation, String schema, String reason) {
+      return String.format(
+          "Failed to operate model(s)%s operation [%s] under schema [%s], reason [%s]",
+          model, operation, schema, reason);
+    }
+
+    @Override
+    public Response handle(OperationType op, String model, String schema, Exception e) {
+      String formatted = StringUtil.isBlank(model) ? "" : " [" + model + "]";
+      String errorMsg = getModelErrorMsg(formatted, op.name(), schema, getErrorMsg(e));
+      LOG.warn(errorMsg, e);
+
+      if (e instanceof IllegalArgumentException) {
+        return Utils.illegalArguments(errorMsg, e);
+
+      } else if (e instanceof NotFoundException) {
+        return Utils.notFound(errorMsg, e);
+
+      } else if (e instanceof ModelAlreadyExistsException
+          || e instanceof ModelVersionAliasesAlreadyExistException) {
+        return Utils.alreadyExists(errorMsg, e);
+
+      } else if (e instanceof ForbiddenException) {
+        return Utils.forbidden(errorMsg, e);
+
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
+      } else {
+        return super.handle(op, model, schema, e);
+      }
+    }
+  }
+
+  private static class JobTemplateExceptionHandler extends BaseExceptionHandler {
+
+    private static final ExceptionHandler INSTANCE = new JobTemplateExceptionHandler();
+
+    private static String getJobTemplateErrorMsg(
+        String jobTemplate, String operation, String parent, String reason) {
+      return String.format(
+          "Failed to operate job template(s)%s operation [%s] under object [%s], reason [%s]",
+          jobTemplate, operation, parent, reason);
+    }
+
+    @Override
+    public Response handle(OperationType op, String jobTemplate, String parent, Exception e) {
+      String formatted = StringUtil.isBlank(jobTemplate) ? "" : " [" + jobTemplate + "]";
+      String errorMsg = getJobTemplateErrorMsg(formatted, op.name(), parent, getErrorMsg(e));
+      LOG.warn(errorMsg, e);
+
+      if (e instanceof IllegalArgumentException) {
+        return Utils.illegalArguments(errorMsg, e);
+
+      } else if (e instanceof NotFoundException) {
+        return Utils.notFound(errorMsg, e);
+
+      } else if (e instanceof JobTemplateAlreadyExistsException) {
+        return Utils.alreadyExists(errorMsg, e);
+
+      } else if (e instanceof InUseException) {
+        return Utils.inUse(errorMsg, e);
+
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
+      } else if (e instanceof ForbiddenException) {
+        return Utils.forbidden(errorMsg, e);
+
+      } else {
+        return super.handle(op, jobTemplate, parent, e);
+      }
+    }
+  }
+
+  private static class JobExceptionHandler extends BaseExceptionHandler {
+
+    private static final ExceptionHandler INSTANCE = new JobExceptionHandler();
+
+    private static String getJobErrorMsg(
+        String jobTemplate, String operation, String parent, String reason) {
+      return String.format(
+          "Failed to operate job(s)%s operation [%s] under object [%s], reason [%s]",
+          jobTemplate, operation, parent, reason);
+    }
+
+    @Override
+    public Response handle(OperationType op, String jobTemplate, String parent, Exception e) {
+      String formatted = StringUtil.isBlank(jobTemplate) ? "" : " [" + jobTemplate + "]";
+      String errorMsg = getJobErrorMsg(formatted, op.name(), parent, getErrorMsg(e));
+      LOG.warn(errorMsg, e);
+
+      if (e instanceof IllegalArgumentException) {
+        return Utils.illegalArguments(errorMsg, e);
+
+      } else if (e instanceof NotFoundException) {
+        return Utils.notFound(errorMsg, e);
+
+      } else if (e instanceof NotInUseException) {
+        return Utils.notInUse(errorMsg, e);
+
+      } else if (e instanceof ForbiddenException) {
+        return Utils.forbidden(errorMsg, e);
+
+      } else {
+        return super.handle(op, jobTemplate, parent, e);
       }
     }
   }

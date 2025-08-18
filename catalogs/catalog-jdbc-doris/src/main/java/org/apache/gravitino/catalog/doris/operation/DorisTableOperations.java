@@ -26,7 +26,6 @@ import static org.apache.gravitino.rel.Column.DEFAULT_VALUE_NOT_SET;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -38,7 +37,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -53,7 +51,6 @@ import org.apache.gravitino.catalog.jdbc.JdbcTable;
 import org.apache.gravitino.catalog.jdbc.operation.JdbcTableOperations;
 import org.apache.gravitino.catalog.jdbc.operation.JdbcTablePartitionOperations;
 import org.apache.gravitino.exceptions.NoSuchColumnException;
-import org.apache.gravitino.exceptions.NoSuchSchemaException;
 import org.apache.gravitino.exceptions.NoSuchTableException;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.TableChange;
@@ -72,24 +69,6 @@ public class DorisTableOperations extends JdbcTableOperations {
   private static final String BACK_QUOTE = "`";
   private static final String DORIS_AUTO_INCREMENT = "AUTO_INCREMENT";
   private static final String NEW_LINE = "\n";
-
-  @Override
-  public List<String> listTables(String databaseName) throws NoSuchSchemaException {
-    final List<String> names = Lists.newArrayList();
-
-    try (Connection connection = getConnection(databaseName);
-        ResultSet tables = getTables(connection)) {
-      while (tables.next()) {
-        if (Objects.equals(tables.getString("TABLE_CAT"), databaseName)) {
-          names.add(tables.getString("TABLE_NAME"));
-        }
-      }
-      LOG.info("Finished listing tables size {} for database name {} ", names.size(), databaseName);
-      return names;
-    } catch (final SQLException se) {
-      throw this.exceptionMapper.toGravitinoException(se);
-    }
-  }
 
   @Override
   public JdbcTablePartitionOperations createJdbcTablePartitionOperations(JdbcTable loadedTable) {
@@ -155,7 +134,7 @@ public class DorisTableOperations extends JdbcTableOperations {
     }
 
     if (distribution.number() != 0) {
-      sqlBuilder.append(" BUCKETS ").append(distribution.number());
+      sqlBuilder.append(" BUCKETS ").append(DorisUtils.toBucketNumberString(distribution.number()));
     }
 
     properties = appendNecessaryProperties(properties);
@@ -179,24 +158,29 @@ public class DorisTableOperations extends JdbcTableOperations {
 
     // If the backend server is less than DEFAULT_REPLICATION_FACTOR_IN_SERVER_SIDE (3), we need to
     // set the property 'replication_num' to 1 explicitly.
-    if (!properties.containsKey(REPLICATION_FACTOR)) {
-      // Try to check the number of backend servers.
-      String query = "select count(*) from information_schema.backends where Alive = 'true'";
+    if (!resultMap.containsKey(REPLICATION_FACTOR)) {
+      // Try to check the number of backend servers using `show backends`, this SQL is supported by
+      // all versions of Doris
+      String query = "show backends";
 
       try (Connection connection = dataSource.getConnection();
           Statement statement = connection.createStatement();
           ResultSet resultSet = statement.executeQuery(query)) {
+        int backendCount = 0;
         while (resultSet.next()) {
-          int backendCount = resultSet.getInt(1);
-          if (backendCount < DEFAULT_REPLICATION_FACTOR_IN_SERVER_SIDE) {
-            resultMap.put(
-                REPLICATION_FACTOR,
-                DORIS_TABLE_PROPERTIES_META
-                    .propertyEntries()
-                    .get(REPLICATION_FACTOR)
-                    .getDefaultValue()
-                    .toString());
+          String alive = resultSet.getString("Alive");
+          if ("true".equalsIgnoreCase(alive)) {
+            backendCount++;
           }
+        }
+        if (backendCount < DEFAULT_REPLICATION_FACTOR_IN_SERVER_SIDE) {
+          resultMap.put(
+              REPLICATION_FACTOR,
+              DORIS_TABLE_PROPERTIES_META
+                  .propertyEntries()
+                  .get(REPLICATION_FACTOR)
+                  .getDefaultValue()
+                  .toString());
         }
       } catch (Exception e) {
         throw new RuntimeException("Failed to get the number of backend servers", e);
@@ -498,11 +482,6 @@ public class DorisTableOperations extends JdbcTableOperations {
   }
 
   @Override
-  protected String generateDropTableSql(String tableName) {
-    return String.format("DROP TABLE `%s`", tableName);
-  }
-
-  @Override
   protected String generatePurgeTableSql(String tableName) {
     throw new UnsupportedOperationException(
         "Doris does not support purge table in Gravitino, please use drop table");
@@ -593,16 +572,12 @@ public class DorisTableOperations extends JdbcTableOperations {
       alterSql.add("MODIFY COMMENT \"" + newComment + "\"");
     }
 
-    if (!setProperties.isEmpty()) {
-      alterSql.add(generateTableProperties(setProperties));
-    }
-
     if (CollectionUtils.isEmpty(alterSql)) {
       return "";
     }
     // Return the generated SQL statement
     String result = "ALTER TABLE `" + tableName + "`\n" + String.join(",\n", alterSql) + ";";
-    LOG.info("Generated alter table:{} sql: {}", databaseName + "." + tableName, result);
+    LOG.info("Generated alter table:{}.{} sql: {}", databaseName, tableName, result);
     return result;
   }
 
@@ -628,17 +603,14 @@ public class DorisTableOperations extends JdbcTableOperations {
   }
 
   private String generateTableProperties(List<TableChange.SetProperty> setProperties) {
-    return setProperties.stream()
-        .map(
-            setProperty ->
-                String.format("\"%s\" = \"%s\"", setProperty.getProperty(), setProperty.getValue()))
-        .collect(Collectors.joining(",\n"));
-  }
-
-  @Override
-  protected JdbcTable getOrCreateTable(
-      String databaseName, String tableName, JdbcTable lazyLoadCreateTable) {
-    return null != lazyLoadCreateTable ? lazyLoadCreateTable : load(databaseName, tableName);
+    String properties =
+        setProperties.stream()
+            .map(
+                setProperty ->
+                    String.format(
+                        "\"%s\" = \"%s\"", setProperty.getProperty(), setProperty.getValue()))
+            .collect(Collectors.joining(",\n"));
+    return "set (" + properties + ")";
   }
 
   private String updateColumnCommentFieldDefinition(
@@ -802,7 +774,7 @@ public class DorisTableOperations extends JdbcTableOperations {
 
   static String deleteIndexDefinition(
       JdbcTable lazyLoadTable, TableChange.DeleteIndex deleteIndex) {
-    if (deleteIndex.isIfExists()) {
+    if (!deleteIndex.isIfExists()) {
       Preconditions.checkArgument(
           Arrays.stream(lazyLoadTable.index())
               .anyMatch(index -> index.name().equals(deleteIndex.getName())),
@@ -822,5 +794,34 @@ public class DorisTableOperations extends JdbcTableOperations {
       String createTableSyntax = result.getString("Create Table");
       return DorisUtils.extractDistributionInfoFromSql(createTableSyntax);
     }
+  }
+
+  @Override
+  public Integer calculateDatetimePrecision(String typeName, int columnSize, int scale) {
+    String upperTypeName = typeName.toUpperCase();
+
+    // Check driver version compatibility first
+    boolean isDatetimeType = "DATETIME".equals(upperTypeName);
+
+    if (isDatetimeType) {
+      String driverVersion = getMySQLDriverVersion();
+      if (driverVersion != null && !isMySQLDriverVersionSupported(driverVersion)) {
+        LOG.warn(
+            "MySQL driver version {} is below 8.0.16, columnSize may not be accurate for precision calculation. "
+                + "Returning null for {} type precision. Driver version: {}",
+            driverVersion,
+            upperTypeName,
+            driverVersion);
+        return null;
+      }
+    }
+
+    if (upperTypeName.equals("DATETIME")) {
+      // DATETIME format: 'YYYY-MM-DD HH:MM:SS' (19 chars) + decimal point + precision
+      return columnSize >= DATETIME_FORMAT_WITH_DOT.length()
+          ? columnSize - DATETIME_FORMAT_WITH_DOT.length()
+          : 0;
+    }
+    return null;
   }
 }

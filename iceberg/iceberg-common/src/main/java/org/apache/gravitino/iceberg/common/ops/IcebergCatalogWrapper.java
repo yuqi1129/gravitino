@@ -19,23 +19,18 @@
 package org.apache.gravitino.iceberg.common.ops;
 
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableSet;
 import java.sql.Driver;
 import java.sql.DriverManager;
-import java.util.Collections;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.function.Supplier;
 import lombok.Getter;
 import lombok.Setter;
-import org.apache.gravitino.catalog.lakehouse.iceberg.IcebergConstants;
-import org.apache.gravitino.iceberg.common.IcebergCatalogBackend;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.gravitino.catalog.lakehouse.iceberg.IcebergCatalogBackend;
 import org.apache.gravitino.iceberg.common.IcebergConfig;
 import org.apache.gravitino.iceberg.common.utils.IcebergCatalogUtil;
 import org.apache.gravitino.utils.IsolatedClassLoader;
-import org.apache.gravitino.utils.MapUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.iceberg.Transaction;
@@ -62,6 +57,10 @@ import org.apache.iceberg.rest.responses.UpdateNamespacePropertiesResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * A wrapper for Iceberg catalog backend, provides the common interface for Iceberg REST server and
+ * Gravitino Iceberg catalog.
+ */
 public class IcebergCatalogWrapper implements AutoCloseable {
 
   public static final Logger LOG = LoggerFactory.getLogger(IcebergCatalogWrapper.class);
@@ -70,49 +69,33 @@ public class IcebergCatalogWrapper implements AutoCloseable {
   private SupportsNamespaces asNamespaceCatalog;
   private final IcebergCatalogBackend catalogBackend;
   private String catalogUri = null;
-  private Map<String, String> catalogConfigToClients;
   private Map<String, String> catalogPropertiesMap;
-  private static final Set<String> catalogPropertiesToClientKeys =
-      ImmutableSet.of(
-          IcebergConstants.IO_IMPL,
-          IcebergConstants.AWS_S3_REGION,
-          IcebergConstants.ICEBERG_S3_ACCESS_KEY_ID,
-          IcebergConstants.ICEBERG_S3_SECRET_ACCESS_KEY,
-          IcebergConstants.ICEBERG_S3_ENDPOINT,
-          IcebergConstants.ICEBERG_OSS_ENDPOINT,
-          IcebergConstants.ICEBERG_OSS_ACCESS_KEY_ID,
-          IcebergConstants.ICEBERG_OSS_ACCESS_KEY_SECRET);
 
   public IcebergCatalogWrapper(IcebergConfig icebergConfig) {
     this.catalogBackend =
         IcebergCatalogBackend.valueOf(
             icebergConfig.get(IcebergConfig.CATALOG_BACKEND).toUpperCase(Locale.ROOT));
-    if (!IcebergCatalogBackend.MEMORY.equals(catalogBackend)) {
+    if (!IcebergCatalogBackend.MEMORY.equals(catalogBackend)
+        && !IcebergCatalogBackend.REST.equals(catalogBackend)) {
       // check whether IcebergConfig.CATALOG_WAREHOUSE exists
-      icebergConfig.get(IcebergConfig.CATALOG_WAREHOUSE);
+      if (StringUtils.isBlank(icebergConfig.get(IcebergConfig.CATALOG_WAREHOUSE))) {
+        throw new IllegalArgumentException("The 'warehouse' parameter must have a value.");
+      }
+    }
+    if (!IcebergCatalogBackend.MEMORY.equals(catalogBackend)) {
       this.catalogUri = icebergConfig.get(IcebergConfig.CATALOG_URI);
     }
     this.catalog = IcebergCatalogUtil.loadCatalogBackend(catalogBackend, icebergConfig);
     if (catalog instanceof SupportsNamespaces) {
       this.asNamespaceCatalog = (SupportsNamespaces) catalog;
     }
-    this.catalogConfigToClients =
-        MapUtils.getFilteredMap(
-            icebergConfig.getIcebergCatalogProperties(),
-            key -> catalogPropertiesToClientKeys.contains(key));
 
     this.catalogPropertiesMap = icebergConfig.getIcebergCatalogProperties();
   }
 
-  public IcebergCatalogWrapper() {
-    this(new IcebergConfig(Collections.emptyMap()));
-  }
-
   private void validateNamespace(Optional<Namespace> namespace) {
     namespace.ifPresent(
-        n ->
-            Preconditions.checkArgument(
-                n.toString().isEmpty() == false, "Namespace couldn't be empty"));
+        n -> Preconditions.checkArgument(!n.toString().isEmpty(), "Namespace couldn't be empty"));
     if (asNamespaceCatalog == null) {
       throw new UnsupportedOperationException(
           "The underlying catalog doesn't support namespace operation");
@@ -141,6 +124,11 @@ public class IcebergCatalogWrapper implements AutoCloseable {
     return CatalogHandlers.loadNamespace(asNamespaceCatalog, namespace);
   }
 
+  public boolean namespaceExists(Namespace namespace) {
+    validateNamespace(Optional.of(namespace));
+    return asNamespaceCatalog.namespaceExists(namespace);
+  }
+
   public ListNamespacesResponse listNamespace(Namespace parent) {
     validateNamespace(Optional.empty());
     return CatalogHandlers.listNamespaces(asNamespaceCatalog, parent);
@@ -160,7 +148,7 @@ public class IcebergCatalogWrapper implements AutoCloseable {
   /**
    * Reload hadoop configuration, this is useful when the hadoop configuration UserGroupInformation
    * is shared by multiple threads. UserGroupInformation#authenticationMethod was first initialized
-   * in KerberosClient, however, when switching to iceberg-rest thead,
+   * in KerberosClient, however, when switching to iceberg-rest thread,
    * UserGroupInformation#authenticationMethod will be reset to the default value; we need to
    * reinitialize it again.
    */
@@ -173,9 +161,9 @@ public class IcebergCatalogWrapper implements AutoCloseable {
   public LoadTableResponse createTable(Namespace namespace, CreateTableRequest request) {
     request.validate();
     if (request.stageCreate()) {
-      return injectTableConfig(() -> CatalogHandlers.stageTableCreate(catalog, namespace, request));
+      return CatalogHandlers.stageTableCreate(catalog, namespace, request);
     }
-    return injectTableConfig(() -> CatalogHandlers.createTable(catalog, namespace, request));
+    return CatalogHandlers.createTable(catalog, namespace, request);
   }
 
   public void dropTable(TableIdentifier tableIdentifier) {
@@ -187,7 +175,7 @@ public class IcebergCatalogWrapper implements AutoCloseable {
   }
 
   public LoadTableResponse loadTable(TableIdentifier tableIdentifier) {
-    return injectTableConfig(() -> CatalogHandlers.loadTable(catalog, tableIdentifier));
+    return CatalogHandlers.loadTable(catalog, tableIdentifier);
   }
 
   public boolean tableExists(TableIdentifier tableIdentifier) {
@@ -236,12 +224,16 @@ public class IcebergCatalogWrapper implements AutoCloseable {
     CatalogHandlers.renameView(getViewCatalog(), request);
   }
 
-  public boolean existView(TableIdentifier viewIdentifier) {
+  public boolean viewExists(TableIdentifier viewIdentifier) {
     return getViewCatalog().viewExists(viewIdentifier);
   }
 
   public ListTablesResponse listView(Namespace namespace) {
     return CatalogHandlers.listViews(getViewCatalog(), namespace);
+  }
+
+  public boolean supportsViewOperations() {
+    return catalog instanceof ViewCatalog;
   }
 
   @Override
@@ -271,7 +263,7 @@ public class IcebergCatalogWrapper implements AutoCloseable {
   private void closeMySQLCatalogResource() {
     try {
       // Close thread AbandonedConnectionCleanupThread if we are using `com.mysql.cj.jdbc.Driver`,
-      // for driver `com.mysql.jdbc.Driver` (deprecated), the daemon thead maybe not this one.
+      // for driver `com.mysql.jdbc.Driver` (deprecated), the daemon thread maybe not this one.
       Class.forName("com.mysql.cj.jdbc.AbandonedConnectionCleanupThread")
           .getMethod("uncheckedShutdown")
           .invoke(null);
@@ -300,19 +292,6 @@ public class IcebergCatalogWrapper implements AutoCloseable {
 
   private void closePostgreSQLCatalogResource() {
     closeDriverLoadedByIsolatedClassLoader(catalogUri);
-  }
-
-  // Some io and security configuration should pass to Iceberg REST client
-  private LoadTableResponse injectTableConfig(Supplier<LoadTableResponse> supplier) {
-    LoadTableResponse loadTableResponse = supplier.get();
-    return LoadTableResponse.builder()
-        .withTableMetadata(loadTableResponse.tableMetadata())
-        .addAllConfig(getCatalogConfigToClient())
-        .build();
-  }
-
-  private Map<String, String> getCatalogConfigToClient() {
-    return catalogConfigToClients;
   }
 
   @Getter

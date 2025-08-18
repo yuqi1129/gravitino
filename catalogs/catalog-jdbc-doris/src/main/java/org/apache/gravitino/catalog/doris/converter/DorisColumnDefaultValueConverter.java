@@ -32,7 +32,6 @@ import static org.apache.gravitino.rel.Column.DEFAULT_VALUE_OF_CURRENT_TIMESTAMP
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import org.apache.gravitino.catalog.jdbc.converter.JdbcColumnDefaultValueConverter;
 import org.apache.gravitino.catalog.jdbc.converter.JdbcTypeConverter;
 import org.apache.gravitino.rel.expressions.Expression;
@@ -81,14 +80,9 @@ public class DorisColumnDefaultValueConverter extends JdbcColumnDefaultValueConv
         return Literals.doubleLiteral(Double.valueOf(columnDefaultValue));
       case DECIMAL:
         return Literals.decimalLiteral(
-            Decimal.of(
-                columnDefaultValue,
-                Integer.parseInt(columnType.getColumnSize()),
-                Integer.parseInt(columnType.getScale())));
+            Decimal.of(columnDefaultValue, columnType.getColumnSize(), columnType.getScale()));
       case JdbcTypeConverter.DATE:
-        return Literals.dateLiteral(LocalDate.parse(columnDefaultValue, DATE_TIME_FORMATTER));
-      case JdbcTypeConverter.TIME:
-        return Literals.timeLiteral(LocalTime.parse(columnDefaultValue, DATE_TIME_FORMATTER));
+        return Literals.dateLiteral(LocalDate.parse(columnDefaultValue, DATE_FORMATTER));
       case JdbcTypeConverter.TIMESTAMP:
       case DATETIME:
         return CURRENT_TIMESTAMP.equals(columnDefaultValue)
@@ -96,12 +90,9 @@ public class DorisColumnDefaultValueConverter extends JdbcColumnDefaultValueConv
             : Literals.timestampLiteral(
                 LocalDateTime.parse(columnDefaultValue, DATE_TIME_FORMATTER));
       case JdbcTypeConverter.VARCHAR:
-        return Literals.of(
-            columnDefaultValue, Types.VarCharType.of(Integer.parseInt(columnType.getColumnSize())));
+        return Literals.of(columnDefaultValue, Types.VarCharType.of(columnType.getColumnSize()));
       case CHAR:
-        return Literals.of(
-            columnDefaultValue,
-            Types.FixedCharType.of(Integer.parseInt(columnType.getColumnSize())));
+        return Literals.of(columnDefaultValue, Types.FixedCharType.of(columnType.getColumnSize()));
       case JdbcTypeConverter.TEXT:
         return Literals.stringLiteral(columnDefaultValue);
       default:

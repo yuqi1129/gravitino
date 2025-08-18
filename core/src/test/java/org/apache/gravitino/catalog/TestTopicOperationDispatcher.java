@@ -24,8 +24,11 @@ import static org.apache.gravitino.Configs.TREE_LOCK_MIN_NODE_IN_MEMORY;
 import static org.apache.gravitino.Entity.EntityType.SCHEMA;
 import static org.apache.gravitino.StringIdentifier.ID_KEY;
 import static org.apache.gravitino.TestBasePropertiesMetadata.COMMENT_KEY;
+import static org.apache.gravitino.TestCatalog.PROPERTY_KEY1;
+import static org.apache.gravitino.TestCatalog.PROPERTY_KEY5_PREFIX;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -95,12 +98,13 @@ public class TestTopicOperationDispatcher extends TestOperationDispatcher {
     Map<String, String> illegalProps = ImmutableMap.of("k2", "v2");
     testPropertyException(
         () -> topicOperationDispatcher.createTopic(topicIdent1, "comment", null, illegalProps),
-        "Properties are required and must be set");
+        "Properties or property prefixes are required and must be set");
 
-    Map<String, String> illegalProps2 = ImmutableMap.of("k1", "v1", ID_KEY, "test");
+    Map<String, String> illegalProps2 =
+        ImmutableMap.of(PROPERTY_KEY1, "v1", PROPERTY_KEY5_PREFIX + "1", "value1", ID_KEY, "test");
     testPropertyException(
         () -> topicOperationDispatcher.createTopic(topicIdent1, "comment", null, illegalProps2),
-        "Properties are reserved and cannot be set",
+        "Properties or property prefixes are reserved and cannot be set",
         "gravitino.identifier");
   }
 
@@ -127,7 +131,9 @@ public class TestTopicOperationDispatcher extends TestOperationDispatcher {
     reset(entityStore);
     entityStore.delete(topicIdent1, Entity.EntityType.TOPIC);
     entityStore.delete(NameIdentifier.of(topicNs.levels()), SCHEMA);
-    doThrow(new NoSuchEntityException("")).when(entityStore).get(any(), any(), any());
+    doThrow(new NoSuchEntityException(""))
+        .when(entityStore)
+        .get(any(), eq(Entity.EntityType.TOPIC), any());
     Topic loadedTopic2 = topicOperationDispatcher.loadTopic(topicIdent1);
     // Succeed to import the topic entity
     Assertions.assertTrue(entityStore.exists(topicIdent1, Entity.EntityType.TOPIC));
@@ -139,7 +145,7 @@ public class TestTopicOperationDispatcher extends TestOperationDispatcher {
     reset(entityStore);
     entityStore.delete(topicIdent1, Entity.EntityType.TOPIC);
     entityStore.delete(NameIdentifier.of(topicNs.levels()), SCHEMA);
-    doThrow(new IOException()).when(entityStore).get(any(), any(), any());
+    doThrow(new IOException()).when(entityStore).get(any(), eq(Entity.EntityType.TOPIC), any());
     Topic loadedTopic3 = topicOperationDispatcher.loadTopic(topicIdent1);
     // Succeed to import the topic entity
     Assertions.assertTrue(entityStore.exists(NameIdentifier.of(topicNs.levels()), SCHEMA));
@@ -157,7 +163,7 @@ public class TestTopicOperationDispatcher extends TestOperationDispatcher {
             .withAuditInfo(
                 AuditInfo.builder().withCreator("gravitino").withCreateTime(Instant.now()).build())
             .build();
-    doReturn(unmatchedEntity).when(entityStore).get(any(), any(), any());
+    doReturn(unmatchedEntity).when(entityStore).get(any(), eq(Entity.EntityType.TOPIC), any());
     Topic loadedTopic4 = topicOperationDispatcher.loadTopic(topicIdent1);
     // Succeed to import the topic entity
     reset(entityStore);
@@ -266,5 +272,13 @@ public class TestTopicOperationDispatcher extends TestOperationDispatcher {
     topicOperationDispatcher.createTopic(topicIdent, "comment", null, props);
     Assertions.assertTrue(entityStore.exists(NameIdentifier.of(topicNs.levels()), SCHEMA));
     Assertions.assertTrue(entityStore.exists(topicIdent, Entity.EntityType.TOPIC));
+  }
+
+  public static SchemaOperationDispatcher getSchemaOperationDispatcher() {
+    return schemaOperationDispatcher;
+  }
+
+  public static TopicOperationDispatcher getTopicOperationDispatcher() {
+    return topicOperationDispatcher;
   }
 }

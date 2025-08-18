@@ -35,27 +35,31 @@ public class GravitinoCatalogManager {
   private static GravitinoCatalogManager gravitinoCatalogManager;
 
   private volatile boolean isClosed = false;
-  private final String metalakeName;
   private final GravitinoMetalake metalake;
   private final GravitinoAdminClient gravitinoClient;
 
-  private GravitinoCatalogManager(String gravitinoUri, String metalakeName) {
-    this.metalakeName = metalakeName;
-    this.gravitinoClient = GravitinoAdminClient.builder(gravitinoUri).build();
+  private GravitinoCatalogManager(
+      String gravitinoUri, String metalakeName, Map<String, String> gravitinoClientConfig) {
+    this.gravitinoClient =
+        GravitinoAdminClient.builder(gravitinoUri).withClientConfig(gravitinoClientConfig).build();
     this.metalake = gravitinoClient.loadMetalake(metalakeName);
   }
 
   /**
-   * Create GravitinoCatalogManager with Gravitino server uri and metalake name.
+   * Create GravitinoCatalogManager with Gravitino server uri, metalake name and client properties
+   * map.
    *
    * @param gravitinoUri Gravitino server uri
    * @param metalakeName Metalake name
+   * @param gravitinoClientConfig Gravitino client properties map
    * @return GravitinoCatalogManager
    */
-  public static GravitinoCatalogManager create(String gravitinoUri, String metalakeName) {
+  public static GravitinoCatalogManager create(
+      String gravitinoUri, String metalakeName, Map<String, String> gravitinoClientConfig) {
     Preconditions.checkState(
         gravitinoCatalogManager == null, "Should not create duplicate GravitinoCatalogManager");
-    gravitinoCatalogManager = new GravitinoCatalogManager(gravitinoUri, metalakeName);
+    gravitinoCatalogManager =
+        new GravitinoCatalogManager(gravitinoUri, metalakeName, gravitinoClientConfig);
     return gravitinoCatalogManager;
   }
 
@@ -100,15 +104,6 @@ public class GravitinoCatalogManager {
   }
 
   /**
-   * Get the metalake.
-   *
-   * @return the metalake name.
-   */
-  public String getMetalakeName() {
-    return metalakeName;
-  }
-
-  /**
    * Create catalog in Gravitino.
    *
    * @param catalogName Catalog name
@@ -134,7 +129,7 @@ public class GravitinoCatalogManager {
    * @return boolean
    */
   public boolean dropCatalog(String catalogName) {
-    return metalake.dropCatalog(catalogName);
+    return metalake.dropCatalog(catalogName, true);
   }
 
   /**

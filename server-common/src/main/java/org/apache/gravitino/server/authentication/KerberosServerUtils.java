@@ -16,12 +16,10 @@ package org.apache.gravitino.server.authentication;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.lang.reflect.InvocationTargetException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
-import java.nio.charset.IllegalCharsetNameException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -50,15 +48,8 @@ public class KerberosServerUtils {
    * Return the default realm for this JVM.
    *
    * @return The default realm
-   * @throws IllegalArgumentException If the default realm does not exist.
-   * @throws ClassNotFoundException Not thrown. Exists for compatibility.
-   * @throws NoSuchMethodException Not thrown. Exists for compatibility.
-   * @throws IllegalAccessException Not thrown. Exists for compatibility.
-   * @throws InvocationTargetException Not thrown. Exists for compatibility.
    */
-  public static String getDefaultRealm()
-      throws ClassNotFoundException, NoSuchMethodException, IllegalArgumentException,
-          IllegalAccessException, InvocationTargetException {
+  public static String getDefaultRealm() {
     // Any name is okay.
     return new KerberosPrincipal("tmp", 1).getRealm();
   }
@@ -353,11 +344,8 @@ public class KerberosServerUtils {
     }
 
     String getAsString() {
-      try {
-        return new String(bb.array(), bb.arrayOffset() + bb.position(), bb.remaining(), "UTF-8");
-      } catch (UnsupportedEncodingException e) {
-        throw new IllegalCharsetNameException("UTF-8"); // won't happen.
-      }
+      return new String(
+          bb.array(), bb.arrayOffset() + bb.position(), bb.remaining(), StandardCharsets.UTF_8);
     }
 
     @Override

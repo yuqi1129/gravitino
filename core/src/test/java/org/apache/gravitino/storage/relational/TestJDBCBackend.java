@@ -20,27 +20,34 @@ package org.apache.gravitino.storage.relational;
 
 import static org.apache.gravitino.Configs.DEFAULT_ENTITY_RELATIONAL_STORE;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_DRIVER;
+import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_MAX_CONNECTIONS;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_PASSWORD;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_URL;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_USER;
+import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_WAIT_MILLISECONDS;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_STORE;
 import static org.apache.gravitino.Configs.ENTITY_STORE;
 import static org.apache.gravitino.Configs.RELATIONAL_ENTITY_STORE;
 import static org.apache.gravitino.SupportsRelationOperations.Type.OWNER_REL;
+import static org.apache.gravitino.file.Fileset.LOCATION_NAME_UNKNOWN;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.lang.invoke.MethodHandles;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
@@ -48,14 +55,15 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
-import org.apache.commons.io.IOUtils;
 import org.apache.gravitino.Catalog;
 import org.apache.gravitino.Config;
 import org.apache.gravitino.Configs;
 import org.apache.gravitino.Entity;
 import org.apache.gravitino.EntityAlreadyExistsException;
+import org.apache.gravitino.MetadataObject;
+import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Namespace;
 import org.apache.gravitino.authorization.AuthorizationUtils;
 import org.apache.gravitino.authorization.Privileges;
@@ -67,6 +75,9 @@ import org.apache.gravitino.meta.BaseMetalake;
 import org.apache.gravitino.meta.CatalogEntity;
 import org.apache.gravitino.meta.FilesetEntity;
 import org.apache.gravitino.meta.GroupEntity;
+import org.apache.gravitino.meta.ModelEntity;
+import org.apache.gravitino.meta.ModelVersionEntity;
+import org.apache.gravitino.meta.PolicyEntity;
 import org.apache.gravitino.meta.RoleEntity;
 import org.apache.gravitino.meta.SchemaEntity;
 import org.apache.gravitino.meta.SchemaVersion;
@@ -74,13 +85,17 @@ import org.apache.gravitino.meta.TableEntity;
 import org.apache.gravitino.meta.TagEntity;
 import org.apache.gravitino.meta.TopicEntity;
 import org.apache.gravitino.meta.UserEntity;
+import org.apache.gravitino.policy.Policy;
+import org.apache.gravitino.policy.PolicyContents;
 import org.apache.gravitino.storage.RandomIdGenerator;
+import org.apache.gravitino.storage.relational.mapper.CatalogMetaMapper;
 import org.apache.gravitino.storage.relational.mapper.GroupMetaMapper;
 import org.apache.gravitino.storage.relational.mapper.UserMetaMapper;
+import org.apache.gravitino.storage.relational.service.CatalogMetaService;
+import org.apache.gravitino.storage.relational.service.MetalakeMetaService;
 import org.apache.gravitino.storage.relational.service.RoleMetaService;
 import org.apache.gravitino.storage.relational.session.SqlSessionFactoryHelper;
 import org.apache.gravitino.storage.relational.utils.SessionUtils;
-import org.apache.gravitino.tag.TagManager;
 import org.apache.gravitino.utils.NamespaceUtil;
 import org.apache.ibatis.session.SqlSession;
 import org.junit.jupiter.api.AfterAll;
@@ -88,21 +103,39 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.condition.EnabledIf;
 import org.mockito.Mockito;
 
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+// Avoid re-executing tests in subclasses
+@EnabledIf("isDirectlyRunningThisClass")
 public class TestJDBCBackend {
-  private static final String JDBC_STORE_PATH =
+  private static final Set<MetadataObject.Type> SUPPORTED_OBJECT_TYPES =
+      ImmutableSet.of(
+          MetadataObject.Type.CATALOG,
+          MetadataObject.Type.SCHEMA,
+          MetadataObject.Type.TABLE,
+          MetadataObject.Type.FILESET,
+          MetadataObject.Type.MODEL,
+          MetadataObject.Type.TOPIC);
+
+  private final String JDBC_STORE_PATH =
       "/tmp/gravitino_jdbc_entityStore_" + UUID.randomUUID().toString().replace("-", "");
-  private static final String DB_DIR = JDBC_STORE_PATH + "/testdb";
-  private static final String H2_FILE = DB_DIR + ".mv.db";
-  private static final Config config = Mockito.mock(Config.class);
-  public static final ImmutableMap<String, String> RELATIONAL_BACKENDS =
+  private final String DB_DIR = JDBC_STORE_PATH + "/testdb";
+  private final String H2_FILE = DB_DIR + ".mv.db";
+  private final Config config = Mockito.mock(Config.class);
+  public final ImmutableMap<String, String> RELATIONAL_BACKENDS =
       ImmutableMap.of(
           Configs.DEFAULT_ENTITY_RELATIONAL_STORE, JDBCBackend.class.getCanonicalName());
-  public static RelationalBackend backend;
+  protected RelationalBackend backend;
+
+  static boolean isDirectlyRunningThisClass() {
+    return MethodHandles.lookup().lookupClass() == TestJDBCBackend.class;
+  }
 
   @BeforeAll
-  public static void setup() {
+  public void setup() {
     File dir = new File(DB_DIR);
     dir.deleteOnExit();
     if (dir.exists() || !dir.isDirectory()) {
@@ -116,6 +149,8 @@ public class TestJDBCBackend {
     Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_USER)).thenReturn("root");
     Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_PASSWORD)).thenReturn("123456");
     Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_DRIVER)).thenReturn("org.h2.Driver");
+    Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_MAX_CONNECTIONS)).thenReturn(100);
+    Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_WAIT_MILLISECONDS)).thenReturn(1000L);
 
     String backendName = config.get(ENTITY_RELATIONAL_STORE);
     String className =
@@ -131,8 +166,9 @@ public class TestJDBCBackend {
   }
 
   @AfterAll
-  public static void tearDown() throws IOException {
+  public void tearDown() throws IOException {
     dropAllTables();
+    backend.close();
     File dir = new File(DB_DIR);
     if (dir.exists()) {
       Files.delete(Paths.get(DB_DIR));
@@ -140,31 +176,11 @@ public class TestJDBCBackend {
 
     Files.delete(Paths.get(H2_FILE));
     Files.delete(Paths.get(JDBC_STORE_PATH));
-    backend.close();
   }
 
   @BeforeEach
   public void init() {
     truncateAllTables();
-  }
-
-  private static void prepareJdbcTable() {
-    // Read the ddl sql to create table
-    String scriptPath = "h2/schema-0.6.0-h2.sql";
-    try (SqlSession sqlSession =
-            SqlSessionFactoryHelper.getInstance().getSqlSessionFactory().openSession(true);
-        Connection connection = sqlSession.getConnection();
-        Statement statement = connection.createStatement()) {
-      StringBuilder ddlBuilder = new StringBuilder();
-      IOUtils.readLines(
-              Objects.requireNonNull(
-                  TestJDBCBackend.class.getClassLoader().getResourceAsStream(scriptPath)),
-              StandardCharsets.UTF_8)
-          .forEach(line -> ddlBuilder.append(line).append("\n"));
-      statement.execute(ddlBuilder.toString());
-    } catch (Exception e) {
-      throw new IllegalStateException("Create tables failed", e);
-    }
   }
 
   private static void truncateAllTables() {
@@ -222,6 +238,21 @@ public class TestJDBCBackend {
         createBaseMakeLake(RandomIdGenerator.INSTANCE.nextId(), "metalake", auditInfo);
     backend.insert(metalake, false);
     assertThrows(EntityAlreadyExistsException.class, () -> backend.insert(metalakeCopy, false));
+
+    PolicyEntity policy =
+        createPolicy(
+            RandomIdGenerator.INSTANCE.nextId(),
+            NamespaceUtil.ofPolicy("metalake"),
+            "policy",
+            auditInfo);
+    PolicyEntity policyCopy =
+        createPolicy(
+            RandomIdGenerator.INSTANCE.nextId(),
+            NamespaceUtil.ofPolicy("metalake"),
+            "policy",
+            auditInfo);
+    backend.insert(policy, false);
+    assertThrows(EntityAlreadyExistsException.class, () -> backend.insert(policyCopy, false));
 
     CatalogEntity catalog =
         createCatalog(
@@ -297,6 +328,29 @@ public class TestJDBCBackend {
             auditInfo);
     backend.insert(topic, false);
     assertThrows(EntityAlreadyExistsException.class, () -> backend.insert(topicCopy, false));
+
+    ModelEntity model =
+        createModelEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            NamespaceUtil.ofModel("metalake", "catalog", "schema"),
+            "model",
+            "model comment",
+            1,
+            ImmutableMap.of("key", "value"),
+            auditInfo);
+    ModelEntity modelCopy =
+        createModelEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            NamespaceUtil.ofModel("metalake", "catalog", "schema"),
+            "model",
+            "model comment",
+            1,
+            ImmutableMap.of("key", "value"),
+            auditInfo);
+
+    assertDoesNotThrow(() -> backend.insert(model, false));
+    assertThrows(EntityAlreadyExistsException.class, () -> backend.insert(modelCopy, false));
+    assertDoesNotThrow(() -> backend.insert(modelCopy, true));
   }
 
   @Test
@@ -317,6 +371,28 @@ public class TestJDBCBackend {
                 metalakeCopy.nameIdentifier(),
                 Entity.EntityType.METALAKE,
                 e -> createBaseMakeLake(metalakeCopy.id(), "metalake", auditInfo)));
+
+    PolicyEntity policy =
+        createPolicy(
+            RandomIdGenerator.INSTANCE.nextId(),
+            NamespaceUtil.ofPolicy("metalake"),
+            "policy",
+            auditInfo);
+    PolicyEntity policy1 =
+        createPolicy(
+            RandomIdGenerator.INSTANCE.nextId(),
+            NamespaceUtil.ofPolicy("metalake"),
+            "policy1",
+            auditInfo);
+    backend.insert(policy, false);
+    backend.insert(policy1, false);
+    assertThrows(
+        EntityAlreadyExistsException.class,
+        () ->
+            backend.update(
+                policy1.nameIdentifier(),
+                Entity.EntityType.POLICY,
+                e -> createPolicy(policy1.id(), policy1.namespace(), "policy", auditInfo)));
 
     CatalogEntity catalog =
         createCatalog(
@@ -535,6 +611,27 @@ public class TestJDBCBackend {
         createBaseMakeLake(RandomIdGenerator.INSTANCE.nextId(), "metalake", auditInfo);
     backend.insert(metalake, false);
 
+    PolicyEntity policy =
+        createPolicy(
+            RandomIdGenerator.INSTANCE.nextId(),
+            NamespaceUtil.ofPolicy("metalake"),
+            "policy",
+            auditInfo);
+    backend.insert(policy, false);
+    // update policy enabled and version
+    PolicyEntity policyV2 =
+        PolicyEntity.builder()
+            .withId(policy.id())
+            .withNamespace(policy.namespace())
+            .withName(policy.name())
+            .withPolicyType(policy.policyType())
+            .withComment(policy.comment())
+            .withEnabled(!policy.enabled())
+            .withContent(policy.content())
+            .withAuditInfo(auditInfo)
+            .build();
+    backend.update(policy.nameIdentifier(), Entity.EntityType.POLICY, e -> policyV2);
+
     CatalogEntity catalog =
         createCatalog(
             RandomIdGenerator.INSTANCE.nextId(),
@@ -574,6 +671,17 @@ public class TestJDBCBackend {
             "topic",
             auditInfo);
     backend.insert(topic, false);
+
+    ModelEntity model =
+        createModelEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            NamespaceUtil.ofModel("metalake", "catalog", "schema"),
+            "model",
+            "model comment",
+            1,
+            ImmutableMap.of("key", "value"),
+            auditInfo);
+    backend.insert(model, false);
 
     // update fileset properties and version
     FilesetEntity filesetV2 =
@@ -618,7 +726,7 @@ public class TestJDBCBackend {
         TagEntity.builder()
             .withId(RandomIdGenerator.INSTANCE.nextId())
             .withName("tag")
-            .withNamespace(TagManager.ofTagNamespace("metalake"))
+            .withNamespace(NamespaceUtil.ofTag("metalake"))
             .withComment("tag comment")
             .withAuditInfo(auditInfo)
             .build();
@@ -628,6 +736,40 @@ public class TestJDBCBackend {
     BaseMetalake anotherMetaLake =
         createBaseMakeLake(RandomIdGenerator.INSTANCE.nextId(), "another-metalake", auditInfo);
     backend.insert(anotherMetaLake, false);
+
+    PolicyEntity anotherPolicy =
+        createPolicy(
+            RandomIdGenerator.INSTANCE.nextId(),
+            NamespaceUtil.ofPolicy("another-metalake"),
+            "another-policy",
+            auditInfo);
+    backend.insert(anotherPolicy, false);
+    // update another policy enabled and version
+    PolicyEntity anotherPolicyV2 =
+        PolicyEntity.builder()
+            .withId(anotherPolicy.id())
+            .withNamespace(anotherPolicy.namespace())
+            .withName(anotherPolicy.name())
+            .withPolicyType(anotherPolicy.policyType())
+            .withComment(anotherPolicy.comment())
+            .withEnabled(!anotherPolicy.enabled())
+            .withContent(anotherPolicy.content())
+            .withAuditInfo(auditInfo)
+            .build();
+    backend.update(anotherPolicy.nameIdentifier(), Entity.EntityType.POLICY, e -> anotherPolicyV2);
+    // update another policy comment and version
+    PolicyEntity anotherPolicyV3 =
+        PolicyEntity.builder()
+            .withId(anotherPolicy.id())
+            .withNamespace(anotherPolicy.namespace())
+            .withName(anotherPolicy.name())
+            .withPolicyType(anotherPolicy.policyType())
+            .withComment("v3")
+            .withEnabled(anotherPolicyV2.enabled())
+            .withContent(anotherPolicy.content())
+            .withAuditInfo(auditInfo)
+            .build();
+    backend.update(anotherPolicy.nameIdentifier(), Entity.EntityType.POLICY, e -> anotherPolicyV3);
 
     CatalogEntity anotherCatalog =
         createCatalog(
@@ -706,7 +848,7 @@ public class TestJDBCBackend {
         TagEntity.builder()
             .withId(RandomIdGenerator.INSTANCE.nextId())
             .withName("another-tag")
-            .withNamespace(TagManager.ofTagNamespace("another-metalake"))
+            .withNamespace(NamespaceUtil.ofTag("another-metalake"))
             .withComment("another-tag comment")
             .withAuditInfo(auditInfo)
             .build();
@@ -717,9 +859,21 @@ public class TestJDBCBackend {
         backend.list(metalake.namespace(), Entity.EntityType.METALAKE, true);
     assertTrue(metaLakes.contains(metalake));
 
+    List<PolicyEntity> policies = backend.list(policy.namespace(), Entity.EntityType.POLICY, true);
+    assertFalse(policies.contains(policy));
+    assertTrue(policies.contains(policyV2));
+    assertEquals(policyV2.enabled(), policies.get(policies.indexOf(policyV2)).enabled());
+
     List<CatalogEntity> catalogs =
         backend.list(catalog.namespace(), Entity.EntityType.CATALOG, true);
     assertTrue(catalogs.contains(catalog));
+
+    assertEquals(
+        1,
+        SessionUtils.doWithCommitAndFetchResult(
+                CatalogMetaMapper.class,
+                mapper -> mapper.listCatalogPOsByMetalakeName(metalake.name()))
+            .size());
 
     List<SchemaEntity> schemas = backend.list(schema.namespace(), Entity.EntityType.SCHEMA, true);
     assertTrue(schemas.contains(schema));
@@ -736,10 +890,23 @@ public class TestJDBCBackend {
     List<TopicEntity> topics = backend.list(topic.namespace(), Entity.EntityType.TOPIC, true);
     assertTrue(topics.contains(topic));
 
+    List<ModelEntity> models = backend.list(model.namespace(), Entity.EntityType.MODEL, true);
+    assertTrue(models.contains(model));
+
     RoleEntity roleEntity = backend.get(role.nameIdentifier(), Entity.EntityType.ROLE);
     assertEquals(role, roleEntity);
     assertEquals(1, RoleMetaService.getInstance().listRolesByUserId(user.id()).size());
     assertEquals(1, RoleMetaService.getInstance().listRolesByGroupId(group.id()).size());
+
+    CatalogEntity catalogEntity = backend.get(catalog.nameIdentifier(), Entity.EntityType.CATALOG);
+    assertEquals(catalog, catalogEntity);
+    assertNotNull(
+        CatalogMetaService.getInstance()
+            .getCatalogPOByName(catalogEntity.namespace().level(0), catalog.name()));
+    assertEquals(
+        catalog.id(),
+        CatalogMetaService.getInstance()
+            .getCatalogIdByName(catalog.namespace().level(0), catalog.name()));
 
     UserEntity userEntity = backend.get(user.nameIdentifier(), Entity.EntityType.USER);
     assertEquals(user, userEntity);
@@ -815,9 +982,19 @@ public class TestJDBCBackend {
     // meta data soft delete
     backend.delete(metalake.nameIdentifier(), Entity.EntityType.METALAKE, true);
 
+    assertEquals(
+        0,
+        SessionUtils.doWithCommitAndFetchResult(
+                CatalogMetaMapper.class,
+                mapper -> mapper.listCatalogPOsByMetalakeName(metalake.name()))
+            .size());
+
     // check existence after soft delete
     assertFalse(backend.exists(metalake.nameIdentifier(), Entity.EntityType.METALAKE));
     assertTrue(backend.exists(anotherMetaLake.nameIdentifier(), Entity.EntityType.METALAKE));
+
+    assertFalse(backend.exists(policy.nameIdentifier(), Entity.EntityType.POLICY));
+    assertTrue(backend.exists(anotherPolicy.nameIdentifier(), Entity.EntityType.POLICY));
 
     assertFalse(backend.exists(catalog.nameIdentifier(), Entity.EntityType.CATALOG));
     assertTrue(backend.exists(anotherCatalog.nameIdentifier(), Entity.EntityType.CATALOG));
@@ -830,6 +1007,7 @@ public class TestJDBCBackend {
 
     assertFalse(backend.exists(table.nameIdentifier(), Entity.EntityType.TABLE));
     assertFalse(backend.exists(topic.nameIdentifier(), Entity.EntityType.TOPIC));
+    assertFalse(backend.exists(model.nameIdentifier(), Entity.EntityType.MODEL));
 
     assertFalse(backend.exists(role.nameIdentifier(), Entity.EntityType.ROLE));
     assertEquals(0, RoleMetaService.getInstance().listRolesByUserId(user.id()).size());
@@ -857,10 +1035,12 @@ public class TestJDBCBackend {
 
     // check legacy record after soft delete
     assertTrue(legacyRecordExistsInDB(metalake.id(), Entity.EntityType.METALAKE));
+    assertTrue(legacyRecordExistsInDB(policy.id(), Entity.EntityType.POLICY));
     assertTrue(legacyRecordExistsInDB(catalog.id(), Entity.EntityType.CATALOG));
     assertTrue(legacyRecordExistsInDB(schema.id(), Entity.EntityType.SCHEMA));
     assertTrue(legacyRecordExistsInDB(table.id(), Entity.EntityType.TABLE));
     assertTrue(legacyRecordExistsInDB(topic.id(), Entity.EntityType.TOPIC));
+    assertTrue(legacyRecordExistsInDB(model.id(), Entity.EntityType.MODEL));
     assertTrue(legacyRecordExistsInDB(fileset.id(), Entity.EntityType.FILESET));
     assertTrue(legacyRecordExistsInDB(role.id(), Entity.EntityType.ROLE));
     assertTrue(legacyRecordExistsInDB(user.id(), Entity.EntityType.USER));
@@ -871,6 +1051,8 @@ public class TestJDBCBackend {
     assertEquals(2, countRoleRels(anotherRole.id()));
     assertEquals(2, listFilesetVersions(fileset.id()).size());
     assertEquals(3, listFilesetVersions(anotherFileset.id()).size());
+    assertEquals(2, listPolicyVersions(policy.id()).size());
+    assertEquals(3, listPolicyVersions(anotherPolicy.id()).size());
     assertTrue(legacyRecordExistsInDB(tag.id(), Entity.EntityType.TAG));
 
     // meta data hard delete
@@ -883,12 +1065,15 @@ public class TestJDBCBackend {
     assertFalse(legacyRecordExistsInDB(table.id(), Entity.EntityType.TABLE));
     assertFalse(legacyRecordExistsInDB(fileset.id(), Entity.EntityType.FILESET));
     assertFalse(legacyRecordExistsInDB(topic.id(), Entity.EntityType.TOPIC));
+    assertFalse(legacyRecordExistsInDB(model.id(), Entity.EntityType.MODEL));
     assertFalse(legacyRecordExistsInDB(role.id(), Entity.EntityType.ROLE));
     assertFalse(legacyRecordExistsInDB(user.id(), Entity.EntityType.USER));
     assertFalse(legacyRecordExistsInDB(group.id(), Entity.EntityType.GROUP));
+    assertFalse(legacyRecordExistsInDB(policy.id(), Entity.EntityType.POLICY));
     assertEquals(0, countRoleRels(role.id()));
     assertEquals(2, countRoleRels(anotherRole.id()));
     assertEquals(0, listFilesetVersions(fileset.id()).size());
+    assertEquals(0, listPolicyVersions(policy.id()).size());
     assertFalse(legacyRecordExistsInDB(tag.id(), Entity.EntityType.TAG));
     assertEquals(0, countOwnerRel(metalake.id()));
     assertEquals(1, countOwnerRel(anotherMetaLake.id()));
@@ -906,6 +1091,108 @@ public class TestJDBCBackend {
     // hard delete for old version fileset
     backend.hardDeleteLegacyData(Entity.EntityType.FILESET, Instant.now().toEpochMilli() + 1000);
     assertEquals(1, listFilesetVersions(anotherFileset.id()).size());
+
+    // soft delete for old version policy
+    assertEquals(3, listPolicyVersions(anotherPolicy.id()).size());
+    for (Entity.EntityType entityType : Entity.EntityType.values()) {
+      backend.deleteOldVersionData(entityType, 1);
+    }
+    Map<Integer, Long> versionDeletedMap2 = listPolicyVersions(anotherPolicy.id());
+    assertEquals(3, versionDeletedMap2.size());
+    assertEquals(1, versionDeletedMap2.values().stream().filter(value -> value == 0L).count());
+    assertEquals(2, versionDeletedMap2.values().stream().filter(value -> value != 0L).count());
+  }
+
+  @Test
+  public void testGetRoleIdByMetalakeIdAndName() throws IOException {
+    AuditInfo auditInfo =
+        AuditInfo.builder().withCreator("creator").withCreateTime(Instant.now()).build();
+    String metalakeName = "testMetalake";
+    String catalogName = "catalog";
+    String roleNameWithDot = "role.with.dot";
+    String roleNameWithoutDot = "roleWithoutDot";
+
+    BaseMetalake metalake =
+        createBaseMakeLake(RandomIdGenerator.INSTANCE.nextId(), metalakeName, auditInfo);
+    backend.insert(metalake, false);
+
+    CatalogEntity catalog =
+        createCatalog(
+            RandomIdGenerator.INSTANCE.nextId(),
+            NamespaceUtil.ofCatalog(metalakeName),
+            catalogName,
+            auditInfo);
+    backend.insert(catalog, false);
+
+    RoleEntity roleWithDot =
+        createRoleEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            AuthorizationUtils.ofRoleNamespace(metalakeName),
+            roleNameWithDot,
+            auditInfo,
+            catalogName);
+    backend.insert(roleWithDot, false);
+
+    RoleEntity roleWithoutDot =
+        createRoleEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            AuthorizationUtils.ofRoleNamespace(metalakeName),
+            roleNameWithoutDot,
+            auditInfo,
+            catalogName);
+    backend.insert(roleWithoutDot, false);
+
+    Long metalakeId = MetalakeMetaService.getInstance().getMetalakeIdByName(metalakeName);
+
+    Long roleIdWithDot =
+        RoleMetaService.getInstance().getRoleIdByMetalakeIdAndName(metalakeId, roleNameWithDot);
+    assertEquals(roleWithDot.id(), roleIdWithDot);
+
+    Long roleIdWithoutDot =
+        RoleMetaService.getInstance().getRoleIdByMetalakeIdAndName(metalakeId, roleNameWithoutDot);
+    assertEquals(roleWithoutDot.id(), roleIdWithoutDot);
+  }
+
+  @Test
+  public void testInsertRelationWithDotInRoleName() throws IOException {
+    AuditInfo auditInfo =
+        AuditInfo.builder().withCreator("creator").withCreateTime(Instant.now()).build();
+    String metalakeName = "testMetalake";
+    String catalogName = "catalog";
+    String roleNameWithDot = "role.with.dot";
+
+    BaseMetalake metalake =
+        createBaseMakeLake(RandomIdGenerator.INSTANCE.nextId(), metalakeName, auditInfo);
+    backend.insert(metalake, false);
+
+    CatalogEntity catalog =
+        createCatalog(
+            RandomIdGenerator.INSTANCE.nextId(),
+            NamespaceUtil.ofCatalog(metalakeName),
+            catalogName,
+            auditInfo);
+    backend.insert(catalog, false);
+
+    RoleEntity role =
+        createRoleEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            AuthorizationUtils.ofRoleNamespace(metalakeName),
+            roleNameWithDot,
+            auditInfo,
+            catalogName);
+    backend.insert(role, false);
+
+    UserEntity user =
+        createUserEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            AuthorizationUtils.ofUserNamespace(metalakeName),
+            "user",
+            auditInfo);
+    backend.insert(user, false);
+
+    backend.insertRelation(
+        OWNER_REL, role.nameIdentifier(), role.type(), user.nameIdentifier(), user.type(), true);
+    assertEquals(1, countActiveOwnerRel(user.id()));
   }
 
   private boolean legacyRecordExistsInDB(Long id, Entity.EntityType entityType) {
@@ -937,6 +1224,10 @@ public class TestJDBCBackend {
         tableName = "topic_meta";
         idColumnName = "topic_id";
         break;
+      case MODEL:
+        tableName = "model_meta";
+        idColumnName = "model_id";
+        break;
       case ROLE:
         tableName = "role_meta";
         idColumnName = "role_id";
@@ -952,6 +1243,10 @@ public class TestJDBCBackend {
       case TAG:
         tableName = "tag_meta";
         idColumnName = "tag_id";
+        break;
+      case POLICY:
+        tableName = "policy_meta";
+        idColumnName = "policy_id";
         break;
       default:
         throw new IllegalArgumentException("Unsupported entity type: " + entityType);
@@ -983,6 +1278,26 @@ public class TestJDBCBackend {
                 String.format(
                     "SELECT version, deleted_at FROM fileset_version_info WHERE fileset_id = %d",
                     filesetId))) {
+      while (rs.next()) {
+        versionDeletedTime.put(rs.getInt("version"), rs.getLong("deleted_at"));
+      }
+    } catch (SQLException e) {
+      throw new RuntimeException("SQL execution failed", e);
+    }
+    return versionDeletedTime;
+  }
+
+  private Map<Integer, Long> listPolicyVersions(Long policyId) {
+    Map<Integer, Long> versionDeletedTime = new HashMap<>();
+    try (SqlSession sqlSession =
+            SqlSessionFactoryHelper.getInstance().getSqlSessionFactory().openSession(true);
+        Connection connection = sqlSession.getConnection();
+        Statement statement = connection.createStatement();
+        ResultSet rs =
+            statement.executeQuery(
+                String.format(
+                    "SELECT version, deleted_at FROM policy_version_info WHERE policy_id = %d",
+                    policyId))) {
       while (rs.next()) {
         versionDeletedTime.put(rs.getInt("version"), rs.getLong("deleted_at"));
       }
@@ -1036,6 +1351,186 @@ public class TestJDBCBackend {
     }
   }
 
+  protected Integer countAllObjectRel(Long roleId) {
+    try (SqlSession sqlSession =
+            SqlSessionFactoryHelper.getInstance().getSqlSessionFactory().openSession(true);
+        Connection connection = sqlSession.getConnection();
+        Statement statement1 = connection.createStatement();
+        ResultSet rs1 =
+            statement1.executeQuery(
+                String.format(
+                    "SELECT count(*) FROM role_meta_securable_object WHERE role_id = %d",
+                    roleId))) {
+      if (rs1.next()) {
+        return rs1.getInt(1);
+      } else {
+        throw new RuntimeException("Doesn't contain data");
+      }
+    } catch (SQLException se) {
+      throw new RuntimeException("SQL execution failed", se);
+    }
+  }
+
+  protected Integer countActiveObjectRel(Long roleId) {
+    try (SqlSession sqlSession =
+            SqlSessionFactoryHelper.getInstance().getSqlSessionFactory().openSession(true);
+        Connection connection = sqlSession.getConnection();
+        Statement statement1 = connection.createStatement();
+        ResultSet rs1 =
+            statement1.executeQuery(
+                String.format(
+                    "SELECT count(*) FROM role_meta_securable_object WHERE role_id = %d AND deleted_at = 0",
+                    roleId))) {
+      if (rs1.next()) {
+        return rs1.getInt(1);
+      } else {
+        throw new RuntimeException("Doesn't contain data");
+      }
+    } catch (SQLException se) {
+      throw new RuntimeException("SQL execution failed", se);
+    }
+  }
+
+  protected Integer countAllStats(Long metalakeId) {
+    try (SqlSession sqlSession =
+            SqlSessionFactoryHelper.getInstance().getSqlSessionFactory().openSession(true);
+        Connection connection = sqlSession.getConnection();
+        Statement statement1 = connection.createStatement();
+        ResultSet rs1 =
+            statement1.executeQuery(
+                String.format(
+                    "SELECT count(*) FROM statistic_meta WHERE metalake_id = %d", metalakeId))) {
+      if (rs1.next()) {
+        return rs1.getInt(1);
+      } else {
+        throw new RuntimeException("Doesn't contain data");
+      }
+    } catch (SQLException se) {
+      throw new RuntimeException("SQL execution failed", se);
+    }
+  }
+
+  protected Integer countActiveStats(Long metalakeId) {
+    try (SqlSession sqlSession =
+            SqlSessionFactoryHelper.getInstance().getSqlSessionFactory().openSession(true);
+        Connection connection = sqlSession.getConnection();
+        Statement statement1 = connection.createStatement();
+        ResultSet rs1 =
+            statement1.executeQuery(
+                String.format(
+                    "SELECT count(*) FROM statistic_meta WHERE metalake_id = %d AND deleted_at = 0",
+                    metalakeId))) {
+      if (rs1.next()) {
+        return rs1.getInt(1);
+      } else {
+        throw new RuntimeException("Doesn't contain data");
+      }
+    } catch (SQLException se) {
+      throw new RuntimeException("SQL execution failed", se);
+    }
+  }
+
+  protected Integer testStats(Long metalakeId) {
+    try (SqlSession sqlSession =
+            SqlSessionFactoryHelper.getInstance().getSqlSessionFactory().openSession(true);
+        Connection connection = sqlSession.getConnection();
+        Statement statement1 = connection.createStatement();
+        ResultSet rs1 =
+            statement1.executeQuery(
+                String.format(
+                    "SELECT * FROM statistic_meta WHERE metalake_id = %d AND deleted_at = 0",
+                    metalakeId))) {
+      ResultSetMetaData metaData = rs1.getMetaData();
+      int columnCount = metaData.getColumnCount();
+      while (rs1.next()) {
+        for (int index = 0; index < columnCount; index++) {
+          String columnName = metaData.getColumnName(index + 1);
+          Object value = rs1.getObject(index + 1);
+          System.out.printf("Column: %s, Value: %s%n", columnName, value);
+        }
+      }
+    } catch (SQLException se) {
+      throw new RuntimeException("SQL execution failed", se);
+    }
+    return 1;
+  }
+
+  protected Integer countAllTagRel(Long tagId) {
+    try (SqlSession sqlSession =
+            SqlSessionFactoryHelper.getInstance().getSqlSessionFactory().openSession(true);
+        Connection connection = sqlSession.getConnection();
+        Statement statement1 = connection.createStatement();
+        ResultSet rs1 =
+            statement1.executeQuery(
+                String.format("SELECT count(*) FROM tag_relation_meta WHERE tag_id = %d", tagId))) {
+      if (rs1.next()) {
+        return rs1.getInt(1);
+      } else {
+        throw new RuntimeException("Doesn't contain data");
+      }
+    } catch (SQLException se) {
+      throw new RuntimeException("SQL execution failed", se);
+    }
+  }
+
+  protected Integer countActiveTagRel(Long tagId) {
+    try (SqlSession sqlSession =
+            SqlSessionFactoryHelper.getInstance().getSqlSessionFactory().openSession(true);
+        Connection connection = sqlSession.getConnection();
+        Statement statement1 = connection.createStatement();
+        ResultSet rs1 =
+            statement1.executeQuery(
+                String.format(
+                    "SELECT count(*) FROM tag_relation_meta WHERE tag_id = %d AND deleted_at = 0",
+                    tagId))) {
+      if (rs1.next()) {
+        return rs1.getInt(1);
+      } else {
+        throw new RuntimeException("Doesn't contain data");
+      }
+    } catch (SQLException se) {
+      throw new RuntimeException("SQL execution failed", se);
+    }
+  }
+
+  protected Integer countAllOwnerRel(Long ownerId) {
+    try (SqlSession sqlSession =
+            SqlSessionFactoryHelper.getInstance().getSqlSessionFactory().openSession(true);
+        Connection connection = sqlSession.getConnection();
+        Statement statement1 = connection.createStatement();
+        ResultSet rs1 =
+            statement1.executeQuery(
+                String.format("SELECT count(*) FROM owner_meta WHERE owner_id = %d", ownerId))) {
+      if (rs1.next()) {
+        return rs1.getInt(1);
+      } else {
+        throw new RuntimeException("Doesn't contain data");
+      }
+    } catch (SQLException se) {
+      throw new RuntimeException("SQL execution failed", se);
+    }
+  }
+
+  protected Integer countActiveOwnerRel(long ownerId) {
+    try (SqlSession sqlSession =
+            SqlSessionFactoryHelper.getInstance().getSqlSessionFactory().openSession(true);
+        Connection connection = sqlSession.getConnection();
+        Statement statement1 = connection.createStatement();
+        ResultSet rs1 =
+            statement1.executeQuery(
+                String.format(
+                    "SELECT count(*) FROM owner_meta WHERE owner_id = %d AND deleted_at = 0",
+                    ownerId))) {
+      if (rs1.next()) {
+        return rs1.getInt(1);
+      } else {
+        throw new RuntimeException("Doesn't contain data");
+      }
+    } catch (SQLException se) {
+      throw new RuntimeException("SQL execution failed", se);
+    }
+  }
+
   public static BaseMetalake createBaseMakeLake(Long id, String name, AuditInfo auditInfo) {
     return BaseMetalake.builder()
         .withId(id)
@@ -1057,6 +1552,20 @@ public class TestJDBCBackend {
         .withProvider("test")
         .withComment("")
         .withProperties(null)
+        .withAuditInfo(auditInfo)
+        .build();
+  }
+
+  public static PolicyEntity createPolicy(Long id, Namespace ns, String name, AuditInfo auditInfo) {
+    return PolicyEntity.builder()
+        .withId(id)
+        .withNamespace(ns)
+        .withName(name)
+        .withPolicyType(Policy.BuiltInType.CUSTOM)
+        .withComment("")
+        .withEnabled(true)
+        .withContent(
+            PolicyContents.custom(ImmutableMap.of("filed1", 123), SUPPORTED_OBJECT_TYPES, null))
         .withAuditInfo(auditInfo)
         .build();
   }
@@ -1090,7 +1599,7 @@ public class TestJDBCBackend {
         .withName(name)
         .withNamespace(namespace)
         .withFilesetType(Fileset.Type.MANAGED)
-        .withStorageLocation("/tmp")
+        .withStorageLocations(ImmutableMap.of(LOCATION_NAME_UNKNOWN, "/tmp"))
         .withComment("")
         .withProperties(new HashMap<>())
         .withAuditInfo(auditInfo)
@@ -1209,5 +1718,67 @@ public class TestJDBCBackend {
         .withAuditInfo(auditInfo)
         .withSecurableObjects(securableObjects)
         .build();
+  }
+
+  public static ModelEntity createModelEntity(
+      Long id,
+      Namespace namespace,
+      String name,
+      String comment,
+      Integer latestVersion,
+      Map<String, String> properties,
+      AuditInfo auditInfo) {
+    return ModelEntity.builder()
+        .withId(id)
+        .withName(name)
+        .withNamespace(namespace)
+        .withComment(comment)
+        .withLatestVersion(latestVersion)
+        .withProperties(properties)
+        .withAuditInfo(auditInfo)
+        .build();
+  }
+
+  public static ModelVersionEntity createModelVersionEntity(
+      NameIdentifier modelId,
+      Integer version,
+      Map<String, String> modelUris,
+      List<String> aliases,
+      String comment,
+      Map<String, String> properties,
+      AuditInfo auditInfo) {
+    return ModelVersionEntity.builder()
+        .withModelIdentifier(modelId)
+        .withVersion(version)
+        .withUris(modelUris)
+        .withAliases(aliases)
+        .withComment(comment)
+        .withProperties(properties)
+        .withAuditInfo(auditInfo)
+        .build();
+  }
+
+  protected void createParentEntities(
+      String metalakeName, String catalogName, String schemaName, AuditInfo auditInfo)
+      throws IOException {
+    BaseMetalake metalake =
+        createBaseMakeLake(RandomIdGenerator.INSTANCE.nextId(), metalakeName, auditInfo);
+    backend.insert(metalake, false);
+
+    CatalogEntity catalog =
+        createCatalog(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of(metalakeName),
+            catalogName,
+            auditInfo);
+    backend.insert(catalog, false);
+
+    SchemaEntity schema =
+        createSchemaEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            Namespace.of(metalakeName, catalog.name()),
+            schemaName,
+            auditInfo);
+    backend.insert(schema, false);
   }
 }

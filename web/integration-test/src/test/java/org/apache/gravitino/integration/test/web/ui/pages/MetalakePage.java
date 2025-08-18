@@ -22,17 +22,18 @@ package org.apache.gravitino.integration.test.web.ui.pages;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import org.apache.gravitino.integration.test.web.ui.utils.AbstractWebIT;
+import org.apache.gravitino.integration.test.web.ui.utils.BaseWebIT;
 import org.openqa.selenium.By;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.Keys;
+import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.support.FindBy;
 import org.openqa.selenium.support.PageFactory;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
-public class MetalakePage extends AbstractWebIT {
+public class MetalakePage extends BaseWebIT {
   private static final String PAGE_TITLE = "Metalakes";
 
   @FindBy(
@@ -109,7 +110,8 @@ public class MetalakePage extends AbstractWebIT {
   @FindBy(xpath = "//a[@data-refer='footer-link-support']")
   public WebElement footerLinkSupport;
 
-  public MetalakePage() {
+  public MetalakePage(WebDriver driver) {
+    this.driver = driver;
     PageFactory.initElements(driver, this);
   }
 
@@ -130,20 +132,26 @@ public class MetalakePage extends AbstractWebIT {
   }
 
   public void setQueryParams(String queryParams) {
-    try {
-      Thread.sleep(ACTION_SLEEP_MILLIS);
-      clearQueryInput();
-      queryMetalakeInput.sendKeys(queryParams);
-      Thread.sleep(ACTION_SLEEP_MILLIS);
-    } catch (Exception e) {
-      LOG.error(e.getMessage(), e);
-    }
+    WebDriverWait wait = new WebDriverWait(driver, ACTION_SLEEP);
+    WebElement queryInputElement =
+        wait.until(ExpectedConditions.elementToBeClickable(queryMetalakeInput));
+    clearQueryInput();
+    queryInputElement.sendKeys(queryParams);
   }
 
   public void clearQueryInput() {
     queryMetalakeInput.sendKeys(
         Keys.chord(Keys.HOME, Keys.chord(Keys.SHIFT, Keys.END), Keys.DELETE));
     queryMetalakeInput.clear();
+  }
+
+  public void clickInUseSwitch(String name) {
+    try {
+      String xpath = "//*[@data-refer='metalake-in-use-" + name + "']";
+      clickAndWait(By.xpath(xpath));
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+    }
   }
 
   public void clickDeleteMetalakeBtn(String name) {
@@ -176,9 +184,10 @@ public class MetalakePage extends AbstractWebIT {
   public void clickMetalakeLink(String name) {
     try {
       setQueryParams(name);
-      Thread.sleep(ACTION_SLEEP_MILLIS);
+      WebDriverWait wait = new WebDriverWait(driver, ACTION_SLEEP);
       String xpath = "//a[@data-refer='metalake-link-" + name + "']";
-      WebElement metalakeLink = metalakeTableGrid.findElement(By.xpath(xpath));
+      WebElement metalakeLink =
+          wait.until(ExpectedConditions.elementToBeClickable(By.xpath(xpath)));
       clickAndWait(metalakeLink);
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);

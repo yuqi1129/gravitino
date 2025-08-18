@@ -20,8 +20,10 @@ package org.apache.gravitino.storage.relational.mapper.provider.postgresql;
 
 import static org.apache.gravitino.storage.relational.mapper.FilesetVersionMapper.VERSION_TABLE_NAME;
 
+import java.util.List;
 import org.apache.gravitino.storage.relational.mapper.provider.base.FilesetVersionBaseSQLProvider;
 import org.apache.gravitino.storage.relational.po.FilesetVersionPO;
+import org.apache.ibatis.annotations.Param;
 
 public class FilesetVersionPostgreSQLProvider extends FilesetVersionBaseSQLProvider {
   @Override
@@ -61,6 +63,16 @@ public class FilesetVersionPostgreSQLProvider extends FilesetVersionBaseSQLProvi
   }
 
   @Override
+  public String deleteFilesetVersionsByLegacyTimeline(
+      @Param("legacyTimeline") Long legacyTimeline, @Param("limit") int limit) {
+    return "DELETE FROM "
+        + VERSION_TABLE_NAME
+        + " WHERE id IN (SELECT id FROM "
+        + VERSION_TABLE_NAME
+        + " WHERE deleted_at > 0 AND deleted_at < #{legacyTimeline} LIMIT #{limit})";
+  }
+
+  @Override
   public String softDeleteFilesetVersionsByRetentionLine(
       Long filesetId, long versionRetentionLine, int limit) {
     return "UPDATE "
@@ -71,32 +83,31 @@ public class FilesetVersionPostgreSQLProvider extends FilesetVersionBaseSQLProvi
   }
 
   @Override
-  public String insertFilesetVersionOnDuplicateKeyUpdate(FilesetVersionPO filesetVersionPO) {
-    return "INSERT INTO "
+  public String insertFilesetVersionsOnDuplicateKeyUpdate(
+      List<FilesetVersionPO> filesetVersionPOs) {
+    return "<script>"
+        + "INSERT INTO "
         + VERSION_TABLE_NAME
-        + "(metalake_id, catalog_id, schema_id, fileset_id,"
-        + " version, fileset_comment, properties, storage_location,"
+        + " (metalake_id, catalog_id, schema_id, fileset_id,"
+        + " version, fileset_comment, properties, storage_location_name, storage_location,"
         + " deleted_at)"
-        + " VALUES("
-        + " #{filesetVersion.metalakeId},"
-        + " #{filesetVersion.catalogId},"
-        + " #{filesetVersion.schemaId},"
-        + " #{filesetVersion.filesetId},"
-        + " #{filesetVersion.version},"
-        + " #{filesetVersion.filesetComment},"
-        + " #{filesetVersion.properties},"
-        + " #{filesetVersion.storageLocation},"
-        + " #{filesetVersion.deletedAt}"
-        + " )"
-        + " ON CONFLICT(fileset_id, version, deleted_at) DO UPDATE SET"
-        + " metalake_id = #{filesetVersion.metalakeId},"
-        + " catalog_id = #{filesetVersion.catalogId},"
-        + " schema_id = #{filesetVersion.schemaId},"
-        + " fileset_id = #{filesetVersion.filesetId},"
-        + " version = #{filesetVersion.version},"
-        + " fileset_comment = #{filesetVersion.filesetComment},"
-        + " properties = #{filesetVersion.properties},"
-        + " storage_location = #{filesetVersion.storageLocation},"
-        + " deleted_at = #{filesetVersion.deletedAt}";
+        + " VALUES "
+        + "<foreach collection='filesetVersions' item='version' separator=','>"
+        + " (#{version.metalakeId}, #{version.catalogId}, #{version.schemaId}, #{version.filesetId},"
+        + " #{version.version}, #{version.filesetComment}, #{version.properties},"
+        + " #{version.locationName}, #{version.storageLocation}, #{version.deletedAt})"
+        + "</foreach>"
+        + " ON CONFLICT(fileset_id, version, storage_location_name, deleted_at) DO UPDATE SET"
+        + " metalake_id = EXCLUDED.metalake_id,"
+        + " catalog_id = EXCLUDED.catalog_id,"
+        + " schema_id = EXCLUDED.schema_id,"
+        + " fileset_id = EXCLUDED.fileset_id,"
+        + " version = EXCLUDED.version,"
+        + " fileset_comment = EXCLUDED.fileset_comment,"
+        + " properties = EXCLUDED.properties,"
+        + " storage_location_name = EXCLUDED.storage_location_name,"
+        + " storage_location = EXCLUDED.storage_location,"
+        + " deleted_at = EXCLUDED.deleted_at"
+        + "</script>";
   }
 }

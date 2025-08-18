@@ -21,27 +21,33 @@ package org.apache.gravitino.storage;
 
 import static org.apache.gravitino.Configs.DEFAULT_ENTITY_RELATIONAL_STORE;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_DRIVER;
+import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_MAX_CONNECTIONS;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_PASSWORD;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_PATH;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_URL;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_USER;
+import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_WAIT_MILLISECONDS;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_STORE;
 import static org.apache.gravitino.Configs.ENTITY_STORE;
 import static org.apache.gravitino.Configs.RELATIONAL_ENTITY_STORE;
 import static org.apache.gravitino.Configs.STORE_DELETE_AFTER_TIME;
 import static org.apache.gravitino.Configs.VERSION_RETENTION_COUNT;
+import static org.apache.gravitino.file.Fileset.LOCATION_NAME_UNKNOWN;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import org.apache.commons.io.FileUtils;
@@ -65,18 +71,28 @@ import org.apache.gravitino.exceptions.NoSuchEntityException;
 import org.apache.gravitino.exceptions.NonEmptyEntityException;
 import org.apache.gravitino.file.Fileset;
 import org.apache.gravitino.integration.test.container.ContainerSuite;
-import org.apache.gravitino.integration.test.util.AbstractIT;
+import org.apache.gravitino.integration.test.util.BaseIT;
 import org.apache.gravitino.meta.AuditInfo;
 import org.apache.gravitino.meta.BaseMetalake;
 import org.apache.gravitino.meta.CatalogEntity;
+import org.apache.gravitino.meta.ColumnEntity;
 import org.apache.gravitino.meta.FilesetEntity;
 import org.apache.gravitino.meta.GroupEntity;
+import org.apache.gravitino.meta.ModelEntity;
+import org.apache.gravitino.meta.ModelVersionEntity;
 import org.apache.gravitino.meta.RoleEntity;
 import org.apache.gravitino.meta.SchemaEntity;
 import org.apache.gravitino.meta.SchemaVersion;
 import org.apache.gravitino.meta.TableEntity;
 import org.apache.gravitino.meta.TopicEntity;
 import org.apache.gravitino.meta.UserEntity;
+import org.apache.gravitino.model.ModelVersion;
+import org.apache.gravitino.rel.types.Type;
+import org.apache.gravitino.rel.types.Types;
+import org.apache.gravitino.storage.relational.RelationalBackend;
+import org.apache.gravitino.storage.relational.RelationalEntityStore;
+import org.apache.gravitino.storage.relational.RelationalGarbageCollector;
+import org.apache.gravitino.storage.relational.TestJDBCBackend;
 import org.apache.gravitino.storage.relational.converters.H2ExceptionConverter;
 import org.apache.gravitino.storage.relational.converters.MySQLExceptionConverter;
 import org.apache.gravitino.storage.relational.converters.PostgreSQLExceptionConverter;
@@ -91,13 +107,11 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mockito;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.testcontainers.shaded.org.apache.commons.lang3.tuple.Pair;
 
 @Tag("gravitino-docker-test")
 public class TestEntityStorage {
   private static final Logger LOG = LoggerFactory.getLogger(TestEntityStorage.class);
-
-  public static final String KV_STORE_PATH =
-      "/tmp/gravitino_kv_entityStore_" + UUID.randomUUID().toString().replace("-", "");
 
   private static final String JDBC_STORE_PATH =
       "/tmp/gravitino_jdbc_entityStore_" + UUID.randomUUID().toString().replace("-", "");
@@ -123,36 +137,53 @@ public class TestEntityStorage {
     Mockito.when(config.get(ENTITY_STORE)).thenReturn(RELATIONAL_ENTITY_STORE);
     Mockito.when(config.get(ENTITY_RELATIONAL_STORE)).thenReturn(DEFAULT_ENTITY_RELATIONAL_STORE);
     Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_PATH)).thenReturn(DB_DIR);
+    Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_MAX_CONNECTIONS)).thenReturn(100);
+    Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_WAIT_MILLISECONDS)).thenReturn(1000L);
     Mockito.when(config.get(STORE_DELETE_AFTER_TIME)).thenReturn(20 * 60 * 1000L);
     Mockito.when(config.get(VERSION_RETENTION_COUNT)).thenReturn(1L);
+    // Fix cache config for test
+    Mockito.when(config.get(Configs.CACHE_ENABLED)).thenReturn(true);
+    Mockito.when(config.get(Configs.CACHE_MAX_ENTRIES)).thenReturn(10_000);
+    Mockito.when(config.get(Configs.CACHE_EXPIRATION_TIME)).thenReturn(3_600_000L);
+    Mockito.when(config.get(Configs.CACHE_WEIGHER_ENABLED)).thenReturn(true);
+    Mockito.when(config.get(Configs.CACHE_STATS_ENABLED)).thenReturn(false);
+    Mockito.when(config.get(Configs.CACHE_IMPLEMENTATION)).thenReturn("caffeine");
+
+    BaseIT baseIT = new BaseIT();
 
     try {
       if (type.equalsIgnoreCase("h2")) {
         // The following properties are used to create the JDBC connection; they are just for test,
         // in the real world, they will be set automatically by the configuration file if you set
-        // ENTITY_RELATIONAL_STOR as EMBEDDED_ENTITY_RELATIONAL_STORE.
+        // ENTITY_RELATIONAL_STORE as EMBEDDED_ENTITY_RELATIONAL_STORE.
         Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_URL))
             .thenReturn(String.format("jdbc:h2:%s;DB_CLOSE_DELAY=-1;MODE=MYSQL", DB_DIR));
         Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_USER)).thenReturn("gravitino");
         Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_PASSWORD)).thenReturn("gravitino");
         Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_DRIVER)).thenReturn("org.h2.Driver");
+        Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_MAX_CONNECTIONS)).thenReturn(100);
+        Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_WAIT_MILLISECONDS))
+            .thenReturn(1000L);
 
         FieldUtils.writeStaticField(
             SQLExceptionConverterFactory.class, "converter", new H2ExceptionConverter(), true);
 
       } else if (type.equalsIgnoreCase("mysql")) {
-        String mysqlJdbcUrl = AbstractIT.startAndInitMySQLBackend();
+        String mysqlJdbcUrl = baseIT.startAndInitMySQLBackend();
         Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_URL)).thenReturn(mysqlJdbcUrl);
         Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_USER)).thenReturn("root");
         Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_PASSWORD)).thenReturn("root");
         Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_DRIVER))
             .thenReturn("com.mysql.cj.jdbc.Driver");
+        Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_MAX_CONNECTIONS)).thenReturn(100);
+        Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_WAIT_MILLISECONDS))
+            .thenReturn(1000L);
 
         FieldUtils.writeStaticField(
             SQLExceptionConverterFactory.class, "converter", new MySQLExceptionConverter(), true);
 
       } else if (type.equalsIgnoreCase("postgresql")) {
-        String postgreSQLJdbcUrl = AbstractIT.startAndInitPGBackend();
+        String postgreSQLJdbcUrl = baseIT.startAndInitPGBackend();
         Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_URL)).thenReturn(postgreSQLJdbcUrl);
         Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_USER)).thenReturn("root");
         Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_PASSWORD)).thenReturn("root");
@@ -165,6 +196,15 @@ public class TestEntityStorage {
             new PostgreSQLExceptionConverter(),
             true);
 
+        RelationalEntityStore store =
+            (RelationalEntityStore) EntityStoreFactory.createEntityStore(config);
+        store.initialize(config);
+        Field f = FieldUtils.getField(RelationalEntityStore.class, "backend", true);
+        RelationalBackend backend = (RelationalBackend) f.get(store);
+        RelationalGarbageCollector garbageCollector =
+            new RelationalGarbageCollector(backend, config);
+        garbageCollector.collectAndClean();
+
       } else {
         throw new UnsupportedOperationException("Unsupported entity store type: " + type);
       }
@@ -176,13 +216,7 @@ public class TestEntityStorage {
 
   private void destroy(String type) {
     Preconditions.checkArgument(StringUtils.isNotBlank(type));
-    if (type.equals(Configs.KV_STORE_KEY)) {
-      try {
-        FileUtils.deleteDirectory(FileUtils.getFile(KV_STORE_PATH));
-      } catch (Exception e) {
-        // Ignore
-      }
-    } else if (type.equalsIgnoreCase("h2") || type.equalsIgnoreCase("mysql")) {
+    if (type.equalsIgnoreCase("h2") || type.equalsIgnoreCase("mysql")) {
       dropAllTables();
       File dir = new File(DB_DIR);
       if (dir.exists()) {
@@ -266,6 +300,25 @@ public class TestEntityStorage {
               Namespace.of("metalake", "catalog", "schema1"),
               "topic1",
               auditInfo);
+      ModelEntity model1 =
+          TestJDBCBackend.createModelEntity(
+              RandomIdGenerator.INSTANCE.nextId(),
+              Namespace.of("metalake", "catalog", "schema1"),
+              "model1",
+              "model1",
+              0,
+              null,
+              auditInfo);
+      ModelVersionEntity modelVersion1 =
+          TestJDBCBackend.createModelVersionEntity(
+              model1.nameIdentifier(),
+              0,
+              ImmutableMap.of(ModelVersion.URI_NAME_UNKNOWN, "model_path"),
+              ImmutableList.of("alias1", "alias2"),
+              null,
+              null,
+              auditInfo);
+
       UserEntity user1 =
           createUser(RandomIdGenerator.INSTANCE.nextId(), "metalake", "user1", auditInfo);
       GroupEntity group1 =
@@ -281,6 +334,8 @@ public class TestEntityStorage {
       store.put(table1);
       store.put(fileset1);
       store.put(topic1);
+      store.put(model1);
+      store.put(modelVersion1);
       store.put(user1);
       store.put(group1);
       store.put(role1);
@@ -319,6 +374,30 @@ public class TestEntityStorage {
                   NameIdentifier.of("metalake", "catalog", "schema1", "topic1"),
                   Entity.EntityType.TOPIC,
                   TopicEntity.class));
+      Assertions.assertDoesNotThrow(
+          () ->
+              store.get(
+                  NameIdentifier.of("metalake", "catalog", "schema1", "model1"),
+                  Entity.EntityType.MODEL,
+                  ModelEntity.class));
+      Assertions.assertDoesNotThrow(
+          () ->
+              store.get(
+                  NameIdentifier.of("metalake", "catalog", "schema1", "model1", "0"),
+                  Entity.EntityType.MODEL_VERSION,
+                  ModelVersionEntity.class));
+      Assertions.assertDoesNotThrow(
+          () ->
+              store.get(
+                  NameIdentifier.of("metalake", "catalog", "schema1", "model1", "alias1"),
+                  EntityType.MODEL_VERSION,
+                  ModelVersionEntity.class));
+      Assertions.assertDoesNotThrow(
+          () ->
+              store.get(
+                  NameIdentifier.of("metalake", "catalog", "schema1", "model1", "alias2"),
+                  EntityType.MODEL_VERSION,
+                  ModelVersionEntity.class));
 
       Assertions.assertDoesNotThrow(
           () ->
@@ -380,6 +459,31 @@ public class TestEntityStorage {
                   NameIdentifier.of("metalake", "catalog", "schema1", "topic1"),
                   Entity.EntityType.TOPIC,
                   TopicEntity.class));
+      Assertions.assertDoesNotThrow(
+          () ->
+              store.get(
+                  NameIdentifier.of("metalake", "catalog", "schema1", "model1"),
+                  Entity.EntityType.MODEL,
+                  ModelEntity.class));
+      Assertions.assertDoesNotThrow(
+          () ->
+              store.get(
+                  NameIdentifier.of("metalake", "catalog", "schema1", "model1", "0"),
+                  Entity.EntityType.MODEL_VERSION,
+                  ModelVersionEntity.class));
+      Assertions.assertDoesNotThrow(
+          () ->
+              store.get(
+                  NameIdentifier.of("metalake", "catalog", "schema1", "model1", "alias1"),
+                  EntityType.MODEL_VERSION,
+                  ModelVersionEntity.class));
+      Assertions.assertDoesNotThrow(
+          () ->
+              store.get(
+                  NameIdentifier.of("metalake", "catalog", "schema1", "model1", "alias2"),
+                  EntityType.MODEL_VERSION,
+                  ModelVersionEntity.class));
+
       Assertions.assertDoesNotThrow(
           () ->
               store.get(
@@ -570,27 +674,84 @@ public class TestEntityStorage {
 
       SchemaEntity schema1 =
           createSchemaEntity(1L, Namespace.of("metalake", "catalog"), "schema1", auditInfo);
+      ColumnEntity column1 =
+          createColumnEntity(
+              RandomIdGenerator.INSTANCE.nextId(), "column1", 0, Types.StringType.get(), auditInfo);
+      ColumnEntity column2 =
+          createColumnEntity(
+              RandomIdGenerator.INSTANCE.nextId(), "column2", 1, Types.StringType.get(), auditInfo);
       TableEntity table1 =
-          createTableEntity(
-              1L, Namespace.of("metalake", "catalog", "schema1"), "table1", auditInfo);
+          createTableEntityWithColumns(
+              1L,
+              Namespace.of("metalake", "catalog", "schema1"),
+              "table1",
+              auditInfo,
+              Lists.newArrayList(column1, column2));
       FilesetEntity fileset1 =
           createFilesetEntity(
               1L, Namespace.of("metalake", "catalog", "schema1"), "fileset1", auditInfo);
       TopicEntity topic1 =
           createTopicEntity(
               1L, Namespace.of("metalake", "catalog", "schema1"), "topic1", auditInfo);
+      ModelEntity model1 =
+          TestJDBCBackend.createModelEntity(
+              RandomIdGenerator.INSTANCE.nextId(),
+              Namespace.of("metalake", "catalog", "schema1"),
+              "model1",
+              "model1",
+              0,
+              null,
+              auditInfo);
+      ModelVersionEntity modelVersion1 =
+          TestJDBCBackend.createModelVersionEntity(
+              model1.nameIdentifier(),
+              0,
+              ImmutableMap.of(ModelVersion.URI_NAME_UNKNOWN, "model_path"),
+              ImmutableList.of("alias1", "alias2"),
+              null,
+              null,
+              auditInfo);
 
       SchemaEntity schema2 =
           createSchemaEntity(2L, Namespace.of("metalake", "catalog"), "schema2", auditInfo);
+      ColumnEntity column3 =
+          createColumnEntity(
+              RandomIdGenerator.INSTANCE.nextId(), "column3", 2, Types.StringType.get(), auditInfo);
+      ColumnEntity column4 =
+          createColumnEntity(
+              RandomIdGenerator.INSTANCE.nextId(), "column4", 3, Types.StringType.get(), auditInfo);
       TableEntity table1InSchema2 =
-          createTableEntity(
-              2L, Namespace.of("metalake", "catalog", "schema2"), "table1", auditInfo);
+          createTableEntityWithColumns(
+              2L,
+              Namespace.of("metalake", "catalog", "schema2"),
+              "table1",
+              auditInfo,
+              Lists.newArrayList(column3, column4));
       FilesetEntity fileset1InSchema2 =
           createFilesetEntity(
               2L, Namespace.of("metalake", "catalog", "schema2"), "fileset1", auditInfo);
       TopicEntity topic1InSchema2 =
           createTopicEntity(
               2L, Namespace.of("metalake", "catalog", "schema2"), "topic1", auditInfo);
+      ModelEntity model1InSchema2 =
+          TestJDBCBackend.createModelEntity(
+              RandomIdGenerator.INSTANCE.nextId(),
+              Namespace.of("metalake", "catalog", "schema2"),
+              "model1",
+              "model1",
+              0,
+              null,
+              auditInfo);
+      ModelVersionEntity modelVersion1InSchema2 =
+          TestJDBCBackend.createModelVersionEntity(
+              model1InSchema2.nameIdentifier(),
+              0,
+              ImmutableMap.of(ModelVersion.URI_NAME_UNKNOWN, "model_path"),
+              ImmutableList.of("alias1", "alias2"),
+              null,
+              null,
+              auditInfo);
+
       UserEntity user1 = createUser(1L, "metalake", "user1", auditInfo);
       UserEntity user2 = createUser(2L, "metalake", "user2", auditInfo);
       GroupEntity group1 = createGroup(1L, "metalake", "group1", auditInfo);
@@ -610,6 +771,10 @@ public class TestEntityStorage {
       store.put(fileset1InSchema2);
       store.put(topic1);
       store.put(topic1InSchema2);
+      store.put(model1);
+      store.put(modelVersion1);
+      store.put(model1InSchema2);
+      store.put(modelVersion1InSchema2);
       store.put(user1);
       store.put(user2);
       store.put(group1);
@@ -630,6 +795,10 @@ public class TestEntityStorage {
           fileset1InSchema2,
           topic1,
           topic1InSchema2,
+          model1,
+          modelVersion1,
+          model1InSchema2,
+          modelVersion1InSchema2,
           user1,
           user2,
           group1,
@@ -649,7 +818,10 @@ public class TestEntityStorage {
 
       validateDeleteTopic(store, schema2, topic1, topic1InSchema2);
 
-      validateDeleteSchema(store, schema1, table1, fileset1, topic1);
+      validateDeleteModel(
+          store, schema2, model1, modelVersion1, model1InSchema2, modelVersion1InSchema2);
+
+      validateDeleteSchema(store, schema1, table1, fileset1, topic1, model1, modelVersion1);
 
       validateDeleteCatalog(
           store,
@@ -661,7 +833,9 @@ public class TestEntityStorage {
           fileset1,
           fileset1InSchema2,
           topic1,
-          topic1InSchema2);
+          topic1InSchema2,
+          model1,
+          model1InSchema2);
 
       validateDeleteMetalake(store, metalake, catalogCopy, user2, group2, role2);
 
@@ -669,9 +843,7 @@ public class TestEntityStorage {
       // metalake
       BaseMetalake metalakeNew =
           createBaseMakeLake(
-              RandomIdGenerator.INSTANCE.nextId(),
-              metalake.name(),
-              (AuditInfo) metalake.auditInfo());
+              RandomIdGenerator.INSTANCE.nextId(), metalake.name(), metalake.auditInfo());
       store.put(metalakeNew);
       // catalog
       CatalogEntity catalogNew =
@@ -705,18 +877,20 @@ public class TestEntityStorage {
       store.put(schema2New);
       // table
       TableEntity table1New =
-          createTableEntity(
+          createTableEntityWithColumns(
               RandomIdGenerator.INSTANCE.nextId(),
               table1.namespace(),
               table1.name(),
-              table1.auditInfo());
+              table1.auditInfo(),
+              table1.columns());
       store.put(table1New);
       TableEntity table1InSchema2New =
-          createTableEntity(
+          createTableEntityWithColumns(
               RandomIdGenerator.INSTANCE.nextId(),
               table1InSchema2.namespace(),
               table1InSchema2.name(),
-              table1InSchema2.auditInfo());
+              table1InSchema2.auditInfo(),
+              table1InSchema2.columns());
       store.put(table1InSchema2New);
       // fileset
       FilesetEntity fileset1New =
@@ -748,6 +922,19 @@ public class TestEntityStorage {
               topic1InSchema2.name(),
               topic1InSchema2.auditInfo());
       store.put(topic1InSchema2New);
+
+      // model
+      ModelEntity model1New =
+          TestJDBCBackend.createModelEntity(
+              RandomIdGenerator.INSTANCE.nextId(),
+              model1.namespace(),
+              model1.name(),
+              model1.comment(),
+              model1.latestVersion(),
+              model1.properties(),
+              model1.auditInfo());
+      store.put(model1New);
+
       UserEntity userNew =
           createUser(RandomIdGenerator.INSTANCE.nextId(), "metalake", "userNew", auditInfo);
       store.put(userNew);
@@ -764,7 +951,9 @@ public class TestEntityStorage {
 
       validateDeleteTopicCascade(store, topic1New);
 
-      validateDeleteSchemaCascade(store, schema1New, table1New, fileset1New, topic1New);
+      validateDeleteModelCascade(store, model1New);
+
+      validateDeleteSchemaCascade(store, schema1New, table1New, fileset1New, topic1New, model1New);
 
       validateDeleteCatalogCascade(store, catalogNew, schema2New);
 
@@ -812,12 +1001,23 @@ public class TestEntityStorage {
       TopicEntity topicEntity1 =
           createTopicEntity(RandomIdGenerator.INSTANCE.nextId(), namespace, "sameName", auditInfo);
 
+      ModelEntity model1 =
+          TestJDBCBackend.createModelEntity(
+              RandomIdGenerator.INSTANCE.nextId(),
+              namespace,
+              "sameName",
+              "model1",
+              1,
+              null,
+              auditInfo);
+
       store.put(metalake1);
       store.put(catalog1);
       store.put(schema1);
       store.put(table1);
       store.put(filesetEntity1);
       store.put(topicEntity1);
+      store.put(model1);
 
       NameIdentifier identifier = NameIdentifier.of("metalake1", "catalog1", "schema1", "sameName");
 
@@ -830,12 +1030,16 @@ public class TestEntityStorage {
       TopicEntity loadedTopicEntity =
           store.get(identifier, Entity.EntityType.TOPIC, TopicEntity.class);
       Assertions.assertEquals(topicEntity1.id(), loadedTopicEntity.id());
+      ModelEntity loadedModelEntity =
+          store.get(identifier, Entity.EntityType.MODEL, ModelEntity.class);
+      Assertions.assertEquals(model1.id(), loadedModelEntity.id());
 
       // Remove table will not affect another
       Assertions.assertTrue(store.delete(identifier, Entity.EntityType.TABLE));
       Assertions.assertNotNull(
           store.get(identifier, Entity.EntityType.FILESET, FilesetEntity.class));
       Assertions.assertNotNull(store.get(identifier, Entity.EntityType.TOPIC, TopicEntity.class));
+      Assertions.assertNotNull(store.get(identifier, Entity.EntityType.MODEL, ModelEntity.class));
 
       // JDBC use id as the primary key, so we need to change the id of table1 if we want to store
       // it again
@@ -847,6 +1051,7 @@ public class TestEntityStorage {
       store.delete(identifier, Entity.EntityType.FILESET);
       Assertions.assertNotNull(store.get(identifier, Entity.EntityType.TABLE, TableEntity.class));
       Assertions.assertNotNull(store.get(identifier, Entity.EntityType.TOPIC, TopicEntity.class));
+      Assertions.assertNotNull(store.get(identifier, Entity.EntityType.MODEL, ModelEntity.class));
 
       filesetEntity1 =
           createFilesetEntity(
@@ -858,6 +1063,7 @@ public class TestEntityStorage {
       Assertions.assertNotNull(store.get(identifier, Entity.EntityType.TABLE, TableEntity.class));
       Assertions.assertNotNull(
           store.get(identifier, Entity.EntityType.FILESET, FilesetEntity.class));
+      Assertions.assertNotNull(store.get(identifier, Entity.EntityType.MODEL, ModelEntity.class));
 
       topicEntity1 =
           createTopicEntity(RandomIdGenerator.INSTANCE.nextId(), namespace, "sameName", auditInfo);
@@ -873,9 +1079,12 @@ public class TestEntityStorage {
 
       NameIdentifier changedNameIdentifier =
           NameIdentifier.of("metalake1", "catalog1", "schema1", "sameNameChanged");
-      store.get(changedNameIdentifier, Entity.EntityType.TABLE, TableEntity.class);
-      store.get(identifier, Entity.EntityType.FILESET, FilesetEntity.class);
-      store.get(identifier, Entity.EntityType.TOPIC, TopicEntity.class);
+      Assertions.assertNotNull(
+          store.get(changedNameIdentifier, Entity.EntityType.TABLE, TableEntity.class));
+      Assertions.assertNotNull(
+          store.get(identifier, Entity.EntityType.FILESET, FilesetEntity.class));
+      Assertions.assertNotNull(store.get(identifier, Entity.EntityType.TOPIC, TopicEntity.class));
+      Assertions.assertNotNull(store.get(identifier, Entity.EntityType.MODEL, ModelEntity.class));
 
       table1 =
           createTableEntity(RandomIdGenerator.INSTANCE.nextId(), namespace, "sameName", auditInfo);
@@ -889,9 +1098,11 @@ public class TestEntityStorage {
           Entity.EntityType.FILESET,
           e -> createFilesetEntity(filesetId, namespace, "sameNameChanged", e.auditInfo()));
 
-      store.get(identifier, Entity.EntityType.TABLE, TableEntity.class);
-      store.get(changedNameIdentifier, Entity.EntityType.FILESET, FilesetEntity.class);
-      store.get(identifier, Entity.EntityType.TOPIC, TopicEntity.class);
+      Assertions.assertNotNull(store.get(identifier, Entity.EntityType.TABLE, TableEntity.class));
+      Assertions.assertNotNull(
+          store.get(changedNameIdentifier, Entity.EntityType.FILESET, FilesetEntity.class));
+      Assertions.assertNotNull(store.get(identifier, Entity.EntityType.TOPIC, TopicEntity.class));
+      Assertions.assertNotNull(store.get(identifier, Entity.EntityType.MODEL, ModelEntity.class));
 
       filesetEntity1 =
           createFilesetEntity(
@@ -906,9 +1117,12 @@ public class TestEntityStorage {
           Entity.EntityType.TOPIC,
           e -> createTopicEntity(topicId, namespace, "sameNameChanged", e.auditInfo()));
 
-      store.get(identifier, Entity.EntityType.TABLE, TableEntity.class);
-      store.get(identifier, Entity.EntityType.FILESET, FilesetEntity.class);
-      store.get(changedNameIdentifier, Entity.EntityType.TOPIC, TopicEntity.class);
+      Assertions.assertNotNull(store.get(identifier, Entity.EntityType.TABLE, TableEntity.class));
+      Assertions.assertNotNull(
+          store.get(identifier, Entity.EntityType.FILESET, FilesetEntity.class));
+      Assertions.assertNotNull(
+          store.get(changedNameIdentifier, Entity.EntityType.TOPIC, TopicEntity.class));
+      Assertions.assertNotNull(store.get(identifier, Entity.EntityType.MODEL, ModelEntity.class));
 
       destroy(type);
     }
@@ -948,7 +1162,7 @@ public class TestEntityStorage {
           NameIdentifier.of("metalake1"),
           BaseMetalake.class,
           Entity.EntityType.METALAKE,
-          e -> createBaseMakeLake(metalake1New.id(), "metalake2", (AuditInfo) e.auditInfo()));
+          e -> createBaseMakeLake(metalake1New.id(), "metalake2", e.auditInfo()));
 
       // Rename metalake3 --> metalake1
       BaseMetalake metalake3New1 =
@@ -958,7 +1172,7 @@ public class TestEntityStorage {
           NameIdentifier.of("metalake3"),
           BaseMetalake.class,
           Entity.EntityType.METALAKE,
-          e -> createBaseMakeLake(metalake3New1.id(), "metalake1", (AuditInfo) e.auditInfo()));
+          e -> createBaseMakeLake(metalake3New1.id(), "metalake1", e.auditInfo()));
 
       // Rename metalake3 --> metalake2
       BaseMetalake metalake3New2 =
@@ -970,7 +1184,7 @@ public class TestEntityStorage {
           NameIdentifier.of("metalake3"),
           BaseMetalake.class,
           Entity.EntityType.METALAKE,
-          e -> createBaseMakeLake(metalake3New2.id(), "metalake2", (AuditInfo) e.auditInfo()));
+          e -> createBaseMakeLake(metalake3New2.id(), "metalake2", e.auditInfo()));
 
       // Finally, only metalake2 and metalake1 are left.
       Assertions.assertDoesNotThrow(
@@ -1228,13 +1442,33 @@ public class TestEntityStorage {
         .build();
   }
 
+  public static ColumnEntity createColumnEntity(
+      Long id, String name, int position, Type dataType, AuditInfo auditInfo) {
+    return ColumnEntity.builder()
+        .withId(id)
+        .withName(name)
+        .withPosition(position)
+        .withComment("")
+        .withDataType(dataType)
+        .withNullable(true)
+        .withAutoIncrement(false)
+        .withAuditInfo(auditInfo)
+        .build();
+  }
+
   public static TableEntity createTableEntity(
       Long id, Namespace namespace, String name, AuditInfo auditInfo) {
+    return createTableEntityWithColumns(id, namespace, name, auditInfo, Collections.emptyList());
+  }
+
+  public static TableEntity createTableEntityWithColumns(
+      Long id, Namespace namespace, String name, AuditInfo auditInfo, List<ColumnEntity> columns) {
     return TableEntity.builder()
         .withId(id)
         .withName(name)
         .withNamespace(namespace)
         .withAuditInfo(auditInfo)
+        .withColumns(columns)
         .build();
   }
 
@@ -1245,7 +1479,7 @@ public class TestEntityStorage {
         .withName(name)
         .withNamespace(namespace)
         .withFilesetType(Fileset.Type.MANAGED)
-        .withStorageLocation("/tmp")
+        .withStorageLocations(ImmutableMap.of(LOCATION_NAME_UNKNOWN, "/tmp"))
         .withComment("")
         .withProperties(null)
         .withAuditInfo(auditInfo)
@@ -1308,6 +1542,15 @@ public class TestEntityStorage {
     Assertions.assertFalse(store.delete(topic1.nameIdentifier(), Entity.EntityType.TOPIC));
   }
 
+  private void validateDeleteModelCascade(EntityStore store, ModelEntity model1)
+      throws IOException {
+    // Delete the topic 'metalake.catalog.schema1.topic1'
+    Assertions.assertTrue(store.delete(model1.nameIdentifier(), EntityType.MODEL));
+    Assertions.assertFalse(store.exists(model1.nameIdentifier(), EntityType.MODEL));
+    // Delete again should return false
+    Assertions.assertFalse(store.delete(model1.nameIdentifier(), EntityType.MODEL));
+  }
+
   private void validateDeleteFilesetCascade(EntityStore store, FilesetEntity fileset1)
       throws IOException {
     // Delete the fileset 'metalake.catalog.schema1.fileset1'
@@ -1325,6 +1568,7 @@ public class TestEntityStorage {
     Assertions.assertFalse(store.exists(table1.nameIdentifier(), Entity.EntityType.TABLE));
     // Delete again should return false
     Assertions.assertFalse(store.delete(table1.nameIdentifier(), Entity.EntityType.TABLE, true));
+    validateDeletedColumns(table1.id(), table1.type());
   }
 
   private void validateDeleteFileset(
@@ -1391,6 +1635,7 @@ public class TestEntityStorage {
     Assertions.assertFalse(store.exists(userNew.nameIdentifier(), Entity.EntityType.USER));
     Assertions.assertFalse(store.exists(groupNew.nameIdentifier(), EntityType.GROUP));
     Assertions.assertFalse(store.exists(roleNew.nameIdentifier(), EntityType.ROLE));
+    validateDeletedColumns(metalake.id(), metalake.type());
 
     // Delete again should return false
     Assertions.assertFalse(
@@ -1407,6 +1652,7 @@ public class TestEntityStorage {
     Assertions.assertThrowsExactly(
         NoSuchEntityException.class,
         () -> store.get(id, Entity.EntityType.CATALOG, CatalogEntity.class));
+    validateDeletedColumns(catalog.id(), catalog.type());
 
     Assertions.assertThrowsExactly(
         NoSuchEntityException.class,
@@ -1420,14 +1666,16 @@ public class TestEntityStorage {
       SchemaEntity schema1,
       TableEntity table1,
       FilesetEntity fileset1,
-      TopicEntity topic1)
+      TopicEntity topic1,
+      ModelEntity model1)
       throws IOException {
     TableEntity table1New =
-        createTableEntity(
+        createTableEntityWithColumns(
             RandomIdGenerator.INSTANCE.nextId(),
             table1.namespace(),
             table1.name(),
-            table1.auditInfo());
+            table1.auditInfo(),
+            table1.columns());
     store.put(table1New);
     FilesetEntity fileset1New =
         createFilesetEntity(
@@ -1443,6 +1691,17 @@ public class TestEntityStorage {
             topic1.name(),
             topic1.auditInfo());
     store.put(topic1New);
+
+    ModelEntity model1New =
+        TestJDBCBackend.createModelEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            model1.namespace(),
+            model1.name(),
+            model1.comment(),
+            model1.latestVersion(),
+            model1.properties(),
+            model1.auditInfo());
+    store.put(model1New);
 
     Assertions.assertThrowsExactly(
         NonEmptyEntityException.class,
@@ -1464,6 +1723,9 @@ public class TestEntityStorage {
       Assertions.assertTrue(e instanceof NoSuchEntityException);
       Assertions.assertTrue(e.getMessage().contains("schema1"));
     }
+
+    validateDeletedColumns(schema1.id(), schema1.type());
+
     // Delete again should return false
     Assertions.assertFalse(store.delete(schema1.nameIdentifier(), Entity.EntityType.SCHEMA, true));
 
@@ -1474,9 +1736,13 @@ public class TestEntityStorage {
     Assertions.assertThrows(
         NoSuchEntityException.class,
         () -> store.get(topic1.nameIdentifier(), Entity.EntityType.TOPIC, TopicEntity.class));
+
+    Assertions.assertThrows(
+        NoSuchEntityException.class,
+        () -> store.get(model1.nameIdentifier(), Entity.EntityType.MODEL, ModelEntity.class));
   }
 
-  private static void validateDeleteMetalake(
+  private void validateDeleteMetalake(
       EntityStore store,
       BaseMetalake metalake,
       CatalogEntity catalogCopy,
@@ -1504,7 +1770,7 @@ public class TestEntityStorage {
     Assertions.assertFalse(store.delete(metalake.nameIdentifier(), Entity.EntityType.METALAKE));
   }
 
-  private static void validateDeleteCatalog(
+  private void validateDeleteCatalog(
       EntityStore store,
       CatalogEntity catalog,
       TableEntity table1,
@@ -1514,15 +1780,20 @@ public class TestEntityStorage {
       FilesetEntity fileset1,
       FilesetEntity fileset1InSchema2,
       TopicEntity topic1,
-      TopicEntity topic1InSchema2)
+      TopicEntity topic1InSchema2,
+      ModelEntity model1,
+      ModelEntity model1InSchema2)
       throws IOException {
     // Now try to delete all schemas under catalog;
     Assertions.assertThrowsExactly(
         NonEmptyEntityException.class,
         () -> store.delete(catalog.nameIdentifier(), Entity.EntityType.CATALOG));
     store.delete(table1.nameIdentifier(), Entity.EntityType.TABLE);
+    validateDeletedColumns(table1.id(), table1.type());
     store.delete(fileset1.nameIdentifier(), Entity.EntityType.FILESET);
     store.delete(topic1.nameIdentifier(), Entity.EntityType.TOPIC);
+    store.delete(model1.nameIdentifier(), Entity.EntityType.MODEL);
+
     try {
       Thread.sleep(1000);
     } catch (InterruptedException e) {
@@ -1530,9 +1801,11 @@ public class TestEntityStorage {
     }
     store.delete(schema1.nameIdentifier(), Entity.EntityType.SCHEMA);
     store.delete(table1InSchema2.nameIdentifier(), Entity.EntityType.TABLE);
+    validateDeletedColumns(table1InSchema2.id(), table1InSchema2.type());
     Assertions.assertFalse(
         store.exists(fileset1InSchema2.nameIdentifier(), Entity.EntityType.FILESET));
     Assertions.assertFalse(store.exists(topic1InSchema2.nameIdentifier(), Entity.EntityType.TOPIC));
+    Assertions.assertFalse(store.exists(model1InSchema2.nameIdentifier(), Entity.EntityType.MODEL));
     store.delete(schema2.nameIdentifier(), Entity.EntityType.SCHEMA);
 
     store.delete(catalog.nameIdentifier(), Entity.EntityType.CATALOG);
@@ -1541,12 +1814,14 @@ public class TestEntityStorage {
     Assertions.assertFalse(store.delete(catalog.nameIdentifier(), Entity.EntityType.CATALOG));
   }
 
-  private static void validateDeleteSchema(
+  private void validateDeleteSchema(
       EntityStore store,
       SchemaEntity schema1,
       TableEntity table1,
       FilesetEntity fileset1,
-      TopicEntity topic1)
+      TopicEntity topic1,
+      ModelEntity model1,
+      ModelVersionEntity modelVersion1)
       throws IOException {
     // Delete the schema 'metalake.catalog.schema1' but failed, because it ha sub-entities;
     NonEmptyEntityException exception =
@@ -1559,24 +1834,34 @@ public class TestEntityStorage {
     // has not been deleted yet;
     Assertions.assertTrue(store.exists(schema1.nameIdentifier(), Entity.EntityType.SCHEMA));
     Assertions.assertTrue(store.exists(table1.nameIdentifier(), Entity.EntityType.TABLE));
+
     Assertions.assertTrue(store.exists(fileset1.nameIdentifier(), Entity.EntityType.FILESET));
     Assertions.assertTrue(store.exists(topic1.nameIdentifier(), Entity.EntityType.TOPIC));
+    Assertions.assertTrue(store.exists(model1.nameIdentifier(), Entity.EntityType.MODEL));
+    Assertions.assertTrue(
+        store.exists(modelVersion1.nameIdentifier(), Entity.EntityType.MODEL_VERSION));
 
     // Delete table1,fileset1 and schema1
     Assertions.assertTrue(store.delete(table1.nameIdentifier(), Entity.EntityType.TABLE));
+    validateDeletedColumns(table1.id(), table1.type());
     Assertions.assertTrue(store.delete(fileset1.nameIdentifier(), Entity.EntityType.FILESET));
     Assertions.assertTrue(store.delete(topic1.nameIdentifier(), Entity.EntityType.TOPIC));
+    Assertions.assertTrue(store.delete(model1.nameIdentifier(), Entity.EntityType.MODEL));
     Assertions.assertTrue(store.delete(schema1.nameIdentifier(), Entity.EntityType.SCHEMA));
     // Make sure table1, fileset1 in 'metalake.catalog.schema1' can't be access;
     Assertions.assertFalse(store.exists(table1.nameIdentifier(), Entity.EntityType.TABLE));
     Assertions.assertFalse(store.exists(fileset1.nameIdentifier(), Entity.EntityType.FILESET));
     Assertions.assertFalse(store.exists(topic1.nameIdentifier(), Entity.EntityType.TOPIC));
+    Assertions.assertFalse(store.exists(model1.nameIdentifier(), Entity.EntityType.MODEL));
+    Assertions.assertFalse(
+        store.exists(modelVersion1.nameIdentifier(), Entity.EntityType.MODEL_VERSION));
     Assertions.assertFalse(store.exists(schema1.nameIdentifier(), Entity.EntityType.SCHEMA));
 
     // Delete again should return false
     Assertions.assertFalse(store.delete(table1.nameIdentifier(), Entity.EntityType.TABLE));
     Assertions.assertFalse(store.delete(fileset1.nameIdentifier(), Entity.EntityType.FILESET));
     Assertions.assertFalse(store.delete(topic1.nameIdentifier(), Entity.EntityType.TOPIC));
+    Assertions.assertFalse(store.delete(model1.nameIdentifier(), Entity.EntityType.MODEL));
     Assertions.assertFalse(store.delete(schema1.nameIdentifier(), Entity.EntityType.SCHEMA));
 
     // Now we re-insert schema1, table1, fileset1 and topic1, and everything should be OK
@@ -1609,6 +1894,17 @@ public class TestEntityStorage {
             topic1.auditInfo());
     store.put(topic1New);
 
+    ModelEntity model1New =
+        TestJDBCBackend.createModelEntity(
+            RandomIdGenerator.INSTANCE.nextId(),
+            model1.namespace(),
+            model1.name(),
+            model1.comment(),
+            model1.latestVersion(),
+            model1.properties(),
+            model1.auditInfo());
+    store.put(model1New);
+
     Assertions.assertEquals(
         schema1New,
         store.get(schema1.nameIdentifier(), Entity.EntityType.SCHEMA, SchemaEntity.class));
@@ -1619,6 +1915,8 @@ public class TestEntityStorage {
         store.get(fileset1.nameIdentifier(), Entity.EntityType.FILESET, FilesetEntity.class));
     Assertions.assertEquals(
         topic1New, store.get(topic1.nameIdentifier(), Entity.EntityType.TOPIC, TopicEntity.class));
+    Assertions.assertEquals(
+        model1New, store.get(model1.nameIdentifier(), Entity.EntityType.MODEL, ModelEntity.class));
   }
 
   private void validateDeleteUser(EntityStore store, UserEntity user1) throws IOException {
@@ -1667,21 +1965,67 @@ public class TestEntityStorage {
     // delete again should return false
     Assertions.assertFalse(store.delete(table1InSchema2.nameIdentifier(), Entity.EntityType.TABLE));
 
+    // Make sure all columns are deleted
+    validateDeletedColumns(table1InSchema2.id(), table1InSchema2.type());
+
     // Make sure table 'metalake.catalog.schema1.table1' still exist;
     Assertions.assertEquals(
         table1, store.get(table1.nameIdentifier(), Entity.EntityType.TABLE, TableEntity.class));
     // Make sure schema 'metalake.catalog.schema2' still exist;
     Assertions.assertEquals(
         schema2, store.get(schema2.nameIdentifier(), Entity.EntityType.SCHEMA, SchemaEntity.class));
-    // Re-insert table1Inschema2 and everything is OK
+    // Re-insert table1InSchema2 and everything is OK
     TableEntity table1InSchema2New =
-        createTableEntity(
+        createTableEntityWithColumns(
             RandomIdGenerator.INSTANCE.nextId(),
             table1InSchema2.namespace(),
             table1InSchema2.name(),
-            table1InSchema2.auditInfo());
+            table1InSchema2.auditInfo(),
+            table1InSchema2.columns());
     store.put(table1InSchema2New);
     Assertions.assertTrue(store.exists(table1InSchema2.nameIdentifier(), Entity.EntityType.TABLE));
+  }
+
+  private void validateDeleteModel(
+      EntityStore store,
+      SchemaEntity schema2,
+      ModelEntity model1,
+      ModelVersionEntity modelVersion1,
+      ModelEntity model1InSchema2,
+      ModelVersionEntity modelVersion1InSchema2)
+      throws IOException {
+    Assertions.assertTrue(store.delete(model1InSchema2.nameIdentifier(), Entity.EntityType.MODEL));
+    Assertions.assertFalse(store.exists(model1InSchema2.nameIdentifier(), Entity.EntityType.MODEL));
+    // delete again should return false
+    Assertions.assertFalse(store.delete(model1InSchema2.nameIdentifier(), Entity.EntityType.MODEL));
+
+    Assertions.assertFalse(
+        store.exists(modelVersion1InSchema2.nameIdentifier(), EntityType.MODEL_VERSION));
+    Assertions.assertFalse(
+        store.delete(modelVersion1InSchema2.nameIdentifier(), EntityType.MODEL_VERSION));
+
+    ModelEntity model1Copy =
+        ModelEntity.builder()
+            .withId(model1.id())
+            .withNamespace(model1.namespace())
+            .withName(model1.name())
+            .withComment(model1.comment())
+            .withLatestVersion(model1.latestVersion() + 1)
+            .withProperties(model1.properties())
+            .withAuditInfo(model1.auditInfo())
+            .build();
+
+    Assertions.assertEquals(
+        model1Copy, store.get(model1.nameIdentifier(), Entity.EntityType.MODEL, ModelEntity.class));
+
+    Assertions.assertEquals(
+        modelVersion1,
+        store.get(
+            modelVersion1.nameIdentifier(), EntityType.MODEL_VERSION, ModelVersionEntity.class));
+
+    // Make sure schema 'metalake.catalog.schema2' still exist;
+    Assertions.assertEquals(
+        schema2, store.get(schema2.nameIdentifier(), Entity.EntityType.SCHEMA, SchemaEntity.class));
   }
 
   private static void validateAllEntityExist(
@@ -1697,6 +2041,10 @@ public class TestEntityStorage {
       FilesetEntity fileset1InSchema2,
       TopicEntity topic1,
       TopicEntity topic1InSchema2,
+      ModelEntity model1,
+      ModelVersionEntity modelVersion1,
+      ModelEntity model1InSchema2,
+      ModelVersionEntity modelVersion1InSchema2,
       UserEntity user1,
       UserEntity user2,
       GroupEntity group1,
@@ -1735,6 +2083,46 @@ public class TestEntityStorage {
     Assertions.assertEquals(
         topic1InSchema2,
         store.get(topic1InSchema2.nameIdentifier(), Entity.EntityType.TOPIC, TopicEntity.class));
+
+    ModelEntity model1Copy =
+        ModelEntity.builder()
+            .withId(model1.id())
+            .withNamespace(model1.namespace())
+            .withName(model1.name())
+            .withComment(model1.comment())
+            .withLatestVersion(model1.latestVersion() + 1)
+            .withProperties(model1.properties())
+            .withAuditInfo(model1.auditInfo())
+            .build();
+
+    Assertions.assertEquals(
+        model1Copy, store.get(model1.nameIdentifier(), Entity.EntityType.MODEL, ModelEntity.class));
+    Assertions.assertEquals(
+        modelVersion1,
+        store.get(
+            modelVersion1.nameIdentifier(), EntityType.MODEL_VERSION, ModelVersionEntity.class));
+
+    ModelEntity model1InSchema2Copy =
+        ModelEntity.builder()
+            .withId(model1InSchema2.id())
+            .withNamespace(model1InSchema2.namespace())
+            .withName(model1InSchema2.name())
+            .withComment(model1InSchema2.comment())
+            .withLatestVersion(model1InSchema2.latestVersion() + 1)
+            .withProperties(model1InSchema2.properties())
+            .withAuditInfo(model1InSchema2.auditInfo())
+            .build();
+
+    Assertions.assertEquals(
+        model1InSchema2Copy,
+        store.get(model1InSchema2.nameIdentifier(), EntityType.MODEL, ModelEntity.class));
+    Assertions.assertEquals(
+        modelVersion1InSchema2,
+        store.get(
+            modelVersion1InSchema2.nameIdentifier(),
+            EntityType.MODEL_VERSION,
+            ModelVersionEntity.class));
+
     Assertions.assertEquals(
         user1, store.get(user1.nameIdentifier(), Entity.EntityType.USER, UserEntity.class));
     Assertions.assertEquals(
@@ -2136,89 +2524,52 @@ public class TestEntityStorage {
                 (e) -> e));
   }
 
-  @ParameterizedTest
-  @MethodSource("storageProvider")
-  void testOptimizedDeleteForKv(String type) throws IOException {
-    if (!"kv".equalsIgnoreCase(type)) {
-      return;
+  private List<Pair<Long, Pair<Long, Long>>> listAllColumnWithEntityId(
+      Long entityId, Entity.EntityType entityType) {
+    String queryTemp =
+        "SELECT column_id, table_version, deleted_at FROM "
+            + "table_column_version_info WHERE %s = %d";
+    String query;
+    switch (entityType) {
+      case TABLE:
+        query = String.format(queryTemp, "table_id", entityId);
+        break;
+      case SCHEMA:
+        query = String.format(queryTemp, "schema_id", entityId);
+        break;
+      case CATALOG:
+        query = String.format(queryTemp, "catalog_id", entityId);
+        break;
+      case METALAKE:
+        query = String.format(queryTemp, "metalake_id", entityId);
+        break;
+      default:
+        throw new IllegalArgumentException("Unsupported entity type: " + entityType);
     }
 
-    Config config = Mockito.mock(Config.class);
-    init(type, config);
+    List<Pair<Long, Pair<Long, Long>>> results = Lists.newArrayList();
+    try (SqlSession sqlSession =
+        SqlSessionFactoryHelper.getInstance().getSqlSessionFactory().openSession(true)) {
+      Connection connection = sqlSession.getConnection();
+      Statement statement = connection.createStatement();
 
-    AuditInfo auditInfo =
-        AuditInfo.builder().withCreator("creator").withCreateTime(Instant.now()).build();
-
-    try (EntityStore store = EntityStoreFactory.createEntityStore(config)) {
-      store.initialize(config);
-
-      BaseMetalake metalake = createBaseMakeLake(1L, "metalake", auditInfo);
-      CatalogEntity catalog = createCatalog(1L, Namespace.of("metalake"), "catalog", auditInfo);
-      CatalogEntity catalogCopy =
-          createCatalog(2L, Namespace.of("metalake"), "catalogCopy", auditInfo);
-
-      SchemaEntity schemaEntity =
-          createSchemaEntity(1L, Namespace.of("metalake", "catalog"), "schema1", auditInfo);
-      SchemaEntity schemaEntity2 =
-          createSchemaEntity(2L, Namespace.of("metalake", "catalog"), "schema2", auditInfo);
-
-      TableEntity table =
-          createTableEntity(
-              1L, Namespace.of("metalake", "catalog", "schema1"), "the same", auditInfo);
-      FilesetEntity filesetEntity =
-          createFilesetEntity(
-              1L, Namespace.of("metalake", "catalog", "schema2"), "the same", auditInfo);
-
-      store.put(metalake);
-      store.put(catalog);
-      store.put(catalogCopy);
-      store.put(schemaEntity);
-      store.put(schemaEntity2);
-      store.put(table);
-      store.put(filesetEntity);
-
-      Assertions.assertDoesNotThrow(
-          () -> store.get(schemaEntity2.nameIdentifier(), EntityType.SCHEMA, SchemaEntity.class));
-      Assertions.assertDoesNotThrow(
-          () -> store.get(filesetEntity.nameIdentifier(), EntityType.FILESET, FilesetEntity.class));
-
-      // Test delete with the cascade or not
-      Assertions.assertThrows(
-          Exception.class, () -> store.delete(schemaEntity.nameIdentifier(), EntityType.SCHEMA));
-      Assertions.assertDoesNotThrow(
-          () -> store.delete(schemaEntity.nameIdentifier(), EntityType.SCHEMA, true));
-
-      Assertions.assertDoesNotThrow(
-          () -> store.get(filesetEntity.nameIdentifier(), EntityType.FILESET, FilesetEntity.class));
-
-      // Put the same schema back and see whether the deleted table exists or not
-      store.put(schemaEntity);
-      Assertions.assertDoesNotThrow(
-          () -> store.get(schemaEntity.nameIdentifier(), EntityType.SCHEMA, SchemaEntity.class));
-      Assertions.assertThrows(
-          Exception.class,
-          () -> store.get(table.nameIdentifier(), EntityType.TABLE, TableEntity.class));
-      Assertions.assertDoesNotThrow(
-          () -> store.get(filesetEntity.nameIdentifier(), EntityType.FILESET, FilesetEntity.class));
-
-      store.put(table);
-      Assertions.assertDoesNotThrow(
-          () -> store.get(schemaEntity.nameIdentifier(), EntityType.SCHEMA, SchemaEntity.class));
-      Assertions.assertDoesNotThrow(
-          () -> store.get(table.nameIdentifier(), EntityType.TABLE, TableEntity.class));
-      Assertions.assertDoesNotThrow(
-          () -> store.get(filesetEntity.nameIdentifier(), EntityType.FILESET, FilesetEntity.class));
-
-      store.delete(table.nameIdentifier(), EntityType.TABLE);
-      FilesetEntity filesetEntity1 =
-          createFilesetEntity(
-              1L, Namespace.of("metalake", "catalog", "schema1"), "the same", auditInfo);
-      store.put(filesetEntity1);
-      Assertions.assertDoesNotThrow(
-          () ->
-              store.get(filesetEntity1.nameIdentifier(), EntityType.FILESET, FilesetEntity.class));
-
-      destroy(type);
+      ResultSet rs = statement.executeQuery(query);
+      while (rs.next()) {
+        results.add(
+            Pair.of(
+                rs.getLong("column_id"),
+                Pair.of(rs.getLong("table_version"), rs.getLong("deleted_at"))));
+      }
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
     }
+
+    return results;
+  }
+
+  private void validateDeletedColumns(Long entityId, Entity.EntityType entityType) {
+    List<Pair<Long, Pair<Long, Long>>> deleteResult =
+        listAllColumnWithEntityId(entityId, entityType);
+    deleteResult.forEach(p -> Assertions.assertTrue(p.getRight().getRight() > 0));
   }
 }

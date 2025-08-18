@@ -45,12 +45,14 @@ import org.apache.gravitino.auth.AuthConstants;
 import org.apache.gravitino.catalog.jdbc.config.JdbcConfig;
 import org.apache.gravitino.catalog.mysql.integration.test.service.MysqlService;
 import org.apache.gravitino.client.GravitinoMetalake;
+import org.apache.gravitino.exceptions.ConnectionFailedException;
 import org.apache.gravitino.exceptions.NoSuchSchemaException;
+import org.apache.gravitino.exceptions.NonEmptyCatalogException;
 import org.apache.gravitino.exceptions.NotFoundException;
 import org.apache.gravitino.exceptions.SchemaAlreadyExistsException;
 import org.apache.gravitino.integration.test.container.ContainerSuite;
 import org.apache.gravitino.integration.test.container.MySQLContainer;
-import org.apache.gravitino.integration.test.util.AbstractIT;
+import org.apache.gravitino.integration.test.util.BaseIT;
 import org.apache.gravitino.integration.test.util.GravitinoITUtils;
 import org.apache.gravitino.integration.test.util.ITUtils;
 import org.apache.gravitino.integration.test.util.TestDatabaseName;
@@ -84,7 +86,7 @@ import org.junit.jupiter.api.condition.EnabledIf;
 
 @Tag("gravitino-docker-test")
 @TestInstance(Lifecycle.PER_CLASS)
-public class CatalogMysqlIT extends AbstractIT {
+public class CatalogMysqlIT extends BaseIT {
   private static final ContainerSuite containerSuite = ContainerSuite.getInstance();
   private static final String provider = "jdbc-mysql";
 
@@ -135,14 +137,16 @@ public class CatalogMysqlIT extends AbstractIT {
 
     mysqlService = new MysqlService(MYSQL_CONTAINER, TEST_DB_NAME);
     createMetalake();
-    createCatalog();
-    createSchema();
+    catalog = createCatalog(catalogName);
+    createSchema(catalog, schemaName);
   }
 
   @AfterAll
   public void stop() {
     clearTableAndSchema();
+    metalake.disableCatalog(catalogName);
     metalake.dropCatalog(catalogName);
+    client.disableMetalake(metalakeName);
     client.dropMetalake(metalakeName);
     mysqlService.close();
   }
@@ -150,7 +154,7 @@ public class CatalogMysqlIT extends AbstractIT {
   @AfterEach
   public void resetSchema() {
     clearTableAndSchema();
-    createSchema();
+    createSchema(catalog, schemaName);
   }
 
   private void clearTableAndSchema() {
@@ -166,23 +170,23 @@ public class CatalogMysqlIT extends AbstractIT {
     GravitinoMetalake[] gravitinoMetalakes = client.listMetalakes();
     Assertions.assertEquals(0, gravitinoMetalakes.length);
 
-    GravitinoMetalake createdMetalake =
-        client.createMetalake(metalakeName, "comment", Collections.emptyMap());
+    client.createMetalake(metalakeName, "comment", Collections.emptyMap());
     GravitinoMetalake loadMetalake = client.loadMetalake(metalakeName);
-    Assertions.assertEquals(createdMetalake, loadMetalake);
+    Assertions.assertEquals(metalakeName, loadMetalake.name());
 
     metalake = loadMetalake;
   }
 
-  private void createCatalog() throws SQLException {
+  private Catalog createCatalog(String catalogName) throws SQLException {
     Map<String, String> catalogProperties = Maps.newHashMap();
 
     catalogProperties.put(
         JdbcConfig.JDBC_URL.getKey(),
         StringUtils.substring(
-            MYSQL_CONTAINER.getJdbcUrl(TEST_DB_NAME),
-            0,
-            MYSQL_CONTAINER.getJdbcUrl(TEST_DB_NAME).lastIndexOf("/")));
+                MYSQL_CONTAINER.getJdbcUrl(TEST_DB_NAME),
+                0,
+                MYSQL_CONTAINER.getJdbcUrl(TEST_DB_NAME).lastIndexOf("/"))
+            + "?useSSL=false&allowPublicKeyRetrieval=true");
     catalogProperties.put(
         JdbcConfig.JDBC_DRIVER.getKey(), MYSQL_CONTAINER.getDriverClassName(TEST_DB_NAME));
     catalogProperties.put(JdbcConfig.USERNAME.getKey(), MYSQL_CONTAINER.getUsername());
@@ -194,10 +198,10 @@ public class CatalogMysqlIT extends AbstractIT {
     Catalog loadCatalog = metalake.loadCatalog(catalogName);
     Assertions.assertEquals(createdCatalog, loadCatalog);
 
-    catalog = loadCatalog;
+    return loadCatalog;
   }
 
-  private void createSchema() {
+  private void createSchema(Catalog catalog, String schemaName) {
     Map<String, String> prop = Maps.newHashMap();
 
     Schema createdSchema = catalog.asSchemas().createSchema(schemaName, schema_comment, prop);
@@ -253,6 +257,54 @@ public class CatalogMysqlIT extends AbstractIT {
     Map<String, String> properties = Maps.newHashMap();
     properties.put(GRAVITINO_ENGINE_KEY, "InnoDB");
     return properties;
+  }
+
+  @Test
+  void testDropCatalog() throws SQLException {
+    // test drop catalog with legacy entity
+    String catalogName = GravitinoITUtils.genRandomName("drop_catalog_it");
+    Catalog catalog = createCatalog(catalogName);
+    String schemaName = GravitinoITUtils.genRandomName("drop_catalog_it");
+    createSchema(catalog, schemaName);
+
+    metalake.disableCatalog(catalogName);
+    Assertions.assertThrows(
+        NonEmptyCatalogException.class, () -> metalake.dropCatalog(catalogName));
+
+    // drop database externally
+    String sql = String.format("DROP DATABASE %s", schemaName);
+    mysqlService.executeQuery(sql);
+
+    Assertions.assertTrue(metalake.dropCatalog(catalogName));
+  }
+
+  @Test
+  void testTestConnection() throws SQLException {
+    Map<String, String> catalogProperties = Maps.newHashMap();
+
+    catalogProperties.put(
+        JdbcConfig.JDBC_URL.getKey(),
+        StringUtils.substring(
+                MYSQL_CONTAINER.getJdbcUrl(TEST_DB_NAME),
+                0,
+                MYSQL_CONTAINER.getJdbcUrl(TEST_DB_NAME).lastIndexOf("/"))
+            + "?useSSL=false&allowPublicKeyRetrieval=true");
+    catalogProperties.put(
+        JdbcConfig.JDBC_DRIVER.getKey(), MYSQL_CONTAINER.getDriverClassName(TEST_DB_NAME));
+    catalogProperties.put(JdbcConfig.USERNAME.getKey(), MYSQL_CONTAINER.getUsername());
+    catalogProperties.put(JdbcConfig.PASSWORD.getKey(), "wrong_password");
+
+    Exception exception =
+        assertThrows(
+            ConnectionFailedException.class,
+            () ->
+                metalake.testConnection(
+                    GravitinoITUtils.genRandomName("mysql_it_catalog"),
+                    Catalog.Type.RELATIONAL,
+                    provider,
+                    "comment",
+                    catalogProperties));
+    Assertions.assertTrue(exception.getMessage().contains("Access denied for user"));
   }
 
   @Test
@@ -476,6 +528,8 @@ public class CatalogMysqlIT extends AbstractIT {
             + "  varchar200_col_1 varchar(200) default 'curdate()',\n"
             + "  varchar200_col_2 varchar(200) default (curdate()),\n"
             + "  varchar200_col_3 varchar(200) default (CURRENT_TIMESTAMP),\n"
+            + "  time_col_1 time default '00:00:00',\n"
+            + "  time_col_2 time default (now()),\n"
             + "  datetime_col_1 datetime default CURRENT_TIMESTAMP,\n"
             + "  datetime_col_2 datetime default current_timestamp,\n"
             + "  datetime_col_3 datetime default null,\n"
@@ -487,6 +541,7 @@ public class CatalogMysqlIT extends AbstractIT {
             + "  date_col_5 date DEFAULT '2024-04-01',\n"
             + "  timestamp_col_1 timestamp default '2012-12-31 11:30:45',\n"
             + "  timestamp_col_2 timestamp default 19830905,\n"
+            + "  timestamp_col_3 timestamp(6) default CURRENT_TIMESTAMP(6),\n"
             + "  decimal_6_2_col_1 decimal(6, 2) default 1.2,\n"
             + "  bit_col_1 bit default b'1'\n"
             + ");\n";
@@ -532,6 +587,12 @@ public class CatalogMysqlIT extends AbstractIT {
         case "varchar200_col_3":
           Assertions.assertEquals(UnparsedExpression.of("now()"), column.defaultValue());
           break;
+        case "time_col_1":
+          Assertions.assertEquals(Literals.timeLiteral("00:00:00"), column.defaultValue());
+          break;
+        case "time_col_2":
+          Assertions.assertEquals(UnparsedExpression.of("now()"), column.defaultValue());
+          break;
         case "datetime_col_1":
         case "datetime_col_2":
           Assertions.assertEquals(DEFAULT_VALUE_OF_CURRENT_TIMESTAMP, column.defaultValue());
@@ -568,6 +629,9 @@ public class CatalogMysqlIT extends AbstractIT {
           Assertions.assertEquals(
               Literals.timestampLiteral("1983-09-05T00:00:00"), column.defaultValue());
           break;
+        case "timestamp_col_3":
+          Assertions.assertEquals(DEFAULT_VALUE_OF_CURRENT_TIMESTAMP, column.defaultValue());
+          break;
         case "decimal_6_2_col_1":
           Assertions.assertEquals(
               Literals.decimalLiteral(Decimal.of("1.2", 6, 2)), column.defaultValue());
@@ -602,13 +666,27 @@ public class CatalogMysqlIT extends AbstractIT {
             + "  double_col double,\n"
             + "  date_col date,\n"
             + "  time_col time,\n"
+            + "  time_col_0 time(0),\n"
+            + "  time_col_1 time(1),\n"
+            + "  time_col_3 time(3),\n"
+            + "  time_col_6 time(6),\n"
             + "  timestamp_col timestamp,\n"
+            + "  timestamp_col_0 timestamp(0) default current_timestamp,\n"
+            + "  timestamp_col_1 timestamp(1) default current_timestamp(1),\n"
+            + "  timestamp_col_3 timestamp(3) default '2012-12-31 11:30:45.123',\n"
+            + "  timestamp_col_6 timestamp(6) default '2012-12-31 11:30:45.123456',\n"
             + "  datetime_col datetime,\n"
+            + "  datetime_col_0 datetime(0),\n"
+            + "  datetime_col_1 datetime(1),\n"
+            + "  datetime_col_3 datetime(3),\n"
+            + "  datetime_col_6 datetime(6),\n"
             + "  decimal_6_2_col decimal(6, 2),\n"
             + "  varchar20_col varchar(20),\n"
             + "  text_col text,\n"
             + "  binary_col binary,\n"
-            + "  blob_col blob\n"
+            + "  blob_col blob,\n"
+            + "  bit_col_8 bit(8),\n"
+            + "  bit_col bit\n"
             + ");\n";
 
     mysqlService.executeQuery(sql);
@@ -639,13 +717,43 @@ public class CatalogMysqlIT extends AbstractIT {
           Assertions.assertEquals(Types.DateType.get(), column.dataType());
           break;
         case "time_col":
-          Assertions.assertEquals(Types.TimeType.get(), column.dataType());
+        case "time_col_0":
+          Assertions.assertEquals(Types.TimeType.of(0), column.dataType());
+          break;
+        case "time_col_1":
+          Assertions.assertEquals(Types.TimeType.of(1), column.dataType());
+          break;
+        case "time_col_3":
+          Assertions.assertEquals(Types.TimeType.of(3), column.dataType());
+          break;
+        case "time_col_6":
+          Assertions.assertEquals(Types.TimeType.of(6), column.dataType());
           break;
         case "timestamp_col":
-          Assertions.assertEquals(Types.TimestampType.withTimeZone(), column.dataType());
+        case "timestamp_col_0":
+          Assertions.assertEquals(Types.TimestampType.withTimeZone(0), column.dataType());
+          break;
+        case "timestamp_col_1":
+          Assertions.assertEquals(Types.TimestampType.withTimeZone(1), column.dataType());
+          break;
+        case "timestamp_col_3":
+          Assertions.assertEquals(Types.TimestampType.withTimeZone(3), column.dataType());
+          break;
+        case "timestamp_col_6":
+          Assertions.assertEquals(Types.TimestampType.withTimeZone(6), column.dataType());
           break;
         case "datetime_col":
-          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(), column.dataType());
+        case "datetime_col_0":
+          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(0), column.dataType());
+          break;
+        case "datetime_col_1":
+          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(1), column.dataType());
+          break;
+        case "datetime_col_3":
+          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(3), column.dataType());
+          break;
+        case "datetime_col_6":
+          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(6), column.dataType());
           break;
         case "decimal_6_2_col":
           Assertions.assertEquals(Types.DecimalType.of(6, 2), column.dataType());
@@ -658,6 +766,12 @@ public class CatalogMysqlIT extends AbstractIT {
           break;
         case "binary_col":
           Assertions.assertEquals(Types.BinaryType.get(), column.dataType());
+          break;
+        case "bit_col_8":
+          Assertions.assertEquals(Types.BinaryType.get(), column.dataType());
+          break;
+        case "bit_col":
+          Assertions.assertEquals(Types.BooleanType.get(), column.dataType());
           break;
         case "blob_col":
           Assertions.assertEquals(Types.ExternalType.of("BLOB"), column.dataType());
@@ -800,7 +914,7 @@ public class CatalogMysqlIT extends AbstractIT {
             TableChange.updateColumnDefaultValue(
                 new String[] {columns[0].name()}, Literals.of("1.2345", Types.FloatType.get())),
             TableChange.updateColumnDefaultValue(
-                new String[] {columns[1].name()}, FunctionExpression.of("current_timestamp")),
+                new String[] {columns[1].name()}, DEFAULT_VALUE_OF_CURRENT_TIMESTAMP),
             TableChange.updateColumnDefaultValue(
                 new String[] {columns[2].name()}, Literals.of("hello", Types.VarCharType.of(255))),
             TableChange.updateColumnDefaultValue(
@@ -858,6 +972,23 @@ public class CatalogMysqlIT extends AbstractIT {
         () -> {
           schemas.loadSchema(schemaName);
         });
+
+    // test drop inconsistent database
+    catalog
+        .asSchemas()
+        .createSchema(schemaName, null, ImmutableMap.<String, String>builder().build());
+    catalog
+        .asTableCatalog()
+        .createTable(
+            NameIdentifier.of(schemaName, tableName),
+            createColumns(),
+            "Created by Gravitino client",
+            ImmutableMap.<String, String>builder().build());
+    // drop the table externally
+    mysqlService.executeQuery("DROP TABLE " + schemaName + "." + tableName);
+
+    // drop the schema without cascade
+    Assertions.assertTrue(catalog.asSchemas().dropSchema(schemaName, false));
   }
 
   @Test
@@ -933,7 +1064,7 @@ public class CatalogMysqlIT extends AbstractIT {
     Assertions.assertTrue(
         StringUtils.contains(
             illegalArgumentException.getMessage(),
-            "Index does not support complex fields in MySQL"));
+            "Index does not support complex fields in this Catalog"));
 
     Index[] indexes3 = new Index[] {Indexes.unique("u1_key", new String[][] {{"col_2", "col_3"}})};
     illegalArgumentException =
@@ -953,7 +1084,7 @@ public class CatalogMysqlIT extends AbstractIT {
     Assertions.assertTrue(
         StringUtils.contains(
             illegalArgumentException.getMessage(),
-            "Index does not support complex fields in MySQL"));
+            "Index does not support complex fields in this Catalog"));
 
     NameIdentifier tableIdent = NameIdentifier.of(schemaName, "test_null_key");
     tableCatalog.createTable(
@@ -974,6 +1105,112 @@ public class CatalogMysqlIT extends AbstractIT {
     Assertions.assertEquals(2, table.index().length);
     Assertions.assertNotNull(table.index()[0].name());
     Assertions.assertNotNull(table.index()[1].name());
+
+    NameIdentifier nullableTableIdent = NameIdentifier.of(schemaName, "test_nullable");
+    Column nullWithAutoIncrementCol =
+        Column.of("col_6", Types.LongType.get(), "id", true, true, null);
+
+    Exception uniqueKeyNotExistException =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                tableCatalog.createTable(
+                    nullableTableIdent,
+                    new Column[] {nullWithAutoIncrementCol},
+                    table_comment,
+                    properties,
+                    Transforms.EMPTY_TRANSFORM,
+                    Distributions.NONE,
+                    new SortOrder[0],
+                    new Index[] {
+                      Indexes.of(
+                          Index.IndexType.UNIQUE_KEY,
+                          "u_key",
+                          new String[][] {{"col_7"}, {"col_6"}}),
+                    }));
+    Assertions.assertTrue(
+        uniqueKeyNotExistException
+            .getMessage()
+            .contains("Column col_7 in the unique index u_key does not exist in the table"));
+
+    Exception uniqueKeyNotNullException =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                tableCatalog.createTable(
+                    nullableTableIdent,
+                    new Column[] {nullWithAutoIncrementCol},
+                    table_comment,
+                    properties,
+                    Transforms.EMPTY_TRANSFORM,
+                    Distributions.NONE,
+                    new SortOrder[0],
+                    new Index[] {
+                      Indexes.of(Index.IndexType.UNIQUE_KEY, "u_key", new String[][] {{"col_6"}}),
+                    }));
+    Assertions.assertTrue(
+        uniqueKeyNotNullException
+            .getMessage()
+            .contains(
+                "Auto increment column col_6 in the unique index u_key must be a not null column"));
+
+    Column nullWithoutAutoIncrementCol =
+        Column.of("col_7", Types.LongType.get(), "id", true, false, null);
+    tableCatalog.createTable(
+        nullableTableIdent,
+        new Column[] {nullWithoutAutoIncrementCol},
+        table_comment,
+        properties,
+        Transforms.EMPTY_TRANSFORM,
+        Distributions.NONE,
+        new SortOrder[0],
+        new Index[] {
+          Indexes.of(Index.IndexType.UNIQUE_KEY, "u_key", new String[][] {{"col_7"}}),
+        });
+    table = tableCatalog.loadTable(nullableTableIdent);
+
+    Assertions.assertEquals(1, table.index().length);
+    Assertions.assertNotNull(table.index()[0].name());
+
+    Exception primaryKeyNotExistexception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                tableCatalog.createTable(
+                    nullableTableIdent,
+                    new Column[] {nullWithoutAutoIncrementCol},
+                    table_comment,
+                    properties,
+                    Transforms.EMPTY_TRANSFORM,
+                    Distributions.NONE,
+                    new SortOrder[0],
+                    new Index[] {
+                      Indexes.createMysqlPrimaryKey(new String[][] {{"col_8"}}),
+                    }));
+    Assertions.assertTrue(
+        primaryKeyNotExistexception
+            .getMessage()
+            .contains("Column col_8 in the primary key does not exist in the table"));
+
+    Exception primaryKeyNotNullException =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                tableCatalog.createTable(
+                    nullableTableIdent,
+                    new Column[] {nullWithoutAutoIncrementCol},
+                    table_comment,
+                    properties,
+                    Transforms.EMPTY_TRANSFORM,
+                    Distributions.NONE,
+                    new SortOrder[0],
+                    new Index[] {
+                      Indexes.createMysqlPrimaryKey(new String[][] {{"col_7"}}),
+                    }));
+    Assertions.assertTrue(
+        primaryKeyNotNullException
+            .getMessage()
+            .contains("Column col_7 in the primary key must be a not null column"));
   }
 
   @Test
@@ -1508,7 +1745,14 @@ public class CatalogMysqlIT extends AbstractIT {
     Assertions.assertEquals(testSchemaName, schema.name());
 
     String[] schemaIdents = catalog.asSchemas().listSchemas();
-    Assertions.assertTrue(Arrays.stream(schemaIdents).anyMatch(s -> s.equals(testSchemaName)));
+    Assertions.assertTrue(Arrays.asList(schemaIdents).contains(testSchemaName));
+
+    Exception exception =
+        Assertions.assertThrows(
+            SchemaAlreadyExistsException.class,
+            () -> catalog.asSchemas().createSchema(testSchemaName, null, Collections.emptyMap()));
+    Assertions.assertTrue(
+        exception.getMessage().contains("Can't create database '//'; database exists"));
 
     Assertions.assertTrue(catalog.asSchemas().dropSchema(testSchemaName, false));
     Assertions.assertFalse(catalog.asSchemas().schemaExists(testSchemaName));
@@ -1656,13 +1900,13 @@ public class CatalogMysqlIT extends AbstractIT {
   }
 
   @Test
-  void testUnparsedTypeConverter() {
+  void testParsedBitTypeConverter() {
     String tableName = GravitinoITUtils.genRandomName("test_unparsed_type");
     mysqlService.executeQuery(
         String.format("CREATE TABLE %s.%s (bit_col bit);", schemaName, tableName));
     Table loadedTable =
         catalog.asTableCatalog().loadTable(NameIdentifier.of(schemaName, tableName));
-    Assertions.assertEquals(Types.ExternalType.of("BIT"), loadedTable.columns()[0].dataType());
+    Assertions.assertEquals(Types.BooleanType.get(), loadedTable.columns()[0].dataType());
   }
 
   @Test
@@ -1964,9 +2208,10 @@ public class CatalogMysqlIT extends AbstractIT {
     catalogProperties.put(
         JdbcConfig.JDBC_URL.getKey(),
         StringUtils.substring(
-            MYSQL_CONTAINER.getJdbcUrl(TEST_DB_NAME),
-            0,
-            MYSQL_CONTAINER.getJdbcUrl(TEST_DB_NAME).lastIndexOf("/")));
+                MYSQL_CONTAINER.getJdbcUrl(TEST_DB_NAME),
+                0,
+                MYSQL_CONTAINER.getJdbcUrl(TEST_DB_NAME).lastIndexOf("/"))
+            + "?useSSL=false&allowPublicKeyRetrieval=true");
     catalogProperties.put(
         JdbcConfig.JDBC_DRIVER.getKey(), MYSQL_CONTAINER.getDriverClassName(TEST_DB_NAME));
     catalogProperties.put(JdbcConfig.USERNAME.getKey(), MYSQL_CONTAINER.getUsername());
@@ -1987,6 +2232,84 @@ public class CatalogMysqlIT extends AbstractIT {
     Assertions.assertDoesNotThrow(() -> loadCatalog.asSchemas().createSchema("test", "", null));
 
     loadCatalog.asSchemas().dropSchema("test", true);
-    metalake.dropCatalog(testCatalogName);
+    metalake.dropCatalog(testCatalogName, true);
+  }
+
+  @Test
+  void testTimeTypePrecision() {
+    // Test different time type precisions
+    String tableName = GravitinoITUtils.genRandomName("test_time_precision");
+    String fullTableName = schemaName + "." + tableName;
+    String sql =
+        "CREATE TABLE "
+            + fullTableName
+            + " (\n"
+            + "  time_no_precision time,\n"
+            + "  time_precision_0 time(0),\n"
+            + "  time_precision_1 time(1),\n"
+            + "  time_precision_3 time(3),\n"
+            + "  time_precision_6 time(6),\n"
+            + "  datetime_no_precision datetime,\n"
+            + "  datetime_precision_0 datetime(0),\n"
+            + "  datetime_precision_1 datetime(1),\n"
+            + "  datetime_precision_3 datetime(3),\n"
+            + "  datetime_precision_6 datetime(6),\n"
+            + "  timestamp_no_precision timestamp,\n"
+            + "  timestamp_precision_0 timestamp(0) default current_timestamp,\n"
+            + "  timestamp_precision_1 timestamp(1) default current_timestamp(1),\n"
+            + "  timestamp_precision_3 timestamp(3) default '2012-12-31 11:30:45.123',\n"
+            + "  timestamp_precision_6 timestamp(6) default '2012-12-31 11:30:45.123456'\n"
+            + ");\n";
+
+    mysqlService.executeQuery(sql);
+    Table loadedTable =
+        catalog.asTableCatalog().loadTable(NameIdentifier.of(schemaName, tableName));
+
+    // Verify time type precisions
+    for (Column column : loadedTable.columns()) {
+      switch (column.name()) {
+        case "time_no_precision":
+        case "time_precision_0":
+          Assertions.assertEquals(Types.TimeType.of(0), column.dataType());
+          break;
+        case "time_precision_1":
+          Assertions.assertEquals(Types.TimeType.of(1), column.dataType());
+          break;
+        case "time_precision_3":
+          Assertions.assertEquals(Types.TimeType.of(3), column.dataType());
+          break;
+        case "time_precision_6":
+          Assertions.assertEquals(Types.TimeType.of(6), column.dataType());
+          break;
+        case "datetime_no_precision":
+        case "datetime_precision_0":
+          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(0), column.dataType());
+          break;
+        case "datetime_precision_1":
+          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(1), column.dataType());
+          break;
+        case "datetime_precision_3":
+          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(3), column.dataType());
+          break;
+        case "datetime_precision_6":
+          Assertions.assertEquals(Types.TimestampType.withoutTimeZone(6), column.dataType());
+          break;
+        case "timestamp_no_precision":
+        case "timestamp_precision_0":
+          Assertions.assertEquals(Types.TimestampType.withTimeZone(0), column.dataType());
+          break;
+        case "timestamp_precision_1":
+          Assertions.assertEquals(Types.TimestampType.withTimeZone(1), column.dataType());
+          break;
+        case "timestamp_precision_3":
+          Assertions.assertEquals(Types.TimestampType.withTimeZone(3), column.dataType());
+          break;
+        case "timestamp_precision_6":
+          Assertions.assertEquals(Types.TimestampType.withTimeZone(6), column.dataType());
+          break;
+        default:
+          Assertions.fail("Unexpected column name: " + column.name());
+      }
+    }
   }
 }

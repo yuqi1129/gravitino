@@ -31,17 +31,54 @@ class Catalog(Auditable):
     class Type(Enum):
         """The type of the catalog."""
 
-        RELATIONAL = "relational"
+        RELATIONAL = ("relational", False)
         """"Catalog Type for Relational Data Structure, like db.table, catalog.db.table."""
 
-        FILESET = "fileset"
+        FILESET = ("fileset", True)
         """Catalog Type for Fileset System (including HDFS, S3, etc.), like path/to/file"""
 
-        MESSAGING = "messaging"
+        MESSAGING = ("messaging", False)
         """Catalog Type for Message Queue, like kafka://topic"""
 
-        UNSUPPORTED = "unsupported"
+        MODEL = ("model", True)
+        """Catalog Type for ML model"""
+
+        UNSUPPORTED = ("unsupported", False)
         """Catalog Type for test only."""
+
+        def __init__(self, type_name, supports_managed_catalog):
+            self._type_name = type_name
+            self._supports_managed_catalog = supports_managed_catalog
+
+        @classmethod
+        def type_serialize(cls, catalog_type):
+            return catalog_type.type_name
+
+        @classmethod
+        def type_deserialize(cls, type_name):
+            for member in cls:
+                if member.type_name == type_name:
+                    return member
+            return cls.UNSUPPORTED
+
+        @property
+        def supports_managed_catalog(self):
+            """
+            A flag to indicate if the catalog type supports managed catalog. Managed catalog is a
+            concept in Gravitino, which means Gravitino will manage the lifecycle of the catalog
+            and its subsidiaries. If the catalog type supports managed catalog, users can create
+            managed catalog of this type without specifying the catalog provider, Gravitino will
+            use the type as the provider to create the managed catalog. If the catalog type does
+            not support managed catalog, users need to specify the provider to create the catalog.
+            """
+            return self._supports_managed_catalog
+
+        @property
+        def type_name(self):
+            """
+            The name of the catalog type.
+            """
+            return self._type_name
 
     PROPERTY_PACKAGE = "package"
     """A reserved property to specify the package location of the catalog. The "package" is a string
@@ -110,7 +147,7 @@ class Catalog(Auditable):
             "Catalog does not support schema operations"
         )
 
-    def as_table_catalog(self) -> "TableCatalog":
+    def as_table_catalog(self) -> "TableCatalog":  # noqa: F821
         """
         Raises:
             UnsupportedOperationException if the catalog does not support table operations.
@@ -120,7 +157,7 @@ class Catalog(Auditable):
         """
         raise UnsupportedOperationException("Catalog does not support table operations")
 
-    def as_fileset_catalog(self) -> "FilesetCatalog":
+    def as_fileset_catalog(self) -> "FilesetCatalog":  # noqa: F821
         """
         Raises:
             UnsupportedOperationException if the catalog does not support fileset operations.
@@ -132,7 +169,7 @@ class Catalog(Auditable):
             "Catalog does not support fileset operations"
         )
 
-    def as_topic_catalog(self) -> "TopicCatalog":
+    def as_topic_catalog(self) -> "TopicCatalog":  # noqa: F821
         """
         Returns:
             the {@link TopicCatalog} if the catalog supports topic operations.
@@ -141,6 +178,16 @@ class Catalog(Auditable):
             UnsupportedOperationException if the catalog does not support topic operations.
         """
         raise UnsupportedOperationException("Catalog does not support topic operations")
+
+    def as_model_catalog(self) -> "ModelCatalog":  # noqa: F821
+        """
+        Returns:
+            the {@link ModelCatalog} if the catalog supports model operations.
+
+        Raises:
+            UnsupportedOperationException if the catalog does not support model operations.
+        """
+        raise UnsupportedOperationException("Catalog does not support model operations")
 
 
 class UnsupportedOperationException(Exception):

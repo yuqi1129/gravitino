@@ -58,10 +58,12 @@ import org.apache.gravitino.rel.Table;
 import org.apache.gravitino.rel.TableCatalog;
 import org.apache.gravitino.rel.TableChange;
 import org.apache.gravitino.rel.expressions.distributions.Distribution;
+import org.apache.gravitino.rel.expressions.distributions.Distributions;
 import org.apache.gravitino.rel.expressions.sorts.SortOrder;
 import org.apache.gravitino.rel.expressions.transforms.Transform;
 import org.apache.gravitino.rel.indexes.Index;
 import org.apache.gravitino.utils.MapUtils;
+import org.apache.gravitino.utils.PrincipalUtils;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.NamespaceNotEmptyException;
@@ -512,6 +514,13 @@ public class IcebergCatalogOperations implements CatalogOperations, SupportsSche
                           .build())
               .toArray(IcebergColumn[]::new);
 
+      // Gravitino NONE distribution means the client side doesn't specify distribution, which is
+      // not the same as none distribution in Iceberg.
+      if (Distributions.NONE.equals(distribution)) {
+        distribution =
+            getIcebergDefaultDistribution(sortOrders.length > 0, partitioning.length > 0);
+      }
+
       IcebergTable createdTable =
           IcebergTable.builder()
               .withName(tableIdent.name())
@@ -587,8 +596,17 @@ public class IcebergCatalogOperations implements CatalogOperations, SupportsSche
     }
   }
 
-  // TODO. We should figure out a better way to get the current user from servlet container.
+  private static Distribution getIcebergDefaultDistribution(
+      boolean isSorted, boolean isPartitioned) {
+    if (isSorted) {
+      return Distributions.RANGE;
+    } else if (isPartitioned) {
+      return Distributions.HASH;
+    }
+    return Distributions.NONE;
+  }
+
   private static String currentUser() {
-    return System.getProperty("user.name");
+    return PrincipalUtils.getCurrentUserName();
   }
 }

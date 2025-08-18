@@ -23,6 +23,8 @@ import java.io.File;
 import java.util.Collections;
 import java.util.List;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.gravitino.audit.FileAuditWriter;
+import org.apache.gravitino.audit.v2.SimpleFormatterV2;
 import org.apache.gravitino.config.ConfigBuilder;
 import org.apache.gravitino.config.ConfigConstants;
 import org.apache.gravitino.config.ConfigEntry;
@@ -31,12 +33,8 @@ public class Configs {
 
   private Configs() {}
 
-  public static final String KV_STORE_KEY = "kv";
   public static final String RELATIONAL_ENTITY_STORE = "relational";
   public static final String ENTITY_STORE_KEY = "gravitino.entity.store";
-
-  public static final String DEFAULT_ENTITY_KV_STORE = "RocksDBKvBackend";
-  public static final String ENTITY_KV_STORE_KEY = "gravitino.entity.store.kv";
 
   public static final String DEFAULT_ENTITY_RELATIONAL_STORE = "JDBCBackend";
   public static final String ENTITY_RELATIONAL_STORE_KEY = "gravitino.entity.store.relational";
@@ -50,21 +48,22 @@ public class Configs {
   public static final String ENTITY_RELATIONAL_JDBC_BACKEND_PASSWORD_KEY =
       "gravitino.entity.store.relational.jdbcPassword";
 
+  public static final String ENTITY_RELATIONAL_JDBC_BACKEND_MAX_CONNECTION_KEYS =
+      "gravitino.entity.store.relational.maxConnections";
+
+  public static final String ENTITY_RELATIONAL_JDBC_BACKEND_MAX_WAIT_MILLIS_CONNECTION_KEY =
+      "gravitino.entity.store.relational.maxWaitMillis";
+
   public static final String ENTITY_RELATIONAL_JDBC_BACKEND_STORAGE_PATH_KEY =
       "gravitino.entity.store.relational.storagePath";
 
-  public static final String ENTITY_KV_ROCKSDB_BACKEND_PATH_KEY =
-      "gravitino.entity.store.kv.rocksdbPath";
-
-  public static final Long DEFAULT_KV_DELETE_AFTER_TIME = 604800000L; // 7 days
-  public static final String KV_DELETE_AFTER_TIME_KEY =
-      "gravitino.entity.store.kv.deleteAfterTimeMs";
+  public static final Long DEFAULT_DELETE_AFTER_TIME = 604800000L; // 7 days
 
   // Config for data keep time after soft deletion, in milliseconds.
   public static final String STORE_DELETE_AFTER_TIME_KEY =
       "gravitino.entity.store.deleteAfterTimeMs";
   // using the fallback default value
-  public static final Long DEFAULT_STORE_DELETE_AFTER_TIME = DEFAULT_KV_DELETE_AFTER_TIME;
+  public static final Long DEFAULT_STORE_DELETE_AFTER_TIME = DEFAULT_DELETE_AFTER_TIME;
   // The maximum allowed keep time for data deletion, in milliseconds. Equivalent to 30 days.
   public static final Long MAX_DELETE_TIME_ALLOW = 1000 * 60 * 60 * 24 * 30L;
   // The minimum allowed keep time for data deletion, in milliseconds. Equivalent to 10 minutes.
@@ -80,10 +79,6 @@ public class Configs {
   // The minimum allowed count of versions to be retained
   public static final Long MIN_VERSION_RETENTION_COUNT = 1L;
 
-  // Default path for RocksDB backend is "${GRAVITINO_HOME}/data/rocksdb"
-  public static final String DEFAULT_KV_ROCKSDB_BACKEND_PATH =
-      String.join(File.separator, System.getenv("GRAVITINO_HOME"), "data", "rocksdb");
-
   public static final String DEFAULT_RELATIONAL_JDBC_BACKEND_PATH =
       String.join(File.separator, System.getenv("GRAVITINO_HOME"), "data", "jdbc");
 
@@ -94,6 +89,10 @@ public class Configs {
   public static final String DEFAULT_RELATIONAL_JDBC_BACKEND_USERNAME = "gravitino";
 
   public static final String DEFAULT_RELATIONAL_JDBC_BACKEND_PASSWORD = "gravitino";
+
+  public static final int DEFAULT_RELATIONAL_JDBC_BACKEND_MAX_CONNECTIONS = 100;
+
+  public static final long DEFAULT_RELATIONAL_JDBC_BACKEND_MAX_WAIT_MILLISECONDS = 1000L;
 
   public static final int GARBAGE_COLLECTOR_SINGLE_DELETION_LIMIT = 100;
   public static final long MAX_NODE_IN_MEMORY = 100000L;
@@ -108,13 +107,6 @@ public class Configs {
           .version(ConfigConstants.VERSION_0_1_0)
           .stringConf()
           .createWithDefault(RELATIONAL_ENTITY_STORE);
-
-  public static final ConfigEntry<String> ENTITY_KV_STORE =
-      new ConfigBuilder(ENTITY_KV_STORE_KEY)
-          .doc("Detailed implementation of Kv storage")
-          .version(ConfigConstants.VERSION_0_1_0)
-          .stringConf()
-          .createWithDefault(DEFAULT_ENTITY_KV_STORE);
 
   public static final ConfigEntry<String> ENTITY_RELATIONAL_STORE =
       new ConfigBuilder(ENTITY_RELATIONAL_STORE_KEY)
@@ -155,6 +147,21 @@ public class Configs {
           .stringConf()
           .createWithDefault(DEFAULT_RELATIONAL_JDBC_BACKEND_PASSWORD);
 
+  public static final ConfigEntry<Integer> ENTITY_RELATIONAL_JDBC_BACKEND_MAX_CONNECTIONS =
+      new ConfigBuilder(ENTITY_RELATIONAL_JDBC_BACKEND_MAX_CONNECTION_KEYS)
+          .doc("The maximum number of connections for the JDBC Backend connection pool")
+          .version(ConfigConstants.VERSION_0_9_0)
+          .intConf()
+          .createWithDefault(DEFAULT_RELATIONAL_JDBC_BACKEND_MAX_CONNECTIONS);
+
+  public static final ConfigEntry<Long> ENTITY_RELATIONAL_JDBC_BACKEND_WAIT_MILLISECONDS =
+      new ConfigBuilder(ENTITY_RELATIONAL_JDBC_BACKEND_MAX_WAIT_MILLIS_CONNECTION_KEY)
+          .doc(
+              "The maximum wait time in milliseconds for a connection from the JDBC Backend connection pool")
+          .version(ConfigConstants.VERSION_0_9_0)
+          .longConf()
+          .createWithDefault(DEFAULT_RELATIONAL_JDBC_BACKEND_MAX_WAIT_MILLISECONDS);
+
   public static final ConfigEntry<String> ENTITY_RELATIONAL_JDBC_BACKEND_PATH =
       new ConfigBuilder(ENTITY_RELATIONAL_JDBC_BACKEND_STORAGE_PATH_KEY)
           .doc(
@@ -165,24 +172,6 @@ public class Configs {
           .version(ConfigConstants.VERSION_0_6_0)
           .stringConf()
           .createWithDefault(DEFAULT_RELATIONAL_JDBC_BACKEND_PATH);
-
-  public static final ConfigEntry<String> ENTITY_KV_ROCKSDB_BACKEND_PATH =
-      new ConfigBuilder(ENTITY_KV_ROCKSDB_BACKEND_PATH_KEY)
-          .doc(
-              "The storage path for RocksDB storage implementation. It supports both absolute and"
-                  + " relative path, if the value is a relative path, the final path is "
-                  + "`${GRAVITINO_HOME}/${PATH_YOU_HAVA_SET}`, default value is "
-                  + "`${GRAVITINO_HOME}/data/rocksdb`")
-          .version(ConfigConstants.VERSION_0_1_0)
-          .stringConf()
-          .createWithDefault(DEFAULT_KV_ROCKSDB_BACKEND_PATH);
-
-  public static final ConfigEntry<String> ENTITY_SERDE =
-      new ConfigBuilder("gravitino.entity.serde")
-          .doc("The entity SerDe to use")
-          .version(ConfigConstants.VERSION_0_1_0)
-          .stringConf()
-          .createWithDefault("proto");
 
   public static final ConfigEntry<Long> CATALOG_CACHE_EVICTION_INTERVAL_MS =
       new ConfigBuilder("gravitino.catalog.cache.evictionIntervalMs")
@@ -230,24 +219,6 @@ public class Configs {
           .longConf()
           .createWithDefault(2000L);
 
-  public static final ConfigEntry<Long> KV_DELETE_AFTER_TIME =
-      new ConfigBuilder(KV_DELETE_AFTER_TIME_KEY)
-          .doc(
-              String.format(
-                  "The maximum time in milliseconds that the deleted data and old version data is kept, "
-                      + "max delete time allow is %s ms(30 days), "
-                      + "min delete time allow is %s ms(10 minutes)",
-                  MAX_DELETE_TIME_ALLOW, MIN_DELETE_TIME_ALLOW))
-          .version(ConfigConstants.VERSION_0_5_0)
-          .deprecated()
-          .longConf()
-          .checkValue(
-              v -> v >= MIN_DELETE_TIME_ALLOW && v <= MAX_DELETE_TIME_ALLOW,
-              String.format(
-                  "The value of %s is out of range, which must be between %s and %s",
-                  KV_DELETE_AFTER_TIME_KEY, MIN_DELETE_TIME_ALLOW, MAX_DELETE_TIME_ALLOW))
-          .createWithDefault(DEFAULT_KV_DELETE_AFTER_TIME);
-
   public static final ConfigEntry<Long> STORE_DELETE_AFTER_TIME =
       new ConfigBuilder(STORE_DELETE_AFTER_TIME_KEY)
           .doc(
@@ -257,7 +228,6 @@ public class Configs {
                       + "min delete time allow is %s ms(10 minutes)",
                   MAX_DELETE_TIME_ALLOW, MIN_DELETE_TIME_ALLOW))
           .version(ConfigConstants.VERSION_0_5_0)
-          .alternatives(Lists.newArrayList(KV_DELETE_AFTER_TIME_KEY))
           .longConf()
           .checkValue(
               v -> v >= MIN_DELETE_TIME_ALLOW && v <= MAX_DELETE_TIME_ALLOW,
@@ -315,6 +285,13 @@ public class Configs {
           .booleanConf()
           .createWithDefault(false);
 
+  public static final ConfigEntry<String> AUTHORIZATION_IMPL =
+      new ConfigBuilder("gravitino.authorization.impl")
+          .doc("Metadata authorization implementation")
+          .version(ConfigConstants.VERSION_1_0_0)
+          .stringConf()
+          .createWithDefault("org.apache.gravitino.server.authorization.jcasbin.JcasbinAuthorizer");
+
   public static final ConfigEntry<List<String>> SERVICE_ADMINS =
       new ConfigBuilder("gravitino.authorization.serviceAdmins")
           .doc("The admins of Gravitino service")
@@ -342,4 +319,130 @@ public class Configs {
           .stringConf()
           .toSequence()
           .createWithDefault(Collections.emptyList());
+
+  public static final String AUDIT_LOG_WRITER_CONFIG_PREFIX = "gravitino.audit.writer.";
+
+  public static final ConfigEntry<Boolean> AUDIT_LOG_ENABLED_CONF =
+      new ConfigBuilder("gravitino.audit.enabled")
+          .doc("Gravitino audit log enable flag")
+          .version(ConfigConstants.VERSION_0_7_0)
+          .booleanConf()
+          .createWithDefault(false);
+
+  public static final ConfigEntry<String> AUDIT_LOG_WRITER_CLASS_NAME =
+      new ConfigBuilder("gravitino.audit.writer.className")
+          .doc("Gravitino audit log writer class name")
+          .version(ConfigConstants.VERSION_0_7_0)
+          .stringConf()
+          .createWithDefault(FileAuditWriter.class.getName());
+
+  public static final ConfigEntry<String> AUDIT_LOG_FORMATTER_CLASS_NAME =
+      new ConfigBuilder("gravitino.audit.formatter.className")
+          .doc("Gravitino event log formatter class name")
+          .version(ConfigConstants.VERSION_0_7_0)
+          .stringConf()
+          .createWithDefault(SimpleFormatterV2.class.getName());
+
+  public static final ConfigEntry<List<String>> VISIBLE_CONFIGS =
+      new ConfigBuilder("gravitino.server.visibleConfigs")
+          .doc("List of configs that are visible in the config servlet")
+          .version(ConfigConstants.VERSION_0_9_0)
+          .stringConf()
+          .toSequence()
+          .createWithDefault(Collections.emptyList());
+
+  // Whether to enable cache store
+  public static final ConfigEntry<Boolean> CACHE_ENABLED =
+      new ConfigBuilder("gravitino.cache.enabled")
+          .doc("Whether to enable the cached Entity store.")
+          .version(ConfigConstants.VERSION_1_0_0)
+          .booleanConf()
+          .createWithDefault(true);
+
+  // Maximum number of entries in the cache
+  public static final ConfigEntry<Integer> CACHE_MAX_ENTRIES =
+      new ConfigBuilder("gravitino.cache.maxEntries")
+          .doc("Maximum number of entries allowed in the cache.")
+          .version(ConfigConstants.VERSION_1_0_0)
+          .intConf()
+          .checkValue(value -> value > 0, ConfigConstants.POSITIVE_NUMBER_ERROR_MSG)
+          .createWithDefault(10_000);
+
+  // Cache entry expiration time
+  public static final ConfigEntry<Long> CACHE_EXPIRATION_TIME =
+      new ConfigBuilder("gravitino.cache.expireTimeInMs")
+          .doc(
+              "Time-to-live (TTL) for each cache entry after it is written, in milliseconds."
+                  + "Default is 3,600,000 ms (1 hour).")
+          .version(ConfigConstants.VERSION_1_0_0)
+          .longConf()
+          .checkValue(value -> value >= 0, ConfigConstants.POSITIVE_NUMBER_ERROR_MSG)
+          .createWithDefault(3_600_000L);
+
+  // Whether to enable cache statistics logging
+  public static final ConfigEntry<Boolean> CACHE_STATS_ENABLED =
+      new ConfigBuilder("gravitino.cache.enableStats")
+          .doc(
+              "Whether to enable cache statistics logging such as hit/miss count, load failures, and size.")
+          .version(ConfigConstants.VERSION_1_0_0)
+          .booleanConf()
+          .createWithDefault(false);
+
+  // Whether to enable weighted cache
+  public static final ConfigEntry<Boolean> CACHE_WEIGHER_ENABLED =
+      new ConfigBuilder("gravitino.cache.enableWeigher")
+          .doc(
+              "Whether to enable weighted cache eviction. "
+                  + "Entries are evicted based on weight instead of count.")
+          .version(ConfigConstants.VERSION_1_0_0)
+          .booleanConf()
+          .createWithDefault(true);
+
+  // Provider name for cache
+  public static final ConfigEntry<String> CACHE_IMPLEMENTATION =
+      new ConfigBuilder("gravitino.cache.implementation")
+          .doc("Which cache implementation to use")
+          .version(ConfigConstants.VERSION_1_0_0)
+          .stringConf()
+          .checkValue(StringUtils::isNotBlank, ConfigConstants.NOT_BLANK_ERROR_MSG)
+          .createWithDefault("caffeine");
+
+  public static final ConfigEntry<String> JOB_STAGING_DIR =
+      new ConfigBuilder("gravitino.job.stagingDir")
+          .doc("Directory for managing staging files when running jobs.")
+          .version(ConfigConstants.VERSION_1_0_0)
+          .stringConf()
+          .checkValue(StringUtils::isNotBlank, ConfigConstants.NOT_BLANK_ERROR_MSG)
+          .createWithDefault("/tmp/gravitino/jobs/staging");
+
+  public static final ConfigEntry<String> JOB_EXECUTOR =
+      new ConfigBuilder("gravitino.job.executor")
+          .doc(
+              "The executor to run jobs, by default it is 'local', user can implement their own "
+                  + "executor and set it here.")
+          .version(ConfigConstants.VERSION_1_0_0)
+          .stringConf()
+          .checkValue(StringUtils::isNotBlank, ConfigConstants.NOT_BLANK_ERROR_MSG)
+          .createWithDefault("local");
+
+  public static final ConfigEntry<Long> JOB_STAGING_DIR_KEEP_TIME_IN_MS =
+      new ConfigBuilder("gravitino.job.stagingDirKeepTimeInMs")
+          .doc(
+              "The time in milliseconds to keep the staging files of the finished job in the job"
+                  + " staging directory. The minimum recommended value is 10 minutes if you're "
+                  + "not testing.")
+          .version(ConfigConstants.VERSION_1_0_0)
+          .longConf()
+          .checkValue(value -> value > 0, ConfigConstants.POSITIVE_NUMBER_ERROR_MSG)
+          .createWithDefault(7 * 24 * 3600 * 1000L); // Default is 7 days
+
+  public static final ConfigEntry<Long> JOB_STATUS_PULL_INTERVAL_IN_MS =
+      new ConfigBuilder("gravitino.job.statusPullIntervalInMs")
+          .doc(
+              "The interval in milliseconds to pull the job status from the job executor. The "
+                  + "minimum recommended value is 1 minute if you're not testing.")
+          .version(ConfigConstants.VERSION_1_0_0)
+          .longConf()
+          .checkValue(value -> value > 0, ConfigConstants.POSITIVE_NUMBER_ERROR_MSG)
+          .createWithDefault(5 * 60 * 1000L); // Default is 5 minutes
 }

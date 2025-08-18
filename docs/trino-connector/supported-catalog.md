@@ -131,12 +131,16 @@ call gravitino.system.create_catalog(
     'hive',
     map(
         array['metastore.uris', 'trino.bypass.hive.config.resources'],
-        array['thrift://trino-ci-hive:9083', "/tmp/hive-site.xml,/tmp/core-site.xml"]
+        array['thrift://trino-ci-hive:9083', '/tmp/hive-site.xml,/tmp/core-site.xml']
     )
 );
 ```
 
 A prefix with `trino.bypass.` in the configuration key is used to indicate Gravitino Trino connector to pass the Trino connector configuration to the Gravitino catalog in the Trino runtime.
+
+Note that if Trino connector properties directly inherit values from a Gravitino catalog, these configurations cannot be overridden through any `trino.bypass.*` properties.
+For example, the Trino MySQL connector properties `connection-url`, `connection-user` and `connection-password` directly inherit the `jdbc-url`, `jdbc-user` and `jdbc-password` values defined in the Gravitino MySQL catalog.
+Therefore, defining `trino.bypass.connection-url`, `trino.bypass.connection-user` or `trino.bypass.connection-password` will be ommitted and does not take effect.
 
 More Trino connector configurations can refer to:
 - [Hive catalog](https://trino.io/docs/current/connector/hive.html#hive-general-configuration-properties)
@@ -149,24 +153,26 @@ More Trino connector configurations can refer to:
 Gravitino Trino connector supports the following data type conversions between Trino and Gravitino currently. Depending on the detailed catalog, Gravitino may not support some data types conversion for this specific catalog, for example,
 Hive does not support `TIME` data type.
 
-| Gravitino Type | Trino Type |
-|----------------|------------|
-| BooleanType    | BOOLEAN    |
-| ByteType       | TINYINT    |
-| ShortType      | SMALLINT   |
-| IntegerType    | INTEGER    |
-| LongType       | BIGINT     |
-| FloatType      | REAL       |
-| DoubleType     | DOUBLE     |
-| DecimalType    | DECIMAL    |
-| StringType     | VARCHAR    |
-| VarcharType    | VARCHAR    |
-| BinaryType     | VARBINARY  |
-| DateType       | DATE       |
-| TimeType       | TIME       |
-| TimestampType  | TIMESTAMP  |
-| ArrayType      | ARRAY      |
-| MapType        | MAP        |
-| StructType     | ROW        |
+| Gravitino Type        | Trino Type               |
+|-----------------------|--------------------------|
+| Boolean               | BOOLEAN                  |
+| Byte                  | TINYINT                  |
+| Short                 | SMALLINT                 |
+| Integer               | INTEGER                  |
+| Long                  | BIGINT                   |
+| Float                 | REAL                     |
+| Double                | DOUBLE                   |
+| Decimal               | DECIMAL                  |
+| String                | VARCHAR                  |
+| Varchar               | VARCHAR                  |
+| FixedChar             | CHAR                     |
+| Binary                | VARBINARY                |
+| Date                  | DATE                     |
+| Time                  | TIME                     |
+| Timestamp             | TIMESTAMP                |
+| TimestampWithTimezone | TIMESTAMP WITH TIME ZONE |
+| List                  | ARRAY                    |
+| Map                   | MAP                      |
+| Struct                | ROW                      |
 
-For more about Trino data types, please refer to [Trino data types](https://trino.io/docs/current/language/types.html) and Gravitino data types, please refer to [Gravitino data types](../manage-relational-metadata-using-gravitino.md#gravitino-table-column-type).
+For more about Trino data types, please refer to [Trino data types](https://trino.io/docs/current/language/types.html) and Gravitino data types, please refer to [Gravitino data types](../manage-relational-metadata-using-gravitino.md#apache-gravitino-table-column-type).

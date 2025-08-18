@@ -50,6 +50,14 @@ public class TestFilesetOperationDispatcher extends TestOperationDispatcher {
         new FilesetOperationDispatcher(catalogManager, entityStore, idGenerator);
   }
 
+  public static FilesetOperationDispatcher getFilesetOperationDispatcher() {
+    return filesetOperationDispatcher;
+  }
+
+  public static SchemaOperationDispatcher getSchemaOperationDispatcher() {
+    return schemaOperationDispatcher;
+  }
+
   @Test
   public void testCreateAndListFilesets() {
     Namespace filesetNs = Namespace.of(metalake, catalog, "schema81");
@@ -75,14 +83,14 @@ public class TestFilesetOperationDispatcher extends TestOperationDispatcher {
         () ->
             filesetOperationDispatcher.createFileset(
                 filesetIdent1, "comment", Fileset.Type.MANAGED, "test", illegalProps),
-        "Properties are required and must be set");
+        "Properties or property prefixes are required and must be set");
 
     Map<String, String> illegalProps2 = ImmutableMap.of("k1", "v1", ID_KEY, "test");
     testPropertyException(
         () ->
             filesetOperationDispatcher.createFileset(
                 filesetIdent1, "comment", Fileset.Type.MANAGED, "test", illegalProps2),
-        "Properties are reserved and cannot be set",
+        "Properties or property prefixes are reserved and cannot be set",
         "gravitino.identifier");
   }
 
@@ -143,7 +151,7 @@ public class TestFilesetOperationDispatcher extends TestOperationDispatcher {
     Assertions.assertEquals(fileset1.name(), alteredFileset2.name());
     Assertions.assertEquals("new comment", alteredFileset2.comment());
 
-    FilesetChange[] changes3 = new FilesetChange[] {FilesetChange.removeComment()};
+    FilesetChange[] changes3 = new FilesetChange[] {FilesetChange.updateComment(null)};
 
     Fileset alteredFileset3 = filesetOperationDispatcher.alterFileset(filesetIdent1, changes3);
     Assertions.assertEquals(fileset1.name(), alteredFileset3.name());

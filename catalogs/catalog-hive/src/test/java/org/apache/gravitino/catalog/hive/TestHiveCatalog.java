@@ -21,7 +21,7 @@ package org.apache.gravitino.catalog.hive;
 import static org.apache.gravitino.catalog.hive.HiveCatalog.CATALOG_PROPERTIES_METADATA;
 import static org.apache.gravitino.catalog.hive.HiveCatalog.SCHEMA_PROPERTIES_METADATA;
 import static org.apache.gravitino.catalog.hive.HiveCatalog.TABLE_PROPERTIES_METADATA;
-import static org.apache.gravitino.catalog.hive.HiveCatalogPropertiesMeta.METASTORE_URIS;
+import static org.apache.gravitino.catalog.hive.HiveCatalogPropertiesMetadata.METASTORE_URIS;
 
 import com.google.common.collect.Maps;
 import java.time.Instant;
@@ -65,6 +65,17 @@ public class TestHiveCatalog extends MiniHiveMetastoreService {
         @Override
         public PropertiesMetadata topicPropertiesMetadata() throws UnsupportedOperationException {
           throw new UnsupportedOperationException("Topic properties are not supported");
+        }
+
+        @Override
+        public PropertiesMetadata modelPropertiesMetadata() throws UnsupportedOperationException {
+          throw new UnsupportedOperationException("Model properties are not supported");
+        }
+
+        @Override
+        public PropertiesMetadata modelVersionPropertiesMetadata()
+            throws UnsupportedOperationException {
+          throw new UnsupportedOperationException("Does not support model version properties");
         }
       };
 
@@ -120,6 +131,8 @@ public class TestHiveCatalog extends MiniHiveMetastoreService {
         throwable
             .getMessage()
             .contains(
-                String.format("Properties are required and must be set: [%s]", METASTORE_URIS)));
+                String.format(
+                    "Properties or property prefixes are required and must be set: [%s]",
+                    METASTORE_URIS)));
   }
 }

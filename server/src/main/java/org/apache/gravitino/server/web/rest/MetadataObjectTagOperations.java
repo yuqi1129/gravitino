@@ -20,12 +20,11 @@ package org.apache.gravitino.server.web.rest;
 
 import com.codahale.metrics.annotation.ResponseMetered;
 import com.codahale.metrics.annotation.Timed;
-import com.google.common.collect.Lists;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import javax.inject.Inject;
 import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.DefaultValue;
@@ -50,7 +49,8 @@ import org.apache.gravitino.exceptions.NoSuchTagException;
 import org.apache.gravitino.metrics.MetricNames;
 import org.apache.gravitino.server.web.Utils;
 import org.apache.gravitino.tag.Tag;
-import org.apache.gravitino.tag.TagManager;
+import org.apache.gravitino.tag.TagDispatcher;
+import org.glassfish.jersey.internal.guava.Sets;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,13 +58,13 @@ import org.slf4j.LoggerFactory;
 public class MetadataObjectTagOperations {
   private static final Logger LOG = LoggerFactory.getLogger(MetadataObjectTagOperations.class);
 
-  private final TagManager tagManager;
+  private final TagDispatcher tagDispatcher;
 
   @Context private HttpServletRequest httpRequest;
 
   @Inject
-  public MetadataObjectTagOperations(TagManager tagManager) {
-    this.tagManager = tagManager;
+  public MetadataObjectTagOperations(TagDispatcher tagDispatcher) {
+    this.tagDispatcher = tagDispatcher;
   }
 
   // TagOperations will reuse this class to be compatible with legacy interfaces.
@@ -163,8 +163,8 @@ public class MetadataObjectTagOperations {
                 MetadataObjects.parse(
                     fullName, MetadataObject.Type.valueOf(type.toUpperCase(Locale.ROOT)));
 
-            List<TagDTO> tags = Lists.newArrayList();
-            Tag[] nonInheritedTags = tagManager.listTagsInfoForMetadataObject(metalake, object);
+            Set<TagDTO> tags = Sets.newHashSet();
+            Tag[] nonInheritedTags = tagDispatcher.listTagsInfoForMetadataObject(metalake, object);
             if (ArrayUtils.isNotEmpty(nonInheritedTags)) {
               Collections.addAll(
                   tags,
@@ -176,7 +176,7 @@ public class MetadataObjectTagOperations {
             MetadataObject parentObject = MetadataObjects.parent(object);
             while (parentObject != null) {
               Tag[] inheritedTags =
-                  tagManager.listTagsInfoForMetadataObject(metalake, parentObject);
+                  tagDispatcher.listTagsInfoForMetadataObject(metalake, parentObject);
               if (ArrayUtils.isNotEmpty(inheritedTags)) {
                 Collections.addAll(
                     tags,
@@ -197,9 +197,8 @@ public class MetadataObjectTagOperations {
               return Utils.ok(new TagListResponse(tags.toArray(new TagDTO[0])));
 
             } else {
-              // Due to same name tag will be associated to both parent and child objects, so we
-              // need to deduplicate the tag names.
-              String[] tagNames = tags.stream().map(TagDTO::name).distinct().toArray(String[]::new);
+              // We have used Set to avoid duplicate tag names
+              String[] tagNames = tags.stream().map(TagDTO::name).toArray(String[]::new);
 
               LOG.info(
                   "List {} tags for object type: {}, full name: {} under metalake: {}",
@@ -240,7 +239,7 @@ public class MetadataObjectTagOperations {
                 MetadataObjects.parse(
                     fullName, MetadataObject.Type.valueOf(type.toUpperCase(Locale.ROOT)));
             String[] tagNames =
-                tagManager.associateTagsForMetadataObject(
+                tagDispatcher.associateTagsForMetadataObject(
                     metalake, object, request.getTagsToAdd(), request.getTagsToRemove());
             tagNames = tagNames == null ? new String[0] : tagNames;
 
@@ -260,7 +259,7 @@ public class MetadataObjectTagOperations {
 
   private Optional<Tag> getTagForObject(String metalake, MetadataObject object, String tagName) {
     try {
-      return Optional.ofNullable(tagManager.getTagForMetadataObject(metalake, object, tagName));
+      return Optional.ofNullable(tagDispatcher.getTagForMetadataObject(metalake, object, tagName));
     } catch (NoSuchTagException e) {
       LOG.info("Tag {} not found for object: {}", tagName, object);
       return Optional.empty();

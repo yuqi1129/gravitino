@@ -29,6 +29,7 @@ import static org.mockito.Mockito.when;
 
 import com.google.common.collect.Lists;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicReference;
@@ -52,6 +53,7 @@ import org.apache.gravitino.catalog.FilesetDispatcher;
 import org.apache.gravitino.catalog.SchemaDispatcher;
 import org.apache.gravitino.catalog.TableDispatcher;
 import org.apache.gravitino.catalog.TopicDispatcher;
+import org.apache.gravitino.dto.authorization.PrivilegeDTO;
 import org.apache.gravitino.dto.authorization.RoleDTO;
 import org.apache.gravitino.dto.authorization.SecurableObjectDTO;
 import org.apache.gravitino.dto.requests.RoleCreateRequest;
@@ -63,6 +65,7 @@ import org.apache.gravitino.dto.responses.RoleResponse;
 import org.apache.gravitino.dto.util.DTOConverters;
 import org.apache.gravitino.exceptions.IllegalNamespaceException;
 import org.apache.gravitino.exceptions.IllegalPrivilegeException;
+import org.apache.gravitino.exceptions.NoSuchCatalogException;
 import org.apache.gravitino.exceptions.NoSuchMetadataObjectException;
 import org.apache.gravitino.exceptions.NoSuchMetalakeException;
 import org.apache.gravitino.exceptions.NoSuchRoleException;
@@ -75,14 +78,13 @@ import org.apache.gravitino.rest.RESTUtils;
 import org.apache.gravitino.utils.MetadataObjectUtil;
 import org.glassfish.hk2.utilities.binding.AbstractBinder;
 import org.glassfish.jersey.server.ResourceConfig;
-import org.glassfish.jersey.test.JerseyTest;
 import org.glassfish.jersey.test.TestProperties;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
-public class TestRoleOperations extends JerseyTest {
+public class TestRoleOperations extends BaseOperationsTest {
 
   private static final AccessControlManager manager = mock(AccessControlManager.class);
   private static final MetalakeDispatcher metalakeDispatcher = mock(MetalakeDispatcher.class);
@@ -141,7 +143,7 @@ public class TestRoleOperations extends JerseyTest {
   }
 
   @Test
-  public void testCreateRole() {
+  public void testCreateRole() throws IllegalAccessException, NoSuchFieldException {
     SecurableObject securableObject =
         SecurableObjects.ofCatalog("catalog", Lists.newArrayList(Privileges.UseCatalog.allow()));
     SecurableObject anotherSecurableObject =
@@ -159,6 +161,33 @@ public class TestRoleOperations extends JerseyTest {
 
     when(manager.createRole(any(), any(), any(), any())).thenReturn(role);
     when(catalogDispatcher.catalogExists(any())).thenReturn(true);
+
+    // Test with IllegalRequest
+    RoleCreateRequest illegalRequest = new RoleCreateRequest("role", Collections.emptyMap(), null);
+    Response illegalResp =
+        target("/metalakes/metalake1/roles")
+            .request(MediaType.APPLICATION_JSON_TYPE)
+            .accept("application/vnd.gravitino.v1+json")
+            .post(Entity.entity(illegalRequest, MediaType.APPLICATION_JSON_TYPE));
+    Assertions.assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), illegalResp.getStatus());
+
+    SecurableObjectDTO illegalObject =
+        DTOConverters.toDTO(
+            SecurableObjects.ofCatalog(
+                "illegal_catalog", Lists.newArrayList(Privileges.CreateSchema.deny())));
+    Field field = illegalObject.getClass().getDeclaredField("privileges");
+    field.setAccessible(true);
+    field.set(illegalObject, new PrivilegeDTO[] {});
+
+    illegalRequest =
+        new RoleCreateRequest(
+            "role", Collections.emptyMap(), new SecurableObjectDTO[] {illegalObject});
+    illegalResp =
+        target("/metalakes/metalake1/roles")
+            .request(MediaType.APPLICATION_JSON_TYPE)
+            .accept("application/vnd.gravitino.v1+json")
+            .post(Entity.entity(illegalRequest, MediaType.APPLICATION_JSON_TYPE));
+    Assertions.assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), illegalResp.getStatus());
 
     Response resp =
         target("/metalakes/metalake1/roles")
@@ -199,17 +228,40 @@ public class TestRoleOperations extends JerseyTest {
         Privileges.UseCatalog.allow().condition(),
         roleDTO.securableObjects().get(0).privileges().get(0).condition());
 
+    // Test with a wrong metalake name
+    RoleCreateRequest reqWithWrongMetalake =
+        new RoleCreateRequest(
+            "role",
+            Collections.emptyMap(),
+            new SecurableObjectDTO[] {
+              DTOConverters.toDTO(
+                  SecurableObjects.ofMetalake(
+                      "unknown", Lists.newArrayList(Privileges.UseCatalog.allow()))),
+            });
+    Response respWithWrongMetalake =
+        target("/metalakes/metalake1/roles")
+            .request(MediaType.APPLICATION_JSON_TYPE)
+            .accept("application/vnd.gravitino.v1+json")
+            .post(Entity.entity(reqWithWrongMetalake, MediaType.APPLICATION_JSON_TYPE));
+    Assertions.assertEquals(
+        Response.Status.BAD_REQUEST.getStatusCode(), respWithWrongMetalake.getStatus());
+    Assertions.assertEquals(MediaType.APPLICATION_JSON_TYPE, respWithWrongMetalake.getMediaType());
+    ErrorResponse withWrongMetalakeResponse = respWithWrongMetalake.readEntity(ErrorResponse.class);
+    Assertions.assertEquals(
+        ErrorConstants.ILLEGAL_ARGUMENTS_CODE, withWrongMetalakeResponse.getCode());
+
     // Test to a catalog which doesn't exist
-    when(catalogDispatcher.catalogExists(any())).thenReturn(false);
+    reset(catalogDispatcher);
+    when(catalogDispatcher.loadCatalog(any())).thenThrow(new NoSuchCatalogException("mock error"));
     Response respNotExist =
         target("/metalakes/metalake1/roles")
             .request(MediaType.APPLICATION_JSON_TYPE)
             .accept("application/vnd.gravitino.v1+json")
             .post(Entity.entity(req, MediaType.APPLICATION_JSON_TYPE));
-    Assertions.assertEquals(Response.Status.NOT_FOUND.getStatusCode(), respNotExist.getStatus());
+    Assertions.assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), respNotExist.getStatus());
     Assertions.assertEquals(MediaType.APPLICATION_JSON_TYPE, respNotExist.getMediaType());
     ErrorResponse notExistResponse = respNotExist.readEntity(ErrorResponse.class);
-    Assertions.assertEquals(ErrorConstants.NOT_FOUND_CODE, notExistResponse.getCode());
+    Assertions.assertEquals(ErrorConstants.ILLEGAL_ARGUMENTS_CODE, notExistResponse.getCode());
 
     // Test to throw NoSuchMetalakeException
     when(catalogDispatcher.catalogExists(any())).thenReturn(true);

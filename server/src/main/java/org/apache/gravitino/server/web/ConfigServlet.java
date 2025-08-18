@@ -22,6 +22,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.List;
 import java.util.Map;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
@@ -39,25 +40,38 @@ public class ConfigServlet extends HttpServlet {
   private static final Logger LOG = LoggerFactory.getLogger(ConfigServlet.class);
 
   private static final ImmutableSet<ConfigEntry<?>> oauthConfigEntries =
-      ImmutableSet.of(OAuthConfig.DEFAULT_SERVER_URI, OAuthConfig.DEFAULT_TOKEN_PATH);
+      ImmutableSet.of(
+          OAuthConfig.DEFAULT_SERVER_URI,
+          OAuthConfig.DEFAULT_TOKEN_PATH,
+          OAuthConfig.PROVIDER,
+          OAuthConfig.CLIENT_ID,
+          OAuthConfig.AUTHORITY,
+          OAuthConfig.SCOPE);
 
   private static final ImmutableSet<ConfigEntry<?>> basicConfigEntries =
-      ImmutableSet.of(Configs.AUTHENTICATORS);
+      ImmutableSet.of(Configs.AUTHENTICATORS, Configs.ENABLE_AUTHORIZATION);
 
-  private final Map<String, String> configs = Maps.newHashMap();
+  private final Map<String, Object> configs = Maps.newHashMap();
 
   public ConfigServlet(ServerConfig serverConfig) {
     for (ConfigEntry<?> key : basicConfigEntries) {
-      String config = String.valueOf(serverConfig.get(key));
-      configs.put(key.getKey(), config);
+      configs.put(key.getKey(), serverConfig.get(key));
     }
 
     if (serverConfig
         .get(Configs.AUTHENTICATORS)
         .contains(AuthenticatorType.OAUTH.name().toLowerCase())) {
       for (ConfigEntry<?> key : oauthConfigEntries) {
-        String config = String.valueOf(serverConfig.get(key));
-        configs.put(key.getKey(), config);
+        configs.put(key.getKey(), serverConfig.get(key));
+      }
+    }
+
+    List<String> visibleConfigs = serverConfig.get(Configs.VISIBLE_CONFIGS);
+
+    for (String config : visibleConfigs) {
+      String configValue = serverConfig.getRawString(config);
+      if (configValue != null) {
+        configs.put(config, configValue);
       }
     }
   }

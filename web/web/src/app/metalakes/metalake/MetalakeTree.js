@@ -38,7 +38,10 @@ import {
   setLoadedNodes,
   getTableDetails,
   getFilesetDetails,
-  getTopicDetails
+  getTopicDetails,
+  getModelDetails,
+  fetchModelVersions,
+  getVersionDetails
 } from '@/lib/store/metalakes'
 
 import { extractPlaceholder } from '@/lib/utils'
@@ -68,8 +71,14 @@ const MetalakeTree = props => {
             return 'devicon:postgresql-wordmark'
           case 'jdbc-doris':
             return 'custom-icons-doris'
+          case 'jdbc-starrocks':
+            return 'custom-icons-starrocks'
           case 'lakehouse-paimon':
             return 'custom-icons-paimon'
+          case 'lakehouse-hudi':
+            return 'custom-icons-hudi'
+          case 'jdbc-oceanbase':
+            return 'custom-icons-oceanbase'
           default:
             return 'bx:book'
         }
@@ -77,6 +86,8 @@ const MetalakeTree = props => {
         return 'skill-icons:kafka'
       case 'fileset':
         return 'twemoji:file-folder'
+      case 'model':
+        return 'carbon:machine-learning-model'
       default:
         return 'bx:book'
     }
@@ -84,6 +95,7 @@ const MetalakeTree = props => {
 
   const handleClickIcon = (e, nodeProps) => {
     e.stopPropagation()
+    if (nodeProps.data.inUse === 'false') return
 
     switch (nodeProps.data.node) {
       case 'table': {
@@ -110,12 +122,30 @@ const MetalakeTree = props => {
         }
         break
       }
+      case 'model': {
+        if (store.selectedNodes.includes(nodeProps.data.key)) {
+          const pathArr = extractPlaceholder(nodeProps.data.key)
+          const [metalake, catalog, type, schema, model] = pathArr
+          dispatch(fetchModelVersions({ init: true, metalake, catalog, schema, model }))
+          dispatch(getModelDetails({ init: true, metalake, catalog, schema, model }))
+        }
+        break
+      }
+      case 'version': {
+        if (store.selectedNodes.includes(nodeProps.data.key)) {
+          const pathArr = extractPlaceholder(nodeProps.data.key)
+          const [metalake, catalog, type, schema, model, version] = pathArr
+          dispatch(getVersionDetails({ init: true, metalake, catalog, schema, model, version }))
+        }
+        break
+      }
       default:
         dispatch(setIntoTreeNodeWithFetch({ key: nodeProps.data.key, reload: true }))
     }
   }
 
   const onMouseEnter = (e, nodeProps) => {
+    if (nodeProps.data.inUse === 'false') return
     if (nodeProps.data.node === 'table') {
       if (store.selectedNodes.includes(nodeProps.data.key)) {
         setIsHover(nodeProps.data.key)
@@ -126,10 +156,12 @@ const MetalakeTree = props => {
   }
 
   const onMouseLeave = (e, nodeProps) => {
+    if (nodeProps.data.inUse === 'false') return
     setIsHover(null)
   }
 
   const onLoadData = node => {
+    if (node.inUse === 'false') return new Promise(resolve => resolve())
     const { key, children } = node
 
     dispatch(setLoadedNodes([...store.loadedNodes, key]))
@@ -148,6 +180,7 @@ const MetalakeTree = props => {
   }
 
   const onExpand = (keys, { expanded, node }) => {
+    if (node.inUse === 'false') return
     if (expanded) {
       dispatch(setExpandedNodes(keys))
     } else {
@@ -156,6 +189,7 @@ const MetalakeTree = props => {
   }
 
   const onSelect = (keys, { selected, node }) => {
+    if (node.inUse === 'false') return
     if (!selected) {
       dispatch(setSelectedNodes([node.key]))
 
@@ -244,6 +278,20 @@ const MetalakeTree = props => {
               icon={isHover !== nodeProps.data.key ? 'material-symbols:topic-outline' : 'mdi:reload'}
               fontSize='inherit'
             />
+          </IconButton>
+        )
+
+      case 'model':
+        return (
+          <IconButton
+            disableRipple={!store.selectedNodes.includes(nodeProps.data.key)}
+            size='small'
+            sx={{ color: '#666' }}
+            onClick={e => handleClickIcon(e, nodeProps)}
+            onMouseEnter={e => onMouseEnter(e, nodeProps)}
+            onMouseLeave={e => onMouseLeave(e, nodeProps)}
+          >
+            <Icon icon={isHover !== nodeProps.data.key ? 'mdi:globe-model' : 'mdi:reload'} fontSize='inherit' />
           </IconButton>
         )
 

@@ -22,6 +22,7 @@ import static org.apache.gravitino.catalog.CapabilityHelpers.applyCapabilities;
 import static org.apache.gravitino.catalog.CapabilityHelpers.applyCaseSensitive;
 import static org.apache.gravitino.catalog.CapabilityHelpers.getCapability;
 
+import java.io.IOException;
 import java.util.Map;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.gravitino.NameIdentifier;
@@ -29,7 +30,9 @@ import org.apache.gravitino.Namespace;
 import org.apache.gravitino.connector.capability.Capability;
 import org.apache.gravitino.exceptions.FilesetAlreadyExistsException;
 import org.apache.gravitino.exceptions.NoSuchFilesetException;
+import org.apache.gravitino.exceptions.NoSuchLocationNameException;
 import org.apache.gravitino.exceptions.NoSuchSchemaException;
+import org.apache.gravitino.file.FileInfo;
 import org.apache.gravitino.file.Fileset;
 import org.apache.gravitino.file.FilesetChange;
 
@@ -52,6 +55,12 @@ public class FilesetNormalizeDispatcher implements FilesetDispatcher {
   }
 
   @Override
+  public FileInfo[] listFiles(NameIdentifier ident, String locationName, String subPath)
+      throws NoSuchFilesetException, IOException {
+    return dispatcher.listFiles(normalizeCaseSensitive(ident), locationName, subPath);
+  }
+
+  @Override
   public Fileset loadFileset(NameIdentifier ident) throws NoSuchFilesetException {
     // The constraints of the name spec may be more strict than underlying catalog,
     // and for compatibility reasons, we only apply case-sensitive capabilities here.
@@ -66,15 +75,15 @@ public class FilesetNormalizeDispatcher implements FilesetDispatcher {
   }
 
   @Override
-  public Fileset createFileset(
+  public Fileset createMultipleLocationFileset(
       NameIdentifier ident,
       String comment,
       Fileset.Type type,
-      String storageLocation,
+      Map<String, String> storageLocations,
       Map<String, String> properties)
       throws NoSuchSchemaException, FilesetAlreadyExistsException {
-    return dispatcher.createFileset(
-        normalizeNameIdentifier(ident), comment, type, storageLocation, properties);
+    return dispatcher.createMultipleLocationFileset(
+        normalizeNameIdentifier(ident), comment, type, storageLocations, properties);
   }
 
   @Override
@@ -95,10 +104,11 @@ public class FilesetNormalizeDispatcher implements FilesetDispatcher {
   }
 
   @Override
-  public String getFileLocation(NameIdentifier ident, String subPath) {
+  public String getFileLocation(NameIdentifier ident, String subPath, String locationName)
+      throws NoSuchFilesetException, NoSuchLocationNameException {
     // The constraints of the name spec may be more strict than underlying catalog,
     // and for compatibility reasons, we only apply case-sensitive capabilities here.
-    return dispatcher.getFileLocation(normalizeCaseSensitive(ident), subPath);
+    return dispatcher.getFileLocation(normalizeCaseSensitive(ident), subPath, locationName);
   }
 
   private NameIdentifier normalizeNameIdentifier(NameIdentifier ident) {

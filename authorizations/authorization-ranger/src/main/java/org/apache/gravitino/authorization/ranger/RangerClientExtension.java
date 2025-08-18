@@ -18,6 +18,7 @@
  */
 package org.apache.gravitino.authorization.ranger;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.sun.jersey.api.client.GenericType;
 import com.sun.jersey.api.client.UniformInterfaceException;
@@ -32,6 +33,7 @@ import org.apache.gravitino.authorization.ranger.reference.VXUser;
 import org.apache.gravitino.authorization.ranger.reference.VXUserList;
 import org.apache.ranger.RangerClient;
 import org.apache.ranger.RangerServiceException;
+import org.apache.ranger.plugin.model.RangerPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -98,11 +100,26 @@ public class RangerClientExtension extends RangerClient {
     }
   }
 
+  @Override
+  public RangerPolicy createPolicy(RangerPolicy policy) throws RangerServiceException {
+    Preconditions.checkArgument(
+        policy.getResources().size() > 0, "Ranger policy resources can not be empty!");
+    return super.createPolicy(policy);
+  }
+
+  @Override
+  public RangerPolicy updatePolicy(long policyId, RangerPolicy policy)
+      throws RangerServiceException {
+    Preconditions.checkArgument(
+        policy.getResources().size() > 0, "Ranger policy resources can not be empty!");
+    return super.updatePolicy(policyId, policy);
+  }
+
   public Boolean createUser(VXUser user) throws RuntimeException {
     try {
       callAPIMethodClassResponseType.invoke(this, CREATE_EXTERNAL_USER, null, user, VXUser.class);
     } catch (UniformInterfaceException e) {
-      LOG.error("Failed to create user: " + e.getResponse().getEntity(String.class));
+      LOG.error("Failed to create user: {}", e.getResponse().getEntity(String.class), e);
       return Boolean.FALSE;
     } catch (InvocationTargetException | IllegalAccessException e) {
       Throwable cause = e.getCause();
@@ -152,7 +169,7 @@ public class RangerClientExtension extends RangerClient {
     try {
       callAPIMethodClassResponseType.invoke(this, CREATE_GROUP, null, group, VXGroup.class);
     } catch (UniformInterfaceException e) {
-      LOG.error("Failed to create user: " + e.getResponse().getEntity(String.class));
+      LOG.error("Failed to create group: {}", e.getResponse().getEntity(String.class), e);
       return Boolean.FALSE;
     } catch (InvocationTargetException | IllegalAccessException e) {
       throw new RuntimeException(e);

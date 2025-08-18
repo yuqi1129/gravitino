@@ -18,6 +18,9 @@
  */
 package org.apache.gravitino.storage.memory;
 
+import static org.apache.gravitino.file.Fileset.LOCATION_NAME_UNKNOWN;
+
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import java.io.IOException;
@@ -28,11 +31,11 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.gravitino.Config;
 import org.apache.gravitino.Entity;
 import org.apache.gravitino.Entity.EntityType;
 import org.apache.gravitino.EntityAlreadyExistsException;
-import org.apache.gravitino.EntitySerDe;
 import org.apache.gravitino.EntityStore;
 import org.apache.gravitino.HasIdentifier;
 import org.apache.gravitino.Metalake;
@@ -76,9 +79,6 @@ public class TestMemoryEntityStore {
 
     @Override
     public void initialize(Config config) throws RuntimeException {}
-
-    @Override
-    public void setSerDe(EntitySerDe entitySerDe) {}
 
     @Override
     public <E extends Entity & HasIdentifier> List<E> list(
@@ -155,17 +155,45 @@ public class TestMemoryEntityStore {
     @Override
     public <R, E extends Exception> R executeInTransaction(Executable<R, E> executable)
         throws E, IOException {
+      lock.lock();
+      Map<NameIdentifier, Entity> snapshot = createSnapshot();
       try {
-        lock.lock();
         return executable.execute();
+      } catch (Exception e) {
+        if (snapshot != null) {
+          // restore the entityMap in case of failed transactions
+          entityMap.clear();
+          entityMap.putAll(snapshot);
+        }
+        throw e;
       } finally {
         lock.unlock();
       }
     }
 
     @Override
+    public int batchDelete(List<Pair<NameIdentifier, EntityType>> entitiesToDelete, boolean cascade)
+        throws IOException {
+      throw new UnsupportedOperationException(
+          "Batch delete is not supported in InMemoryEntityStore.");
+    }
+
+    @Override
+    public <E extends Entity & HasIdentifier> void batchPut(List<E> entities, boolean overwritten)
+        throws IOException, EntityAlreadyExistsException {
+      throw new UnsupportedOperationException("Batch put is not supported in InMemoryEntityStore.");
+    }
+
+    @Override
     public void close() throws IOException {
       entityMap.clear();
+    }
+
+    public Map<NameIdentifier, Entity> createSnapshot() {
+      return entityMap.entrySet().stream()
+          .collect(
+              Collectors.toMap(
+                  Map.Entry::getKey, Map.Entry::getValue, (e1, e2) -> e1, Maps::newHashMap));
     }
   }
 
@@ -213,7 +241,7 @@ public class TestMemoryEntityStore {
             .withId(1L)
             .withName("fileset")
             .withFilesetType(Fileset.Type.MANAGED)
-            .withStorageLocation("file:/tmp")
+            .withStorageLocations(ImmutableMap.of(LOCATION_NAME_UNKNOWN, "file:/tmp"))
             .withNamespace(Namespace.of("metalake", "catalog", "db"))
             .withAuditInfo(auditInfo)
             .build();
@@ -250,7 +278,6 @@ public class TestMemoryEntityStore {
 
     InMemoryEntityStore store = new InMemoryEntityStore();
     store.initialize(Mockito.mock(Config.class));
-    store.setSerDe(Mockito.mock(EntitySerDe.class));
 
     store.put(metalake);
     store.put(catalog);

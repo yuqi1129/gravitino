@@ -24,7 +24,6 @@ import static org.apache.gravitino.rel.Column.DEFAULT_VALUE_NOT_SET;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.Lists;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -36,7 +35,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.stream.Collectors;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
@@ -48,7 +46,6 @@ import org.apache.gravitino.catalog.jdbc.JdbcColumn;
 import org.apache.gravitino.catalog.jdbc.JdbcTable;
 import org.apache.gravitino.catalog.jdbc.operation.JdbcTableOperations;
 import org.apache.gravitino.exceptions.NoSuchColumnException;
-import org.apache.gravitino.exceptions.NoSuchSchemaException;
 import org.apache.gravitino.exceptions.NoSuchTableException;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.TableChange;
@@ -62,28 +59,10 @@ import org.apache.gravitino.rel.types.Types;
 /** Table operations for MySQL. */
 public class MysqlTableOperations extends JdbcTableOperations {
 
-  public static final String BACK_QUOTE = "`";
-  public static final String MYSQL_AUTO_INCREMENT = "AUTO_INCREMENT";
+  private static final String BACK_QUOTE = "`";
+  private static final String MYSQL_AUTO_INCREMENT = "AUTO_INCREMENT";
   private static final String MYSQL_NOT_SUPPORT_NESTED_COLUMN_MSG =
       "Mysql does not support nested column names.";
-
-  @Override
-  public List<String> listTables(String databaseName) throws NoSuchSchemaException {
-    final List<String> names = Lists.newArrayList();
-
-    try (Connection connection = getConnection(databaseName);
-        ResultSet tables = getTables(connection)) {
-      while (tables.next()) {
-        if (Objects.equals(tables.getString("TABLE_CAT"), databaseName)) {
-          names.add(tables.getString("TABLE_NAME"));
-        }
-      }
-      LOG.info("Finished listing tables size {} for database name {} ", names.size(), databaseName);
-      return names;
-    } catch (final SQLException se) {
-      throw this.exceptionMapper.toGravitinoException(se);
-    }
-  }
 
   @Override
   protected String generateCreateTableSql(
@@ -127,6 +106,7 @@ public class MysqlTableOperations extends JdbcTableOperations {
       }
     }
 
+    validateIndexes(indexes, columns);
     appendIndexesSql(indexes, sqlBuilder);
 
     sqlBuilder.append("\n)");
@@ -149,44 +129,6 @@ public class MysqlTableOperations extends JdbcTableOperations {
 
     LOG.info("Generated create table:{} sql: {}", tableName, result);
     return result;
-  }
-
-  /**
-   * The auto-increment column will be verified. There can only be one auto-increment column and it
-   * must be the primary key or unique index.
-   *
-   * @param columns jdbc column
-   * @param indexes table indexes
-   */
-  private static void validateIncrementCol(JdbcColumn[] columns, Index[] indexes) {
-    // Check auto increment column
-    List<JdbcColumn> autoIncrementCols =
-        Arrays.stream(columns).filter(Column::autoIncrement).collect(Collectors.toList());
-    String autoIncrementColsStr =
-        autoIncrementCols.stream().map(JdbcColumn::name).collect(Collectors.joining(",", "[", "]"));
-    Preconditions.checkArgument(
-        autoIncrementCols.size() <= 1,
-        "Only one column can be auto-incremented. There are multiple auto-increment columns in your table: "
-            + autoIncrementColsStr);
-    if (!autoIncrementCols.isEmpty()) {
-      Optional<Index> existAutoIncrementColIndexOptional =
-          Arrays.stream(indexes)
-              .filter(
-                  index ->
-                      Arrays.stream(index.fieldNames())
-                          .flatMap(Arrays::stream)
-                          .anyMatch(
-                              s ->
-                                  StringUtils.equalsIgnoreCase(autoIncrementCols.get(0).name(), s)))
-              .filter(
-                  index ->
-                      index.type() == Index.IndexType.PRIMARY_KEY
-                          || index.type() == Index.IndexType.UNIQUE_KEY)
-              .findAny();
-      Preconditions.checkArgument(
-          existAutoIncrementColIndexOptional.isPresent(),
-          "Incorrect table definition; there can be only one auto column and it must be defined as a key");
-    }
   }
 
   public static void appendIndexesSql(Index[] indexes, StringBuilder sqlBuilder) {
@@ -213,19 +155,6 @@ public class MysqlTableOperations extends JdbcTableOperations {
           throw new IllegalArgumentException("MySQL doesn't support index : " + index.type());
       }
     }
-  }
-
-  private static String getIndexFieldStr(String[][] fieldNames) {
-    return Arrays.stream(fieldNames)
-        .map(
-            colNames -> {
-              if (colNames.length > 1) {
-                throw new IllegalArgumentException(
-                    "Index does not support complex fields in MySQL");
-              }
-              return BACK_QUOTE + colNames[0] + BACK_QUOTE;
-            })
-        .collect(Collectors.joining(", "));
   }
 
   @Override
@@ -274,16 +203,6 @@ public class MysqlTableOperations extends JdbcTableOperations {
       tableBuilder.withComment(
           tableBuilder.properties().getOrDefault(COMMENT, tableBuilder.comment()));
     }
-  }
-
-  @Override
-  protected String generateRenameTableSql(String oldTableName, String newTableName) {
-    return String.format("RENAME TABLE `%s` TO `%s`", oldTableName, newTableName);
-  }
-
-  @Override
-  protected String generateDropTableSql(String tableName) {
-    return "DROP TABLE " + BACK_QUOTE + tableName + BACK_QUOTE;
   }
 
   @Override
@@ -365,9 +284,6 @@ public class MysqlTableOperations extends JdbcTableOperations {
             "Unsupported table change type: " + change.getClass().getName());
       }
     }
-    if (!setProperties.isEmpty()) {
-      alterSql.add(generateTableProperties(setProperties));
-    }
 
     // Last modified comment
     if (null != updateComment) {
@@ -392,7 +308,7 @@ public class MysqlTableOperations extends JdbcTableOperations {
     }
     // Return the generated SQL statement
     String result = "ALTER TABLE `" + tableName + "`\n" + String.join(",\n", alterSql) + ";";
-    LOG.info("Generated alter table:{} sql: {}", databaseName + "." + tableName, result);
+    LOG.info("Generated alter table:{}.{} sql: {}", databaseName, tableName, result);
     return result;
   }
 
@@ -427,11 +343,11 @@ public class MysqlTableOperations extends JdbcTableOperations {
   @VisibleForTesting
   static String deleteIndexDefinition(
       JdbcTable lazyLoadTable, TableChange.DeleteIndex deleteIndex) {
-    if (deleteIndex.isIfExists()) {
-      if (Arrays.stream(lazyLoadTable.index())
-          .anyMatch(index -> index.name().equals(deleteIndex.getName()))) {
-        throw new IllegalArgumentException("Index does not exist");
-      }
+    if (!deleteIndex.isIfExists()) {
+      Preconditions.checkArgument(
+          Arrays.stream(lazyLoadTable.index())
+              .anyMatch(index -> index.name().equals(deleteIndex.getName())),
+          "Index does not exist");
     }
     return "DROP INDEX " + BACK_QUOTE + deleteIndex.getName() + BACK_QUOTE;
   }
@@ -490,12 +406,6 @@ public class MysqlTableOperations extends JdbcTableOperations {
             setProperty ->
                 String.format("%s = %s", setProperty.getProperty(), setProperty.getValue()))
         .collect(Collectors.joining(",\n"));
-  }
-
-  @Override
-  protected JdbcTable getOrCreateTable(
-      String databaseName, String tableName, JdbcTable lazyLoadCreateTable) {
-    return null != lazyLoadCreateTable ? lazyLoadCreateTable : load(databaseName, tableName);
   }
 
   private String updateColumnCommentFieldDefinition(
@@ -729,5 +639,88 @@ public class MysqlTableOperations extends JdbcTableOperations {
 
   private static String quote(String name) {
     return BACK_QUOTE + name + BACK_QUOTE;
+  }
+
+  /**
+   * Verify the columns in the index.
+   *
+   * @param columns jdbc column
+   * @param indexes table indexes
+   */
+  private static void validateIndexes(Index[] indexes, JdbcColumn[] columns) {
+    Map<String, JdbcColumn> columnMap =
+        Arrays.stream(columns).collect(Collectors.toMap(JdbcColumn::name, c -> c));
+    for (Index index : indexes) {
+      if (index.type() == Index.IndexType.UNIQUE_KEY) {
+        // the auto increment column in the unique index must be not null
+        for (String[] colNames : index.fieldNames()) {
+          JdbcColumn column = columnMap.get(colNames[0]);
+          Preconditions.checkArgument(
+              column != null,
+              "Column %s in the unique index %s does not exist in the table",
+              colNames[0],
+              index.name());
+          Preconditions.checkArgument(
+              !(column.autoIncrement() && column.nullable()),
+              "Auto increment column %s in the unique index %s must be a not null column",
+              colNames[0],
+              index.name());
+        }
+      }
+
+      if (index.type() == Index.IndexType.PRIMARY_KEY) {
+        // the column in the primary key must be not null
+        for (String[] colNames : index.fieldNames()) {
+          JdbcColumn column = columnMap.get(colNames[0]);
+          Preconditions.checkArgument(
+              column != null,
+              "Column %s in the primary key does not exist in the table",
+              colNames[0]);
+          Preconditions.checkArgument(
+              !column.nullable(),
+              "Column %s in the primary key must be a not null column",
+              colNames[0]);
+        }
+      }
+    }
+  }
+
+  @Override
+  public Integer calculateDatetimePrecision(String typeName, int columnSize, int scale) {
+    String upperTypeName = typeName.toUpperCase();
+
+    // Check driver version compatibility first
+    boolean isDatetimeType =
+        "TIME".equals(upperTypeName)
+            || "TIMESTAMP".equals(upperTypeName)
+            || "DATETIME".equals(upperTypeName);
+
+    if (isDatetimeType) {
+      String driverVersion = getMySQLDriverVersion();
+      if (driverVersion != null && !isMySQLDriverVersionSupported(driverVersion)) {
+        LOG.warn(
+            "MySQL driver version {} is below 8.0.16, columnSize may not be accurate for precision calculation. "
+                + "Returning null for {} type precision. Driver version: {}",
+            driverVersion,
+            upperTypeName,
+            driverVersion);
+        return null;
+      }
+    }
+
+    switch (upperTypeName) {
+      case "TIME":
+        // TIME format: 'HH:MM:SS' (8 chars) + decimal point + precision
+        return columnSize >= TIME_FORMAT_WITH_DOT.length()
+            ? columnSize - TIME_FORMAT_WITH_DOT.length()
+            : 0;
+      case "TIMESTAMP":
+      case "DATETIME":
+        // TIMESTAMP/DATETIME format: 'YYYY-MM-DD HH:MM:SS' (19 chars) + decimal point + precision
+        return columnSize >= DATETIME_FORMAT_WITH_DOT.length()
+            ? columnSize - DATETIME_FORMAT_WITH_DOT.length()
+            : 0;
+    }
+    return null;
   }
 }

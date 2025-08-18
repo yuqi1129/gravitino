@@ -36,7 +36,6 @@ dependencies {
   implementation(libs.jackson.datatype.jdk8)
   implementation(libs.jackson.datatype.jsr310)
   implementation(libs.jackson.databind)
-  implementation(libs.protobuf.java)
 
   annotationProcessor(libs.lombok)
   compileOnly(libs.lombok)
@@ -122,7 +121,7 @@ tasks {
     doFirst() {
       writeProjectPropertiesFile()
       if (!file(propertiesFile).exists()) {
-        throw GradleException("$propertiesFile file not generated!")
+        throw GradleException("Failed to generate $propertiesFile.")
       }
     }
 

@@ -58,7 +58,7 @@ dependencies {
     exclude("com.google.code.findbugs", "sr305")
     exclude("com.tdunning", "json")
     exclude("com.zaxxer", "HikariCP")
-    exclude("io.dropwizard.metricss")
+    exclude("io.dropwizard.metrics")
     exclude("javax.transaction", "transaction-api")
     exclude("org.apache.ant")
     exclude("org.apache.avro")
@@ -96,6 +96,9 @@ dependencies {
   testImplementation(project(":integration-test-common", "testArtifacts"))
   testImplementation(project(":server"))
   testImplementation(project(":server-common"))
+  testImplementation(project(":catalogs:hadoop-common")) {
+    exclude("*")
+  }
 
   testImplementation(libs.bundles.jetty)
   testImplementation(libs.bundles.jersey)
@@ -128,7 +131,17 @@ dependencies {
   testImplementation(libs.testcontainers)
   testImplementation(libs.testcontainers.mysql)
   testImplementation(libs.testcontainers.localstack)
-  testImplementation(libs.hadoop2.s3)
+  testImplementation(libs.hadoop2.aws)
+  testImplementation(libs.hadoop3.abs)
+  testImplementation(libs.hadoop3.gcs)
+
+  // You need this to run test CatalogHiveABSIT as it required hadoop3 environment introduced by hadoop3.abs
+  // (The protocol `abfss` was first introduced in Hadoop 3.2.0), However, as the there already exists
+  // hadoop2.common in the test classpath, If we added the following dependencies directly, it will
+  // cause the conflict between hadoop2 and hadoop3, resulting test failures, so we comment the
+  // following line temporarily, if you want to run the test, please uncomment it.
+  // In the future, we may need to refactor the test to avoid the conflict.
+  // testImplementation(libs.hadoop3.common)
 
   testRuntimeOnly(libs.junit.jupiter.engine)
 }
@@ -145,6 +158,8 @@ tasks {
       exclude("guava-*.jar")
       exclude("log4j-*.jar")
       exclude("slf4j-*.jar")
+      // Exclude the following jars to avoid conflict with the jars in authorization-gcp
+      exclude("protobuf-java-*.jar")
     }
     into("$rootDir/distribution/package/catalogs/hive/libs")
   }

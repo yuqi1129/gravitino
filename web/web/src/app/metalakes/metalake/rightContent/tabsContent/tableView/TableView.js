@@ -25,7 +25,7 @@ import { useState, useEffect, Fragment } from 'react'
 
 import Link from 'next/link'
 
-import { styled, Box, Typography, IconButton, Stack } from '@mui/material'
+import { styled, Box, Typography, IconButton, Stack, Switch } from '@mui/material'
 import Tooltip, { tooltipClasses } from '@mui/material/Tooltip'
 import { DataGrid } from '@mui/x-data-grid'
 import {
@@ -40,13 +40,33 @@ import ColumnTypeChip from '@/components/ColumnTypeChip'
 import DetailsDrawer from '@/components/DetailsDrawer'
 import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog'
 import CreateCatalogDialog from '../../CreateCatalogDialog'
+import CreateSchemaDialog from '../../CreateSchemaDialog'
+import CreateFilesetDialog from '../../CreateFilesetDialog'
+import CreateTopicDialog from '../../CreateTopicDialog'
+import CreateTableDialog from '../../CreateTableDialog'
+import RegisterModelDialog from '../../RegisterModelDialog'
+import LinkVersionDialog from '../../LinkVersionDialog'
 
 import { useAppSelector, useAppDispatch } from '@/lib/hooks/useStore'
-import { updateCatalog, deleteCatalog } from '@/lib/store/metalakes'
+import {
+  deleteCatalog,
+  deleteFileset,
+  deleteTopic,
+  deleteSchema,
+  deleteTable,
+  deleteModel,
+  deleteVersion,
+  setCatalogInUse
+} from '@/lib/store/metalakes'
 
 import { to } from '@/lib/utils'
-import { getCatalogDetailsApi } from '@/lib/api/catalogs'
+import { getCatalogDetailsApi, switchInUseApi } from '@/lib/api/catalogs'
+import { getSchemaDetailsApi } from '@/lib/api/schemas'
 import { useSearchParams } from 'next/navigation'
+import { getFilesetDetailsApi } from '@/lib/api/filesets'
+import { getTopicDetailsApi } from '@/lib/api/topics'
+import { getTableDetailsApi } from '@/lib/api/tables'
+import { getModelDetailsApi, getVersionDetailsApi } from '@/lib/api/models'
 
 const fonts = Inconsolata({ subsets: ['latin'] })
 
@@ -72,6 +92,18 @@ const TableView = () => {
   const searchParams = useSearchParams()
   const paramsSize = [...searchParams.keys()].length
   const metalake = searchParams.get('metalake') || ''
+  const catalog = searchParams.get('catalog') || ''
+  const type = searchParams.get('type') || ''
+  const schema = searchParams.get('schema') || ''
+  const model = searchParams.get('model') || ''
+
+  const isCatalogList = paramsSize == 1 && searchParams.has('metalake')
+
+  const isKafkaSchema =
+    paramsSize == 3 &&
+    searchParams.has('metalake') &&
+    searchParams.has('catalog') &&
+    searchParams.get('type') === 'messaging'
 
   const defaultPaginationConfig = { pageSize: 10, page: 0 }
   const pageSizeOptions = [10, 25, 50]
@@ -86,8 +118,28 @@ const TableView = () => {
   const [confirmCacheData, setConfirmCacheData] = useState(null)
   const [openConfirmDelete, setOpenConfirmDelete] = useState(false)
   const [openDialog, setOpenDialog] = useState(false)
+  const [openSchemaDialog, setOpenSchemaDialog] = useState(false)
+  const [openFilesetDialog, setOpenFilesetDialog] = useState(false)
+  const [openTopicDialog, setOpenTopicDialog] = useState(false)
+  const [openTableDialog, setOpenTableDialog] = useState(false)
+  const [openModelDialog, setOpenModelDialog] = useState(false)
+  const [openModelVersionDialog, setOpenModelVersionDialog] = useState(false)
   const [dialogData, setDialogData] = useState({})
   const [dialogType, setDialogType] = useState('create')
+  const [isHideEdit, setIsHideEdit] = useState(true)
+  const [isHideDrop, setIsHideDrop] = useState(true)
+
+  useEffect(() => {
+    if (store.catalogs.length) {
+      const currentCatalog = store.catalogs.filter(ca => ca.name === catalog)[0]
+
+      const isHideAction =
+        (['lakehouse-hudi', 'kafka'].includes(currentCatalog?.provider) && paramsSize == 3) ||
+        (currentCatalog?.provider === 'lakehouse-hudi' && paramsSize == 4)
+      setIsHideEdit(isHideAction)
+      setIsHideDrop(isHideAction)
+    }
+  }, [store.catalogs, store.catalogs.length, paramsSize, catalog, type])
 
   const handleClickUrl = path => {
     if (!path) {
@@ -200,39 +252,53 @@ const TableView = () => {
     }
   ]
 
-  const catalogsColumns = [
+  const actionsColumns = [
     {
       flex: 0.1,
       minWidth: 60,
       disableColumnMenu: true,
       type: 'string',
       field: 'name',
-      headerName: 'Name',
+      headerName: model ? 'Version' : 'Name',
       renderCell: ({ row }) => {
         const { name, path } = row
 
         return (
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <Tooltip title={row.comment} placement='right'>
-              <Typography
-                noWrap
-                {...(path
-                  ? {
-                      component: Link,
-                      href: path
-                    }
-                  : {})}
-                onClick={() => handleClickUrl(path)}
-                sx={{
-                  fontWeight: 400,
-                  color: 'primary.main',
-                  textDecoration: 'none',
-                  '&:hover': { color: 'primary.main', textDecoration: 'underline' }
-                }}
-              >
-                {name}
-              </Typography>
+            <Tooltip title={row.comment} placement='left'>
+              {(isCatalogList && row.inUse === 'true') || !isCatalogList ? (
+                <Typography
+                  noWrap
+                  {...(path
+                    ? {
+                        component: Link,
+                        href: path
+                      }
+                    : {})}
+                  onClick={() => handleClickUrl(path)}
+                  sx={{
+                    fontWeight: 400,
+                    color: 'primary.main',
+                    textDecoration: 'none',
+                    '&:hover': { color: 'primary.main', textDecoration: 'underline' }
+                  }}
+                >
+                  {name}
+                </Typography>
+              ) : (
+                <Typography>{name}</Typography>
+              )}
             </Tooltip>
+            {isCatalogList && (
+              <Tooltip title={row.inUse === 'true' ? 'In-use' : 'Not In-use'} placement='right'>
+                <Switch
+                  data-refer={`catalog-in-use-${name}`}
+                  checked={row.inUse === 'true'}
+                  onChange={(e, value) => handleChangeInUse(name, row.type, value)}
+                  size='small'
+                />
+              </Tooltip>
+            )}
           </Box>
         )
       }
@@ -251,31 +317,37 @@ const TableView = () => {
             title='Details'
             size='small'
             sx={{ color: theme => theme.palette.text.secondary }}
-            onClick={() => handleShowDetails({ row, type: 'catalog' })}
-            data-refer={`view-catalog-${row.name}`}
+            onClick={() => handleShowDetails({ row, type: row.node })}
+            data-refer={`view-entity-${row.name}`}
           >
             <ViewIcon viewBox='0 0 24 22' />
           </IconButton>
 
-          <IconButton
-            title='Edit'
-            size='small'
-            sx={{ color: theme => theme.palette.text.secondary }}
-            onClick={() => handleShowEditDialog({ row, type: 'catalog' })}
-            data-refer={`edit-catalog-${row.name}`}
-          >
-            <EditIcon />
-          </IconButton>
+          {!isHideEdit && (
+            <IconButton
+              title='Edit'
+              size='small'
+              sx={{ color: theme => theme.palette.text.secondary }}
+              onClick={() => handleShowEditDialog({ row, type: row.node })}
+              data-refer={`edit-entity-${row.name}`}
+            >
+              <EditIcon />
+            </IconButton>
+          )}
 
-          <IconButton
-            title='Delete'
-            size='small'
-            sx={{ color: theme => theme.palette.error.light }}
-            onClick={() => handleDelete({ name: row.name, type: 'catalog', catalogType: row.type })}
-            data-refer={`delete-catalog-${row.name}`}
-          >
-            <DeleteIcon />
-          </IconButton>
+          {!isHideDrop && (
+            <IconButton
+              title='Delete'
+              size='small'
+              sx={{ color: theme => theme.palette.error.light }}
+              onClick={() =>
+                handleDelete({ name: row.name, type: row.node, catalogType: row.type, inUse: row.inUse === 'true' })
+              }
+              data-refer={`delete-entity-${row.name}`}
+            >
+              <DeleteIcon />
+            </IconButton>
+          )}
         </>
       )
     }
@@ -422,40 +494,189 @@ const TableView = () => {
   ]
 
   const handleShowDetails = async ({ row, type }) => {
-    if (type === 'catalog') {
-      const [err, res] = await to(getCatalogDetailsApi({ metalake, catalog: row.name }))
+    switch (type) {
+      case 'catalog': {
+        const [err, res] = await to(getCatalogDetailsApi({ metalake, catalog: row.name }))
 
-      if (err || !res) {
-        throw new Error(err)
+        if (err || !res) {
+          throw new Error(err)
+        }
+
+        setDrawerData(res.catalog)
+        setOpenDrawer(true)
+        break
       }
+      case 'schema': {
+        const [err, res] = await to(getSchemaDetailsApi({ metalake, catalog, schema: row.name }))
 
-      setDrawerData(res.catalog)
-      setOpenDrawer(true)
+        if (err || !res) {
+          throw new Error(err)
+        }
+
+        setDrawerData(res.schema)
+        setOpenDrawer(true)
+        break
+      }
+      case 'fileset': {
+        const [err, res] = await to(getFilesetDetailsApi({ metalake, catalog, schema, fileset: row.name }))
+        if (err || !res) {
+          throw new Error(err)
+        }
+
+        setDrawerData(res.fileset)
+        setOpenDrawer(true)
+        break
+      }
+      case 'topic': {
+        const [err, res] = await to(getTopicDetailsApi({ metalake, catalog, schema, topic: row.name }))
+        if (err || !res) {
+          throw new Error(err)
+        }
+
+        setDrawerData(res.topic)
+        setOpenDrawer(true)
+        break
+      }
+      case 'table': {
+        const [err, res] = await to(getTableDetailsApi({ metalake, catalog, schema, table: row.name }))
+        if (err || !res) {
+          throw new Error(err)
+        }
+
+        setDrawerData(res.table)
+        setOpenDrawer(true)
+        break
+      }
+      case 'model': {
+        const [err, res] = await to(getModelDetailsApi({ metalake, catalog, schema, model: row.name }))
+        if (err || !res) {
+          throw new Error(err)
+        }
+
+        setDrawerData(res.model)
+        setOpenDrawer(true)
+        break
+      }
+      case 'version': {
+        const [err, res] = await to(getVersionDetailsApi({ metalake, catalog, schema, model, version: row.name }))
+        if (err || !res) {
+          throw new Error(err)
+        }
+
+        setDrawerData(res.modelVersion)
+        setOpenDrawer(true)
+        break
+      }
+      default:
+        return
     }
   }
 
   const handleShowEditDialog = async data => {
-    const metalake = data.row.namespace[0] || null
-    const catalog = data.row.name || null
+    switch (data.type) {
+      case 'catalog': {
+        const [err, res] = await to(getCatalogDetailsApi({ metalake, catalog: data.row?.name }))
 
-    if (metalake && catalog) {
-      const [err, res] = await to(getCatalogDetailsApi({ metalake, catalog }))
+        if (err || !res) {
+          throw new Error(err)
+        }
 
-      if (err || !res) {
-        throw new Error(err)
+        const { catalog: resCatalog } = res
+
+        setDialogType('update')
+        setDialogData(resCatalog)
+        setOpenDialog(true)
+        break
       }
+      case 'schema': {
+        if (metalake && catalog) {
+          const [err, res] = await to(getSchemaDetailsApi({ metalake, catalog, schema: data.row?.name }))
 
-      const { catalog: resCatalog } = res
+          if (err || !res) {
+            throw new Error(err)
+          }
 
-      setDialogType('update')
-      setDialogData(resCatalog)
-      setOpenDialog(true)
+          setDialogType('update')
+          setDialogData(res.schema)
+          setOpenSchemaDialog(true)
+        }
+        break
+      }
+      case 'fileset': {
+        if (metalake && catalog && schema) {
+          const [err, res] = await to(getFilesetDetailsApi({ metalake, catalog, schema, fileset: data.row?.name }))
+          if (err || !res) {
+            throw new Error(err)
+          }
+
+          setDialogType('update')
+          setDialogData(res.fileset)
+          setOpenFilesetDialog(true)
+        }
+        break
+      }
+      case 'topic': {
+        if (metalake && catalog && schema) {
+          const [err, res] = await to(getTopicDetailsApi({ metalake, catalog, schema, topic: data.row?.name }))
+          if (err || !res) {
+            throw new Error(err)
+          }
+
+          setDialogType('update')
+          setDialogData(res.topic)
+          setOpenTopicDialog(true)
+        }
+        break
+      }
+      case 'table': {
+        if (metalake && catalog && schema) {
+          const [err, res] = await to(getTableDetailsApi({ metalake, catalog, schema, table: data.row?.name }))
+          if (err || !res) {
+            throw new Error(err)
+          }
+
+          setDialogType('update')
+          setDialogData(res.table)
+          setOpenTableDialog(true)
+        }
+        break
+      }
+      case 'model': {
+        if (metalake && catalog && schema) {
+          const [err, res] = await to(getModelDetailsApi({ metalake, catalog, schema, model: data.row?.name }))
+          if (err || !res) {
+            throw new Error(err)
+          }
+
+          setDialogType('update')
+          setDialogData(res.model)
+          setOpenModelDialog(true)
+        }
+        break
+      }
+      case 'version': {
+        if (metalake && catalog && schema && model) {
+          const [err, res] = await to(
+            getVersionDetailsApi({ metalake, catalog, schema, model, version: data.row?.name })
+          )
+          if (err || !res) {
+            throw new Error(err)
+          }
+
+          setDialogType('update')
+          setDialogData(res.modelVersion)
+          setOpenModelVersionDialog(true)
+        }
+        break
+      }
+      default:
+        return
     }
   }
 
-  const handleDelete = ({ name, type, catalogType }) => {
+  const handleDelete = ({ name, type, catalogType, inUse }) => {
     setOpenConfirmDelete(true)
-    setConfirmCacheData({ name, type, catalogType })
+    setConfirmCacheData({ name, type, catalogType, inUse })
   }
 
   const handleCloseConfirm = () => {
@@ -465,17 +686,76 @@ const TableView = () => {
 
   const handleConfirmDeleteSubmit = () => {
     if (confirmCacheData) {
-      if (confirmCacheData.type === 'catalog') {
-        dispatch(deleteCatalog({ metalake, catalog: confirmCacheData.name, type: confirmCacheData.catalogType }))
+      switch (confirmCacheData.type) {
+        case 'catalog':
+          dispatch(deleteCatalog({ metalake, catalog: confirmCacheData.name, type: confirmCacheData.catalogType }))
+          break
+        case 'schema':
+          dispatch(deleteSchema({ metalake, catalog, type, schema: confirmCacheData.name }))
+          break
+        case 'fileset':
+          dispatch(deleteFileset({ metalake, catalog, type, schema, fileset: confirmCacheData.name }))
+          break
+        case 'topic':
+          dispatch(deleteTopic({ metalake, catalog, type, schema, topic: confirmCacheData.name }))
+          break
+        case 'table':
+          dispatch(deleteTable({ metalake, catalog, type, schema, table: confirmCacheData.name }))
+          break
+        case 'model':
+          dispatch(deleteModel({ metalake, catalog, type, schema, model: confirmCacheData.name }))
+          break
+        case 'version':
+          dispatch(deleteVersion({ metalake, catalog, type, schema, model, version: confirmCacheData.name }))
+          break
+        default:
+          break
       }
 
       setOpenConfirmDelete(false)
     }
   }
 
+  const handleChangeInUse = async (name, catalogType, isInUse) => {
+    const [err, res] = await to(switchInUseApi({ metalake, catalog: name, isInUse }))
+    if (err || !res) {
+      throw new Error(err)
+    }
+    dispatch(setCatalogInUse({ name, catalogType, metalake, isInUse }))
+  }
+
   const checkColumns = () => {
-    if (paramsSize == 1 && searchParams.has('metalake')) {
-      return catalogsColumns
+    if (
+      (paramsSize == 1 && searchParams.has('metalake')) ||
+      (paramsSize == 3 && searchParams.has('metalake') && searchParams.has('catalog') && searchParams.has('type')) ||
+      (paramsSize == 4 &&
+        searchParams.has('metalake') &&
+        searchParams.has('catalog') &&
+        searchParams.get('type') === 'fileset' &&
+        searchParams.has('schema')) ||
+      (paramsSize == 4 &&
+        searchParams.has('metalake') &&
+        searchParams.has('catalog') &&
+        searchParams.get('type') === 'messaging' &&
+        searchParams.has('schema')) ||
+      (paramsSize == 4 &&
+        searchParams.has('metalake') &&
+        searchParams.has('catalog') &&
+        searchParams.get('type') === 'relational' &&
+        searchParams.has('schema')) ||
+      (paramsSize == 4 &&
+        searchParams.has('metalake') &&
+        searchParams.has('catalog') &&
+        searchParams.get('type') === 'model' &&
+        searchParams.has('schema')) ||
+      (paramsSize == 5 &&
+        searchParams.has('metalake') &&
+        searchParams.has('catalog') &&
+        searchParams.get('type') === 'model' &&
+        searchParams.has('schema') &&
+        searchParams.has('model'))
+    ) {
+      return actionsColumns
     } else if (paramsSize == 5 && searchParams.has('table')) {
       return tableColumns
     } else {
@@ -508,12 +788,7 @@ const TableView = () => {
         paginationModel={paginationModel}
         onPaginationModelChange={setPaginationModel}
       />
-      <DetailsDrawer
-        openDrawer={openDrawer}
-        setOpenDrawer={setOpenDrawer}
-        drawerData={drawerData}
-        isMetalakePage={paramsSize == 1 && searchParams.hasOwnProperty('metalake')}
-      />
+      <DetailsDrawer openDrawer={openDrawer} setOpenDrawer={setOpenDrawer} drawerData={drawerData} />
       <ConfirmDeleteDialog
         open={openConfirmDelete}
         setOpen={setOpenConfirmDelete}
@@ -522,10 +797,26 @@ const TableView = () => {
         handleConfirmDeleteSubmit={handleConfirmDeleteSubmit}
       />
 
-      <CreateCatalogDialog
-        open={openDialog}
-        setOpen={setOpenDialog}
-        updateCatalog={updateCatalog}
+      <CreateCatalogDialog open={openDialog} setOpen={setOpenDialog} data={dialogData} type={dialogType} />
+
+      <CreateSchemaDialog open={openSchemaDialog} setOpen={setOpenSchemaDialog} data={dialogData} type={dialogType} />
+
+      <CreateFilesetDialog
+        open={openFilesetDialog}
+        setOpen={setOpenFilesetDialog}
+        data={dialogData}
+        type={dialogType}
+      />
+
+      <CreateTopicDialog open={openTopicDialog} setOpen={setOpenTopicDialog} data={dialogData} type={dialogType} />
+
+      <CreateTableDialog open={openTableDialog} setOpen={setOpenTableDialog} data={dialogData} type={dialogType} />
+
+      <RegisterModelDialog open={openModelDialog} setOpen={setOpenModelDialog} data={dialogData} type={dialogType} />
+
+      <LinkVersionDialog
+        open={openModelVersionDialog}
+        setOpen={setOpenModelVersionDialog}
         data={dialogData}
         type={dialogType}
       />

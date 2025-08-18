@@ -47,10 +47,13 @@ tasks.withType<ShadowJar>(ShadowJar::class.java) {
   archiveFileName.set("$baseName-$version.jar")
   archiveClassifier.set("")
 
+  exclude("org/slf4j/**")
+
   // Relocate dependencies to avoid conflicts
   relocate("com.google", "org.apache.gravitino.shaded.com.google")
   relocate("google", "org.apache.gravitino.shaded.google")
   relocate("org.apache.hc", "org.apache.gravitino.shaded.org.apache.hc")
+  relocate("com.github.benmanes.caffeine", "org.apache.gravitino.shaded.com.github.benmanes.caffeine")
 }
 
 publishing {

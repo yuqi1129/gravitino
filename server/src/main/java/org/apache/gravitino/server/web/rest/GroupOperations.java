@@ -31,21 +31,20 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.Response;
+import org.apache.gravitino.Entity;
 import org.apache.gravitino.GravitinoEnv;
-import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Namespace;
 import org.apache.gravitino.authorization.AccessControlDispatcher;
-import org.apache.gravitino.authorization.AuthorizationUtils;
 import org.apache.gravitino.dto.requests.GroupAddRequest;
 import org.apache.gravitino.dto.responses.GroupListResponse;
 import org.apache.gravitino.dto.responses.GroupResponse;
 import org.apache.gravitino.dto.responses.NameListResponse;
 import org.apache.gravitino.dto.responses.RemoveResponse;
 import org.apache.gravitino.dto.util.DTOConverters;
-import org.apache.gravitino.lock.LockType;
-import org.apache.gravitino.lock.TreeLockUtils;
 import org.apache.gravitino.metrics.MetricNames;
 import org.apache.gravitino.server.authorization.NameBindings;
+import org.apache.gravitino.server.authorization.annotations.AuthorizationExpression;
+import org.apache.gravitino.server.authorization.annotations.AuthorizationMetadata;
 import org.apache.gravitino.server.web.Utils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -78,14 +77,9 @@ public class GroupOperations {
       return Utils.doAs(
           httpRequest,
           () ->
-              TreeLockUtils.doWithTreeLock(
-                  AuthorizationUtils.ofGroup(metalake, group),
-                  LockType.READ,
-                  () ->
-                      Utils.ok(
-                          new GroupResponse(
-                              DTOConverters.toDTO(
-                                  accessControlManager.getGroup(metalake, group))))));
+              Utils.ok(
+                  new GroupResponse(
+                      DTOConverters.toDTO(accessControlManager.getGroup(metalake, group)))));
     } catch (Exception e) {
       return ExceptionHandlers.handleGroupException(OperationType.GET, group, metalake, e);
     }
@@ -95,19 +89,21 @@ public class GroupOperations {
   @Produces("application/vnd.gravitino.v1+json")
   @Timed(name = "add-group." + MetricNames.HTTP_PROCESS_DURATION, absolute = true)
   @ResponseMetered(name = "add-group", absolute = true)
-  public Response addGroup(@PathParam("metalake") String metalake, GroupAddRequest request) {
+  @AuthorizationExpression(expression = "METALAKE::OWNER || METALAKE::MANAGE_GROUPS")
+  public Response addGroup(
+      @PathParam("metalake") @AuthorizationMetadata(type = Entity.EntityType.METALAKE)
+          String metalake,
+      GroupAddRequest request) {
     try {
       return Utils.doAs(
           httpRequest,
-          () ->
-              TreeLockUtils.doWithTreeLock(
-                  NameIdentifier.of(AuthorizationUtils.ofGroupNamespace(metalake).levels()),
-                  LockType.WRITE,
-                  () ->
-                      Utils.ok(
-                          new GroupResponse(
-                              DTOConverters.toDTO(
-                                  accessControlManager.addGroup(metalake, request.getName()))))));
+          () -> {
+            request.validate();
+            return Utils.ok(
+                new GroupResponse(
+                    DTOConverters.toDTO(
+                        accessControlManager.addGroup(metalake, request.getName()))));
+          });
     } catch (Exception e) {
       return ExceptionHandlers.handleGroupException(
           OperationType.ADD, request.getName(), metalake, e);
@@ -119,17 +115,16 @@ public class GroupOperations {
   @Produces("application/vnd.gravitino.v1+json")
   @Timed(name = "remove-group." + MetricNames.HTTP_PROCESS_DURATION, absolute = true)
   @ResponseMetered(name = "remove-group", absolute = true)
+  @AuthorizationExpression(expression = "METALAKE::OWNER || METALAKE::MANAGE_GROUPS")
   public Response removeGroup(
-      @PathParam("metalake") String metalake, @PathParam("group") String group) {
+      @PathParam("metalake") @AuthorizationMetadata(type = Entity.EntityType.METALAKE)
+          String metalake,
+      @PathParam("group") String group) {
     try {
       return Utils.doAs(
           httpRequest,
           () -> {
-            boolean removed =
-                TreeLockUtils.doWithTreeLock(
-                    NameIdentifier.of(AuthorizationUtils.ofGroupNamespace(metalake).levels()),
-                    LockType.WRITE,
-                    () -> accessControlManager.removeGroup(metalake, group));
+            boolean removed = accessControlManager.removeGroup(metalake, group);
             if (!removed) {
               LOG.warn("Failed to remove group {} under metalake {}", group, metalake);
             }

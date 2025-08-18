@@ -18,27 +18,28 @@
  */
 package org.apache.gravitino.trino.connector.catalog.iceberg;
 
+import static org.apache.gravitino.catalog.lakehouse.iceberg.IcebergConstants.FORMAT;
+import static org.apache.gravitino.catalog.lakehouse.iceberg.IcebergConstants.FORMAT_VERSION;
+import static org.apache.gravitino.catalog.lakehouse.iceberg.IcebergConstants.PROVIDER;
+import static org.apache.gravitino.trino.connector.catalog.iceberg.IcebergPropertyMeta.ICEBERG_FORMAT_PROPERTY;
+import static org.apache.gravitino.trino.connector.catalog.iceberg.IcebergPropertyMeta.ICEBERG_FORMAT_VERSION_PROPERTY;
+import static org.apache.gravitino.trino.connector.catalog.iceberg.IcebergTablePropertyConverter.convertTableFormatToTrino;
+
 import com.google.common.collect.ImmutableSet;
 import io.trino.spi.connector.ColumnMetadata;
 import io.trino.spi.connector.ConnectorTableMetadata;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.session.PropertyMetadata;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.gravitino.catalog.property.PropertyConverter;
-import org.apache.gravitino.rel.expressions.Expression;
-import org.apache.gravitino.rel.expressions.NamedReference;
 import org.apache.gravitino.rel.expressions.sorts.SortOrder;
-import org.apache.gravitino.rel.expressions.sorts.SortOrders;
 import org.apache.gravitino.rel.expressions.transforms.Transform;
-import org.apache.gravitino.rel.expressions.transforms.Transforms;
 import org.apache.gravitino.trino.connector.catalog.CatalogConnectorMetadataAdapter;
 import org.apache.gravitino.trino.connector.metadata.GravitinoColumn;
 import org.apache.gravitino.trino.connector.metadata.GravitinoTable;
@@ -55,6 +56,13 @@ public class IcebergMetadataAdapter extends CatalogConnectorMetadataAdapter {
           IcebergPropertyMeta.ICEBERG_PARTITIONING_PROPERTY,
           IcebergPropertyMeta.ICEBERG_SORTED_BY_PROPERTY);
 
+  /**
+   * Constructs a new IcebergMetadataAdapter.
+   *
+   * @param schemaProperties the list of schema property metadata
+   * @param tableProperties the list of table property metadata
+   * @param columnProperties the list of column property metadata
+   */
   public IcebergMetadataAdapter(
       List<PropertyMetadata<?>> schemaProperties,
       List<PropertyMetadata<?>> tableProperties,
@@ -109,6 +117,14 @@ public class IcebergMetadataAdapter extends CatalogConnectorMetadataAdapter {
         toGravitinoTableProperties(
             removeKeys(tableMetadata.getProperties(), ICEBERG_PROPERTIES_TO_REMOVE));
 
+    if (propertyMap.containsKey(ICEBERG_FORMAT_PROPERTY)) {
+      String format = propertyMap.get(ICEBERG_FORMAT_PROPERTY).toString();
+      properties.put(PROVIDER, format);
+      if (propertyMap.containsKey((ICEBERG_FORMAT_VERSION_PROPERTY))) {
+        properties.put(FORMAT_VERSION, propertyMap.get(ICEBERG_FORMAT_VERSION_PROPERTY).toString());
+      }
+    }
+
     List<GravitinoColumn> columns = new ArrayList<>();
     for (int i = 0; i < tableMetadata.getColumns().size(); i++) {
       ColumnMetadata column = tableMetadata.getColumns().get(i);
@@ -126,20 +142,12 @@ public class IcebergMetadataAdapter extends CatalogConnectorMetadataAdapter {
         new GravitinoTable(schemaName, tableName, columns, comment, properties);
 
     if (!partitionColumns.isEmpty()) {
-      Transform[] partitioning =
-          partitionColumns.stream().map(Transforms::identity).toArray(Transform[]::new);
+      Transform[] partitioning = ExpressionUtil.partitionFiledToExpression(partitionColumns);
       gravitinoTable.setPartitioning(partitioning);
     }
 
     if (!sortColumns.isEmpty()) {
-      SortOrder[] sorting =
-          sortColumns.stream()
-              .map(
-                  sortingColumn -> {
-                    Expression expression = NamedReference.field(sortingColumn);
-                    return SortOrders.ascending(expression);
-                  })
-              .toArray(SortOrder[]::new);
+      SortOrder[] sorting = ExpressionUtil.sortOrderFiledToExpression(sortColumns);
       gravitinoTable.setSortOrders(sorting);
     }
 
@@ -157,29 +165,22 @@ public class IcebergMetadataAdapter extends CatalogConnectorMetadataAdapter {
 
     Map<String, Object> properties = toTrinoTableProperties(gravitinoTable.getProperties());
 
+    properties.put(
+        ICEBERG_FORMAT_PROPERTY,
+        convertTableFormatToTrino(gravitinoTable.getProperties().get(FORMAT)));
+    properties.put(
+        ICEBERG_FORMAT_VERSION_PROPERTY, gravitinoTable.getProperties().get(FORMAT_VERSION));
+
     if (ArrayUtils.isNotEmpty(gravitinoTable.getPartitioning())) {
-      // Only support simple partition now like partition by a, b, c.
-      // Format like partition like partition by year(a), b, c is NOT supported now.
       properties.put(
           IcebergPropertyMeta.ICEBERG_PARTITIONING_PROPERTY,
-          gravitinoTable.getPartitioning().length > 0
-              ? Arrays.stream(gravitinoTable.getPartitioning())
-                  .map(ts -> ((Transform.SingleFieldTransform) ts).fieldName()[0])
-                  .collect(Collectors.toList())
-              : Collections.emptyList());
+          ExpressionUtil.expressionToPartitionFiled(gravitinoTable.getPartitioning()));
     }
 
     if (ArrayUtils.isNotEmpty(gravitinoTable.getSortOrders())) {
-      // Only support the simple format
       properties.put(
           IcebergPropertyMeta.ICEBERG_SORTED_BY_PROPERTY,
-          Arrays.stream(gravitinoTable.getSortOrders())
-              .map(
-                  sortOrder -> {
-                    Expression expression = sortOrder.expression();
-                    return ((NamedReference) expression).fieldName()[0];
-                  })
-              .collect(Collectors.toList()));
+          ExpressionUtil.expressionToSortOrderFiled(gravitinoTable.getSortOrders()));
     }
 
     return new ConnectorTableMetadata(

@@ -14,10 +14,24 @@ You can deploy the service with the Gravitino Docker image.
 Container startup commands
 
 ```shell
-docker run --rm -d -p 8090:8090 -p 9001:9001 apache/gravitino:0.6.0-incubating
+docker run --rm -d -p 8090:8090 -p 9001:9001 apache/gravitino:0.7.0-incubating
 ```
 
 Changelog
+
+
+- apache/gravitino:0.9.1
+  - Based on Gravitino 0.9.1, you can know more information from 0.9.1 [release notes](https://github.com/apache/gravitino/releases/tag/v0.9.1).
+
+- apache/gravitino:0.9.0-incubating
+  - Based on Gravitino 0.9.0-incubating, you can know more information from 0.9.0-incubating [release notes](https://github.com/apache/gravitino/releases/tag/v0.9.0-incubating).
+
+- apache/gravitino:0.8.0-incubating
+  - Based on Gravitino 0.8.0-incubating, you can know more information from 0.8.0-incubating [release notes](https://github.com/apache/gravitino/releases/tag/v0.8.0-incubating).
+
+- apache/gravitino:0.7.0-incubating
+  - Based on Gravitino 0.7.0-incubating, you can know more information from 0.7.0-incubating [release notes](https://github.com/apache/gravitino/releases/tag/v0.7.0-incubating).
+  - Place bundle jars (gravitino-aws-bundle.jar, gravitino-gcp-bundle.jar, gravitino-aliyun-bundle.jar) in the `${GRAVITINO_HOME}/catalogs/hadoop/libs` folder to support the cloud storage catalog without manually adding the jars to the classpath.
 
 - apache/gravitino:0.6.1-incubating
   - Based on Gravitino 0.6.1-incubating, you can know more information from 0.6.1-incubating release notes.
@@ -51,10 +65,30 @@ You can deploy the standalone Gravitino Iceberg REST server with the Docker imag
 Container startup commands
 
 ```shell
-docker run --rm -d -p 9001:9001 apache/gravitino-iceberg-rest:0.6.0-incubating
+docker run --rm -d -p 9001:9001 apache/gravitino-iceberg-rest:0.7.0-incubating
 ```
 
 Changelog
+- apache/gravitino-iceberg-rest:0.9.1
+  - Fix the issue that Iceberg REST server fail to start when enabling OAuth.
+  - Add the documents for the StarRocks and Apache Doris using IRC
+
+- apache/gravitino-iceberg-rest:0.9.0-incubating
+  - Upgrade Iceberg version from 1.5 to 1.6.
+  - Supports s3 path-style-access property.
+  - Bug fix for warehouse is hard code in Iceberg memory catalog backend.
+
+
+- apache/gravitino-iceberg-rest:0.8.0-incubating
+  - Supports OSS and ADLS storage.
+  - Supports event listener.
+  - Supports audit log.
+
+- apache/gravitino-iceberg-rest:0.7.0-incubating
+  - Using JDBC catalog backend.
+  - Supports S3 and GCS storage.
+  - Supports credential vending.
+  - Supports changing configuration by environment variables.
 
 - apache/gravitino-iceberg-rest:0.6.1-incubating
   - Based on Gravitino 0.6.1-incubating, you can know more information from 0.6.1-incubating release notes.
@@ -88,6 +122,20 @@ Changelog
 ### Trino image
 
 Changelog
+
+
+- apache/gravitino-playground:trino-435-gravitino-0.9.1
+  - Use Gravitino release 0.9.1 Dockerfile to build the image.
+
+- apache/gravitino-playground:trino-435-gravitino-0.9.0-incubating
+  - Use Gravitino release 0.9.0-incubating Dockerfile to build the image.
+
+- apache/gravitino-playground:trino-435-gravitino-0.8.0-incubating
+  - Use Gravitino release 0.8.0-incubating Dockerfile to build the image.
+
+- apache/gravitino-playground:trino-435-gravitino-0.7.0-incubating
+  - Use Gravitino release 0.7.0-incubating Dockerfile to build the image.
+
 - apache/gravitino-playground:trino-435-gravitino-0.6.1-incubating
   - Use Gravitino release 0.6.1-incubating Dockerfile to build the image.
 
@@ -120,6 +168,10 @@ You can use these kinds of Docker images to facilitate integration testing of al
 You can use this kind of image to test the catalog of Apache Hive with kerberos enable
 
 Changelog
+
+- apache/gravitino-ci:kerberos-hive-0.1.6
+  - Change username from `datastrato` to `gravitino`.
+    For more information, see [PR](https://github.com/apache/gravitino/pull/7040)
 
 - apache/gravitino-ci:kerberos-hive-0.1.5 (Switch to Apache official DockerHub repository)
   - Use Gravitino release 0.6.0 Dockerfile to build the image.
@@ -154,6 +206,29 @@ Changelog
 You can use this kind of image to test the catalog of Apache Hive.
 
 Changelog
+
+- apache/gravitino-ci:hive-0.1.20
+  - Change username from `datastrato` to `gravitino`.
+    For more information, see [PR](https://github.com/apache/gravitino/pull/7040)
+
+- apache/gravitino-ci:hive-0.1.19
+  - Build ranger packages from source.
+ 
+- apache/gravitino-ci:hive-0.1.18
+  - Support UTF-8 encoding for the `hive-site.xml` file and Hive Metastore. 
+    For more information, please see [PR](https://github.com/apache/gravitino/pull/6625)
+  - Change ranger-hive-plugin and ranger-hdfs-plugin download URL. 
+
+- apache/gravitino-ci:hive-0.1.17
+  - Add support for JDBC SQL standard authorization
+    - Add JDBC SQL standard authorization related configuration in the `hive-site-for-sql-base-auth.xml` and `hiveserver2-site-for-sql-base-auth.xml`
+- 
+- apache/gravitino-ci:hive-0.1.16
+  - Add GCS related configuration in the `hive-site.xml` file.
+  - Add GCS bundle jar in the `${HADOOP_HOME}/share/hadoop/common/lib/`
+
+- apache/gravitino-ci:hive-0.1.15
+  - Add Azure Blob Storage(ADLS) related configurations in the `hive-site.xml` file.
 
 - apache/gravitino-ci:hive-0.1.14 
   - Add amazon S3 related configurations in the `hive-site.xml` file.
@@ -313,6 +388,9 @@ You can use this image to control Trino's permissions.
 
 Changelog
 
+- apache/gravitino-ci:ranger-0.1.2
+  - Build ranger packages from source.
+
 - apache/gravitino-ci:ranger-0.1.1 (Switch to Apache official DockerHub repository)
   - Use Gravitino release 0.6.0 Dockerfile to build the image.
 
@@ -331,6 +409,7 @@ Changelog
 - datastrato/gravitino-ci-ranger:0.1.0
   - Docker image `datastrato/gravitino-ci-ranger:0.1.0`
   - Support Apache Ranger 2.4.0
-  - Use environment variable `RANGER_PASSWORD` to set up Apache Ranger admin password, Please notice Apache Ranger Password should be minimum 8 characters with min one alphabet and one numeric.
+  - Use environment variable `RANGER_PASSWORD` to set up Apache Ranger admin password, please 
+    notice Apache Ranger Password should be minimum 8 characters with min one alphabet and one numeric.
   - Expose ports:
     - `6080` Apache Ranger admin port

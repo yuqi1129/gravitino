@@ -56,14 +56,13 @@ import org.apache.gravitino.meta.UserEntity;
 import org.apache.gravitino.rest.RESTUtils;
 import org.glassfish.hk2.utilities.binding.AbstractBinder;
 import org.glassfish.jersey.server.ResourceConfig;
-import org.glassfish.jersey.test.JerseyTest;
 import org.glassfish.jersey.test.TestProperties;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
-public class TestUserOperations extends JerseyTest {
+public class TestUserOperations extends BaseOperationsTest {
 
   private static final AccessControlManager manager = mock(AccessControlManager.class);
 
@@ -114,6 +113,15 @@ public class TestUserOperations extends JerseyTest {
     User user = buildUser("user1");
 
     when(manager.addUser(any(), any())).thenReturn(user);
+
+    // test with IllegalRequest
+    UserAddRequest illegalReq = new UserAddRequest("");
+    Response illegalResp =
+        target("/metalakes/metalake1/users")
+            .request(MediaType.APPLICATION_JSON_TYPE)
+            .accept("application/vnd.gravitino.v1+json")
+            .post(Entity.entity(illegalReq, MediaType.APPLICATION_JSON_TYPE));
+    Assertions.assertEquals(Response.Status.BAD_REQUEST.getStatusCode(), illegalResp.getStatus());
 
     Response resp =
         target("/metalakes/metalake1/users")

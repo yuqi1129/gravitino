@@ -150,6 +150,11 @@ RUN ln -s /opt/hadoop-${HADOOP2_VERSION} ${HADOOP2_HOME}
 ADD packages/hadoop-${HADOOP3_VERSION}.tar.gz /opt/
 RUN ln -s /opt/hadoop-${HADOOP3_VERSION} ${HADOOP3_HOME}
 
+
+# Add gcs connector for hadoop2 and hadoop3
+ADD packages/gcs-connector-hadoop2-2.2.23-shaded.jar ${HADOOP2_HOME}/share/hadoop/common/lib/gcs-connector-hadoop2-2.2.23-shaded.jar
+ADD packages/gcs-connector-hadoop3-2.2.23-shaded.jar ${HADOOP3_HOME}/share/hadoop/common/lib/gcs-connector-hadoop3-2.2.23-shaded.jar
+
 # Add hadoop configuration to temporary directory
 ADD core-site.xml ${HADOOP_TMP_CONF_DIR}/core-site.xml
 ADD hadoop-env.sh ${HADOOP_TMP_CONF_DIR}/hadoop-env.sh
@@ -166,6 +171,8 @@ RUN ln -s /opt/apache-hive-${HIVE3_VERSION}-bin ${HIVE3_HOME}
 
 # Add hive configuration to temporary directory
 ADD hive-site.xml ${HIVE_TMP_CONF_DIR}/hive-site.xml
+ADD hive-site-for-sql-base-auth.xml ${HIVE_TMP_CONF_DIR}/hive-site-for-sql-base-auth.xml
+ADD hiveserver2-site-for-sql-base-auth.xml ${HIVE_TMP_CONF_DIR}/hiveserver2-site-for-sql-base-auth.xml
 
 ################################################################################
 # add mysql jdbc driver
@@ -175,16 +182,16 @@ ADD packages/mysql-connector-java-${MYSQL_JDBC_DRIVER_VERSION}.tar.gz /opt/
 # add users and groups
 RUN groupadd hdfs && groupadd hadoop && groupadd hive && groupadd mapred
 
-RUN useradd -g hadoop datastrato && echo "datastrato:ds123" | chpasswd && adduser datastrato sudo
-RUN usermod -s /bin/bash datastrato
+RUN useradd -g hadoop gravitino && echo "gravitino:ds123" | chpasswd && adduser gravitino sudo
+RUN usermod -s /bin/bash gravitino
 
-RUN usermod -a -G hdfs datastrato
-RUN usermod -a -G hadoop datastrato
-RUN usermod -a -G hive datastrato
-RUN usermod -a -G mapred datastrato
+RUN usermod -a -G hdfs gravitino
+RUN usermod -a -G hadoop gravitino
+RUN usermod -a -G hive gravitino
+RUN usermod -a -G mapred gravitino
 
-RUN mkdir /home/datastrato
-RUN chown -R datastrato:hadoop /home/datastrato
+RUN mkdir /home/gravitino
+RUN chown -R gravitino:hadoop /home/gravitino
 
 ################################################################################
 # removed install packages and cache

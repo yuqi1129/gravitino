@@ -19,7 +19,7 @@ import logging
 from typing import Dict, List
 
 from gravitino import GravitinoAdminClient, GravitinoMetalake, MetalakeChange
-from gravitino.dto.dto_converters import DTOConverters
+from gravitino.client.dto_converters import DTOConverters
 from gravitino.dto.requests.metalake_updates_request import MetalakeUpdatesRequest
 from gravitino.exceptions.base import (
     GravitinoRuntimeException,
@@ -90,6 +90,14 @@ class TestMetalake(IntegrationTestEnv):
         with self.assertRaises(MetalakeAlreadyExistsException):
             _ = self.create_metalake(self.metalake_name)
 
+    def test_nullable_comment_metalake(self):
+        self.create_metalake(self.metalake_name)
+        changes = (MetalakeChange.update_comment(None),)
+        null_comment_metalake = self.gravitino_admin_client.alter_metalake(
+            self.metalake_name, *changes
+        )
+        self.assertIsNone(null_comment_metalake.comment())
+
     def test_alter_metalake(self):
         self.create_metalake(self.metalake_name)
 
@@ -118,7 +126,7 @@ class TestMetalake(IntegrationTestEnv):
         self.assertTrue(self.metalake_properties_key1 not in metalake.properties())
 
     def drop_metalake(self, metalake_name: str) -> bool:
-        return self.gravitino_admin_client.drop_metalake(metalake_name)
+        return self.gravitino_admin_client.drop_metalake(metalake_name, True)
 
     def test_drop_metalake(self):
         self.create_metalake(self.metalake_name)
@@ -152,7 +160,9 @@ class TestMetalake(IntegrationTestEnv):
         self.assertIsNotNone(metalake)
         self.assertEqual(metalake.name(), self.metalake_name)
         self.assertEqual(metalake.comment(), self.metalake_comment)
-        self.assertEqual(metalake.properties(), self.metalake_properties)
+        self.assertEqual(
+            metalake.properties(), {**self.metalake_properties, "in-use": "true"}
+        )
         self.assertEqual(metalake.audit_info().creator(), "anonymous")
 
     def test_failed_load_metalakes(self):

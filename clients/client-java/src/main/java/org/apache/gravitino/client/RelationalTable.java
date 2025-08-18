@@ -23,6 +23,7 @@ import static org.apache.gravitino.dto.util.DTOConverters.toDTO;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -41,8 +42,12 @@ import org.apache.gravitino.dto.responses.PartitionListResponse;
 import org.apache.gravitino.dto.responses.PartitionNameListResponse;
 import org.apache.gravitino.dto.responses.PartitionResponse;
 import org.apache.gravitino.exceptions.NoSuchPartitionException;
+import org.apache.gravitino.exceptions.NoSuchPolicyException;
 import org.apache.gravitino.exceptions.NoSuchTagException;
 import org.apache.gravitino.exceptions.PartitionAlreadyExistsException;
+import org.apache.gravitino.exceptions.PolicyAlreadyAssociatedException;
+import org.apache.gravitino.policy.Policy;
+import org.apache.gravitino.policy.SupportsPolicies;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.SupportsPartitions;
 import org.apache.gravitino.rel.Table;
@@ -56,7 +61,8 @@ import org.apache.gravitino.tag.SupportsTags;
 import org.apache.gravitino.tag.Tag;
 
 /** Represents a relational table. */
-class RelationalTable implements Table, SupportsPartitions, SupportsTags, SupportsRoles {
+class RelationalTable
+    implements Table, SupportsPartitions, SupportsTags, SupportsRoles, SupportsPolicies {
 
   private static final Joiner DOT_JOINER = Joiner.on(".");
 
@@ -68,6 +74,7 @@ class RelationalTable implements Table, SupportsPartitions, SupportsTags, Suppor
 
   private final MetadataObjectTagOperations objectTagOperations;
   private final MetadataObjectRoleOperations objectRoleOperations;
+  private final MetadataObjectPolicyOperations objectPolicyOperations;
 
   /**
    * Creates a new RelationalTable.
@@ -98,6 +105,8 @@ class RelationalTable implements Table, SupportsPartitions, SupportsTags, Suppor
         new MetadataObjectTagOperations(namespace.level(0), tableObject, restClient);
     this.objectRoleOperations =
         new MetadataObjectRoleOperations(namespace.level(0), tableObject, restClient);
+    this.objectPolicyOperations =
+        new MetadataObjectPolicyOperations(namespace.level(0), tableObject, restClient);
   }
 
   /**
@@ -113,7 +122,17 @@ class RelationalTable implements Table, SupportsPartitions, SupportsTags, Suppor
   /** @return the columns of the table. */
   @Override
   public Column[] columns() {
-    return table.columns();
+    return Arrays.stream(table.columns())
+        .map(
+            c ->
+                new GenericColumn(
+                    c,
+                    restClient,
+                    namespace.level(0),
+                    namespace.level(1),
+                    namespace.level(2),
+                    name()))
+        .toArray(Column[]::new);
   }
 
   /** @return the partitioning of the table. */
@@ -175,13 +194,13 @@ class RelationalTable implements Table, SupportsPartitions, SupportsTags, Suppor
   @VisibleForTesting
   String getPartitionRequestPath() {
     return "api/metalakes/"
-        + namespace.level(0)
+        + RESTUtils.encodeString(namespace.level(0))
         + "/catalogs/"
-        + namespace.level(1)
+        + RESTUtils.encodeString(namespace.level(1))
         + "/schemas/"
-        + namespace.level(2)
+        + RESTUtils.encodeString(namespace.level(2))
         + "/tables/"
-        + name()
+        + RESTUtils.encodeString(name())
         + "/partitions";
   }
 
@@ -289,6 +308,11 @@ class RelationalTable implements Table, SupportsPartitions, SupportsTags, Suppor
   }
 
   @Override
+  public SupportsPolicies supportsPolicies() {
+    return this;
+  }
+
+  @Override
   public SupportsRoles supportsRoles() {
     return this;
   }
@@ -315,6 +339,27 @@ class RelationalTable implements Table, SupportsPartitions, SupportsTags, Suppor
   @Override
   public String[] associateTags(String[] tagsToAdd, String[] tagsToRemove) {
     return objectTagOperations.associateTags(tagsToAdd, tagsToRemove);
+  }
+
+  @Override
+  public String[] listPolicies() {
+    return objectPolicyOperations.listPolicies();
+  }
+
+  @Override
+  public Policy[] listPolicyInfos() {
+    return objectPolicyOperations.listPolicyInfos();
+  }
+
+  @Override
+  public Policy getPolicy(String name) throws NoSuchPolicyException {
+    return objectPolicyOperations.getPolicy(name);
+  }
+
+  @Override
+  public String[] associatePolicies(String[] policiesToAdd, String[] policiesToRemove)
+      throws PolicyAlreadyAssociatedException {
+    return objectPolicyOperations.associatePolicies(policiesToAdd, policiesToRemove);
   }
 
   @Override

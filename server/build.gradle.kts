@@ -27,6 +27,7 @@ dependencies {
   implementation(project(":api"))
   implementation(project(":common"))
   implementation(project(":core"))
+  implementation(project(":lineage"))
   implementation(project(":server-common"))
   implementation(libs.bundles.jetty)
   implementation(libs.bundles.jersey)
@@ -59,7 +60,8 @@ dependencies {
 
   testImplementation(libs.junit.jupiter.api)
   testImplementation(libs.junit.jupiter.params)
-  testImplementation(libs.mockito.core)
+  testImplementation(libs.mockito.inline)
+  testImplementation(libs.ognl)
 
   testRuntimeOnly(libs.junit.jupiter.engine)
 }

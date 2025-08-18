@@ -31,8 +31,10 @@ import java.net.URI;
 import java.time.ZoneId;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import jodd.io.StringOutputStream;
 import okhttp3.logging.HttpLoggingInterceptor;
+import org.awaitility.Awaitility;
 import org.jline.terminal.Terminal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,9 +42,9 @@ import org.slf4j.LoggerFactory;
 class TrinoQueryRunner {
   private static final Logger LOG = LoggerFactory.getLogger(TrinoQueryRunner.class);
 
-  private QueryRunner queryRunner;
-  private Terminal terminal;
-  private URI uri;
+  private final QueryRunner queryRunner;
+  private final Terminal terminal;
+  private final URI uri;
 
   TrinoQueryRunner(String trinoUri) throws Exception {
     this.uri = new URI(trinoUri);
@@ -65,12 +67,36 @@ class TrinoQueryRunner {
   }
 
   String runQuery(String query) {
+    String retryFlag = "<RETRY_WITH_NOT_EXISTS>";
+    if (!query.startsWith(retryFlag)) {
+      return runQueryOnce(query);
+    } else {
+      String finalQuery = query.replace(retryFlag, "");
+      AtomicReference<String> output = new AtomicReference<>("");
+      Awaitility.await()
+          .atMost(30, TimeUnit.SECONDS)
+          .pollInterval(1, TimeUnit.SECONDS)
+          .until(
+              () -> {
+                String result = runQueryOnce(finalQuery);
+                if (!result.contains("does not exist")) {
+                  output.set(result);
+                  return true;
+                }
+                return false;
+              });
+      return output.get();
+    }
+  }
+
+  String runQueryOnce(String query) {
     Query queryResult = queryRunner.startQuery(query);
     StringOutputStream outputStream = new StringOutputStream();
+    StringOutputStream errorStream = new StringOutputStream();
     queryResult.renderOutput(
         this.terminal,
         new PrintStream(outputStream),
-        new PrintStream(outputStream),
+        new PrintStream(errorStream),
         CSV,
         Optional.of(""),
         false);
@@ -84,17 +110,19 @@ class TrinoQueryRunner {
       session = builder.build();
       queryRunner.setSession(session);
     }
-    return outputStream.toString();
+
+    // Avoid the IDE capturing the error message as failure
+    String err_message = errorStream.toString().replace("\nCaused by:", "\n-Caused by:");
+    String out_message = outputStream.toString();
+    return err_message + out_message;
   }
 
-  boolean stop() {
+  void stop() {
     try {
       queryRunner.close();
       terminal.close();
-      return true;
     } catch (Exception e) {
       LOG.error("Failed to stop query runner", e);
-      return false;
     }
   }
 }

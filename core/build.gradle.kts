@@ -1,3 +1,5 @@
+import net.ltgt.gradle.errorprone.errorprone
+
 /*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -20,12 +22,14 @@ plugins {
   `maven-publish`
   id("java")
   id("idea")
+  alias(libs.plugins.jcstress)
+  alias(libs.plugins.jmh)
 }
 
 dependencies {
   implementation(project(":api"))
   implementation(project(":common"))
-  implementation(project(":meta"))
+  implementation(project(":catalogs:catalog-common"))
   implementation(libs.bundles.log4j)
   implementation(libs.bundles.metrics)
   implementation(libs.bundles.prometheus)
@@ -33,14 +37,11 @@ dependencies {
   implementation(libs.commons.dbcp2)
   implementation(libs.commons.io)
   implementation(libs.commons.lang3)
+  implementation(libs.commons.collections4)
+  implementation(libs.concurrent.trees)
   implementation(libs.guava)
   implementation(libs.h2db)
   implementation(libs.mybatis)
-  implementation(libs.protobuf.java.util) {
-    exclude("com.google.guava", "guava")
-      .because("Brings in Guava for Android, which we don't want (and breaks multimaps).")
-  }
-  implementation(libs.rocksdbjni)
 
   annotationProcessor(libs.lombok)
 
@@ -57,11 +58,14 @@ dependencies {
   testImplementation(libs.junit.jupiter.api)
   testImplementation(libs.junit.jupiter.params)
   testImplementation(libs.mockito.core)
+  testImplementation(libs.mockito.inline)
   testImplementation(libs.mysql.driver)
   testImplementation(libs.postgresql.driver)
   testImplementation(libs.testcontainers)
 
   testRuntimeOnly(libs.junit.jupiter.engine)
+
+  jcstressImplementation(libs.mockito.core)
 }
 
 tasks.test {
@@ -71,4 +75,37 @@ tasks.test {
   } else {
     environment("GRAVITINO_HOME", project.rootDir.path + "/distribution/package")
   }
+}
+
+tasks.withType<JavaCompile>().configureEach {
+  if (name.contains("jcstress", ignoreCase = true)) {
+    options.errorprone?.excludedPaths?.set(".*/generated/.*")
+  }
+}
+
+tasks.named<JavaCompile>("jmhCompileGeneratedClasses").configure {
+  options.errorprone?.isEnabled = false
+  options.compilerArgs.removeAll { it.contains("Xplugin:ErrorProne") }
+}
+
+jcstress {
+  /*
+   Available modes:
+   - sanity : takes seconds
+   - quick : takes tens of seconds
+   - default : takes minutes, good number of iterations
+   - tough : takes tens of minutes, large number of iterations, most reliable
+    */
+  mode = "default"
+  jvmArgsPrepend = "-Djdk.stdout.sync=true"
+}
+
+jmh {
+  jmhVersion.set(libs.versions.jmh.asProvider())
+  warmupIterations = 5
+  iterations = 10
+  fork = 1
+  threads = 10
+  resultFormat = "csv"
+  resultsFile = file("$buildDir/reports/jmh/results.csv")
 }

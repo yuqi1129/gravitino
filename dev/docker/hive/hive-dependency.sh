@@ -20,10 +20,11 @@
 set -ex
 hive_dir="$(dirname "${BASH_SOURCE-$0}")"
 hive_dir="$(cd "${hive_dir}">/dev/null; pwd)"
+ranger_dir="${hive_dir}/../ranger"
 
 # Environment variables definition
 HADOOP2_VERSION="2.7.3"
-HADOOP3_VERSION="3.1.0"
+HADOOP3_VERSION="3.3.0"
 
 HIVE2_VERSION="2.3.9"
 HIVE3_VERSION="3.1.3"
@@ -33,9 +34,13 @@ RANGER_VERSION="2.4.0" # Notice: Currently only tested Ranger plugin 2.4.0 in th
 
 HADOOP2_PACKAGE_NAME="hadoop-${HADOOP2_VERSION}.tar.gz"
 HADOOP2_DOWNLOAD_URL="https://archive.apache.org/dist/hadoop/core/hadoop-${HADOOP2_VERSION}/${HADOOP2_PACKAGE_NAME}"
+HADOOP2_GCS_PACKAGE_NAME="gcs-connector-hadoop2-2.2.23-shaded.jar"
+HADOOP2_GCS_DOWNLOAD_URL="https://github.com/GoogleCloudDataproc/hadoop-connectors/releases/download/v2.2.23/gcs-connector-hadoop2-2.2.23-shaded.jar"
 
 HADOOP3_PACKAGE_NAME="hadoop-${HADOOP3_VERSION}.tar.gz"
 HADOOP3_DOWNLOAD_URL="https://archive.apache.org/dist/hadoop/core/hadoop-${HADOOP3_VERSION}/${HADOOP3_PACKAGE_NAME}"
+HADOOP3_GCS_PACKAGE_NAME="gcs-connector-hadoop3-2.2.23-shaded.jar"
+HADOOP3_GCS_DOWNLOAD_URL="https://github.com/GoogleCloudDataproc/hadoop-connectors/releases/download/v2.2.23/gcs-connector-hadoop3-2.2.23-shaded.jar"
 
 HIVE2_PACKAGE_NAME="apache-hive-${HIVE2_VERSION}-bin.tar.gz"
 HIVE2_DOWNLOAD_URL="https://archive.apache.org/dist/hive/hive-${HIVE2_VERSION}/${HIVE2_PACKAGE_NAME}"
@@ -50,10 +55,8 @@ ZOOKEEPER_PACKAGE_NAME="zookeeper-${ZOOKEEPER_VERSION}.tar.gz"
 ZOOKEEPER_DOWNLOAD_URL="https://archive.apache.org/dist/zookeeper/zookeeper-${ZOOKEEPER_VERSION}/${ZOOKEEPER_PACKAGE_NAME}"
 
 RANGER_HIVE_PACKAGE_NAME="ranger-${RANGER_VERSION}-hive-plugin.tar.gz"
-RANGER_HIVE_DOWNLOAD_URL=https://github.com/datastrato/apache-ranger/releases/download/release-ranger-${RANGER_VERSION}/ranger-${RANGER_VERSION}-hive-plugin.tar.gz
 
 RANGER_HDFS_PACKAGE_NAME="ranger-${RANGER_VERSION}-hdfs-plugin.tar.gz"
-RANGER_HDFS_DOWNLOAD_URL=https://github.com/datastrato/apache-ranger/releases/download/release-ranger-${RANGER_VERSION}/ranger-${RANGER_VERSION}-hdfs-plugin.tar.gz
 
 # Prepare download packages
 if [[ ! -d "${hive_dir}/packages" ]]; then
@@ -85,9 +88,31 @@ if [ ! -f "${hive_dir}/packages/${ZOOKEEPER_PACKAGE_NAME}" ]; then
 fi
 
 if [ ! -f "${hive_dir}/packages/${RANGER_HDFS_PACKAGE_NAME}" ]; then
-  curl -L -s -o "${hive_dir}/packages/${RANGER_HDFS_PACKAGE_NAME}" ${RANGER_HDFS_DOWNLOAD_URL}
+  # ranger-hdfs plugin not exist, run ranger-dependency.sh to build from source
+  . ${ranger_dir}/ranger-dependency.sh
+  cp "${ranger_dir}/packages/${RANGER_HDFS_PACKAGE_NAME}" "${hive_dir}/packages"
+fi
+
+if [[ $? -ne 0 ]]; then
+  echo "Failed to download Ranger HDFS plugin package"
+  exit 1
 fi
 
 if [ ! -f "${hive_dir}/packages/${RANGER_HIVE_PACKAGE_NAME}" ]; then
-  curl -L -s -o "${hive_dir}/packages/${RANGER_HIVE_PACKAGE_NAME}" ${RANGER_HIVE_DOWNLOAD_URL}
+  # ranger-hive plugin not exist, run ranger-dependency.sh to build from source
+  . ${ranger_dir}/ranger-dependency.sh
+  cp "${ranger_dir}/packages/${RANGER_HIVE_PACKAGE_NAME}" "${hive_dir}/packages"
+fi
+
+if [[ $? -ne 0 ]]; then
+  echo "Failed to download Ranger Hive plugin package"
+  exit 1
+fi
+
+if [ ! -f "${hive_dir}/packages/${HADOOP2_GCS_PACKAGE_NAME}" ]; then
+  curl -L -s -o "${hive_dir}/packages/${HADOOP2_GCS_PACKAGE_NAME}" ${HADOOP2_GCS_DOWNLOAD_URL}
+fi
+
+if [ ! -f "${hive_dir}/packages/${HADOOP3_GCS_PACKAGE_NAME}" ]; then
+  curl -L -s -o "${hive_dir}/packages/${HADOOP3_GCS_PACKAGE_NAME}" ${HADOOP3_GCS_DOWNLOAD_URL}
 fi

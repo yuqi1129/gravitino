@@ -22,6 +22,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
 import java.util.function.Function;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.gravitino.Config;
 import org.apache.gravitino.Entity;
 import org.apache.gravitino.EntityAlreadyExistsException;
@@ -46,6 +47,7 @@ public interface RelationalBackend
   /**
    * Lists the entities associated with the given parent namespace and entityType
    *
+   * @param <E> The entity type.
    * @param namespace The parent namespace of these entities.
    * @param entityType The type of these entities.
    * @param allFields Some fields may have a relatively high acquisition cost, EntityStore provide
@@ -75,6 +77,7 @@ public interface RelationalBackend
   /**
    * Stores the entity, possibly overwriting an existing entity if specified.
    *
+   * @param <E> The type of the entity returned.
    * @param e The entity which need be stored.
    * @param overwritten If true, overwrites the existing value.
    * @throws EntityAlreadyExistsException If the entity already exists and overwrite is false.
@@ -86,8 +89,11 @@ public interface RelationalBackend
   /**
    * Updates the entity.
    *
+   * @param <E> The entity type.
    * @param ident The identifier of the entity which need be stored.
    * @param entityType The type of the entity.
+   * @param updater A {@link Function} that takes the current entity instance and returns and
+   *     returns the updated instance.
    * @return The entity after updating.
    * @throws NoSuchEntityException If the entity is not exist.
    * @throws IOException If the entity is failed to update.
@@ -99,6 +105,7 @@ public interface RelationalBackend
   /**
    * Retrieves the entity associated with the identifier and the entity type.
    *
+   * @param <E> The type of the entity returned.
    * @param ident The identifier of the entity.
    * @param entityType The type of the entity.
    * @return The entity associated with the identifier and the entity type, or null if the key does
@@ -119,6 +126,29 @@ public interface RelationalBackend
    */
   boolean delete(NameIdentifier ident, Entity.EntityType entityType, boolean cascade)
       throws IOException;
+
+  /**
+   * Deletes the entities in the specified namespace and entity type.
+   *
+   * @param entitiesToDelete The list of identifiers and their entity types to be deleted.
+   * @param cascade True, If you need to cascade delete entities, else false.
+   * @return The count of the deleted entities.
+   * @throws IOException If the store operation fails
+   */
+  int batchDelete(List<Pair<NameIdentifier, Entity.EntityType>> entitiesToDelete, boolean cascade)
+      throws IOException;
+
+  /**
+   * Stores a batch of entities, possibly overwriting existing entities if specified.
+   *
+   * @param entities The list of entities to be stored.
+   * @param overwritten If true, overwrites existing entities with the same identifier.
+   * @param <E> The type of the entities in the list.
+   * @throws IOException If the store operation fails
+   * @throws EntityAlreadyExistsException If an entity already exists and overwrite is false.
+   */
+  <E extends Entity & HasIdentifier> void batchPut(List<E> entities, boolean overwritten)
+      throws IOException, EntityAlreadyExistsException;
 
   /**
    * Permanently deletes the legacy data that has been marked as deleted before the given legacy

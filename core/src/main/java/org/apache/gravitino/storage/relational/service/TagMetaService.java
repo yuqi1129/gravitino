@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -44,8 +45,8 @@ import org.apache.gravitino.storage.relational.po.TagPO;
 import org.apache.gravitino.storage.relational.utils.ExceptionUtils;
 import org.apache.gravitino.storage.relational.utils.POConverters;
 import org.apache.gravitino.storage.relational.utils.SessionUtils;
-import org.apache.gravitino.tag.TagManager;
 import org.apache.gravitino.utils.NameIdentifierUtil;
+import org.apache.gravitino.utils.NamespaceUtil;
 
 public class TagMetaService {
 
@@ -179,7 +180,7 @@ public class TagMetaService {
     }
 
     return tagPOs.stream()
-        .map(tagPO -> POConverters.fromTagPO(tagPO, TagManager.ofTagNamespace(metalake)))
+        .map(tagPO -> POConverters.fromTagPO(tagPO, NamespaceUtil.ofTag(metalake)))
         .collect(Collectors.toList());
   }
 
@@ -214,7 +215,7 @@ public class TagMetaService {
           tagIdent.name());
     }
 
-    return POConverters.fromTagPO(tagPO, TagManager.ofTagNamespace(metalake));
+    return POConverters.fromTagPO(tagPO, NamespaceUtil.ofTag(metalake));
   }
 
   public List<MetadataObject> listAssociatedMetadataObjectsForTag(NameIdentifier tagIdent)
@@ -230,19 +231,34 @@ public class TagMetaService {
                   mapper.listTagMetadataObjectRelsByMetalakeAndTagName(metalakeName, tagName));
 
       List<MetadataObject> metadataObjects = Lists.newArrayList();
-      for (TagMetadataObjectRelPO po : tagMetadataObjectRelPOs) {
-        String fullName =
-            MetadataObjectService.getMetadataObjectFullName(
-                po.getMetadataObjectType(), po.getMetadataObjectId());
+      Map<String, List<TagMetadataObjectRelPO>> tagMetadataObjectRelPOsByType =
+          tagMetadataObjectRelPOs.stream()
+              .collect(Collectors.groupingBy(TagMetadataObjectRelPO::getMetadataObjectType));
 
-        // Metadata object may be deleted asynchronously when we query the name, so it will return
-        // null. We should skip this metadata object.
-        if (fullName == null) {
-          continue;
+      for (Map.Entry<String, List<TagMetadataObjectRelPO>> entry :
+          tagMetadataObjectRelPOsByType.entrySet()) {
+        String metadataObjectType = entry.getKey();
+        List<TagMetadataObjectRelPO> rels = entry.getValue();
+
+        List<Long> metadataObjectIds =
+            rels.stream()
+                .map(TagMetadataObjectRelPO::getMetadataObjectId)
+                .collect(Collectors.toList());
+        Map<Long, String> metadataObjectNames =
+            MetadataObjectService.TYPE_TO_FULLNAME_FUNCTION_MAP
+                .get(MetadataObject.Type.valueOf(metadataObjectType))
+                .apply(metadataObjectIds);
+
+        for (Map.Entry<Long, String> metadataObjectName : metadataObjectNames.entrySet()) {
+          String fullName = metadataObjectName.getValue();
+
+          // Metadata object may be deleted asynchronously when we query the name, so it will
+          // return null, we should skip this metadata object.
+          if (fullName != null) {
+            metadataObjects.add(
+                MetadataObjects.parse(fullName, MetadataObject.Type.valueOf(metadataObjectType)));
+          }
         }
-
-        MetadataObject.Type type = MetadataObject.Type.valueOf(po.getMetadataObjectType());
-        metadataObjects.add(MetadataObjects.parse(fullName, type));
       }
 
       return metadataObjects;
@@ -327,7 +343,7 @@ public class TagMetaService {
                       metadataObjectId, metadataObject.type().toString()));
 
       return tagPOs.stream()
-          .map(tagPO -> POConverters.fromTagPO(tagPO, TagManager.ofTagNamespace(metalake)))
+          .map(tagPO -> POConverters.fromTagPO(tagPO, NamespaceUtil.ofTag(metalake)))
           .collect(Collectors.toList());
 
     } catch (RuntimeException e) {

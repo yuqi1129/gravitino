@@ -19,272 +19,246 @@
 
 # Contributing to Apache Gravitino
 
-Thank you for your interest in contributing to Apache Gravitino! You are welcome to contribute in any way you can to enhance the project. Gravitino appreciates your assistance in making it better, whether through code contributions, documentation, tests, best practices, graphic design, or any other means that have a positive impact.
+Welcome! This guide will help you get started contributing to Apache Gravitino, whether you're filing an issue, improving documentation, or submitting code.
 
-Before you get started, please read and follow these guidelines to ensure a smooth and productive collaboration.
+Gravitino welcomes all kinds of contributions—including code (Java, Python), documentation, testing, design, and feedback. Your involvement helps strengthen the project.
 
-## Table of contents
+Apache Gravitino is a metadata and data lake federation layer for AI and analytics. It graduated from the Apache Software Foundation's Incubator in June 2025 and is now a top level project maintained by a growing community.
 
-- [Getting Started](#getting-started)
-  - [Fork the Repository](#fork-the-repository)
-  - [Development Setup](#development-setup)
-  - [Using IntelliJ (Optional)](#using-intellij-optional)
-  - [Using VS Code (Optional)](#using-vs-code-optional)
-  - [Handling Memory Issues in WSL](#handling-memory-issues-in-wsl)
-- [Project Overview and Policies](#project-overview-and-policies)
-  - [Project Overview](#project-overview)
-  - [Management Policies](#management-policies)
-  - [Future Development Directions](#future-development-directions)
-- [Contribution Guidelines](#contribution-guidelines)
-  - [Code of Conduct](#code-of-conduct)
-  - [Reporting Bugs](#reporting-bugs)
-  - [Suggesting Enhancements](#suggesting-enhancements)
-  - [Good First Issues](#good-first-issues)
-  - [Working on Issues](#working-on-issues)
-  - [Creating Pull Requests](#creating-pull-requests)
-  - [The Review Process](#the-review-process)
-- [Testing](#testing)
-- [Coding Standards](#coding-standards)
-- [Community and Communication](#community-and-communication)
-- [License](#license)
+Gravitino follows ASF-wide contribution and governance practices. Project-specific workflows are explained where they differ.
 
-## Getting started
+Please review the following guidelines for a smooth contribution process.
 
-### Fork the repository
+## 📚 Table of Contents
 
-Either click the "Fork" button at the top right of the repository's page on GitHub OR create a fork on your local machine using `git clone`.
+* [📁 Project Overview and Policies](#-project-overview-and-policies)
+* [💬 Community and Communication](#-community-and-communication)
+* [🔐 Code of Conduct](#-code-of-conduct)
+* [📬 How Decisions Are Made](#-how-decisions-are-made)
+* [🌱 Growing Your Involvement](#-growing-your-involvement)
+* [🧪 Continuous Integration](#-continuous-integration)
+* [🆘 Need Help?](#-need-help)
+* [🚀 Getting Started](#-getting-started)
+* [🛍️ Quick Start for First-Time Contributors](#-quick-start-for-first-time-contributors)
+* [🙌 Making Contributions](#-making-contributions)
+* [📝 Contributing to Design and Documentation](#-contributing-to-design-and-documentation)
+* [🔍 Reviewing and Triaging Contributions](#-reviewing-and-triaging-contributions)
+* [🔃 Creating Pull Requests](#-creating-pull-requests)
+* [💻 Setting Up Development Environment](#-setting-up-development-environment)
+* [🧰 Setting Up Your IDE (Optional)](#-setting-up-your-ide-optional)
+* [💡 Tips for WSL Users](#-tips-for-wsl-users)
+* [⚙️ Build Profiles and JDK Requirements](#-build-profiles-and-jdk-requirements)
+* [🎨 Formatting Code with Spotless](#-formatting-code-with-spotless)
+* [🗂️ File Structure Overview](#-file-structure-overview)
+* [🧪 Writing and Running Tests](#-writing-and-running-tests)
+* [🧱 Following Coding Standards](#-following-coding-standards)
+* [📆 Managing Dependencies](#-managing-dependencies)
+* [🛡️ Performing Compliance and Legal Checks](#-performing-compliance-and-legal-checks)
+* [📄 License](#-license)
+* [🔐 Reporting Security Issues](#-reporting-security-issues)
+* [🙏 Acknowledging Contributors](#-acknowledging-contributors)
+* [📘 Glossary](#-glossary)
+
+## 📁 Project Overview and Policies
+
+* **Overview**: See the [Gravitino website](https://gravitino.apache.org) and [README.md](README.md).
+* **Governance**: See [GOVERNANCE.md](GOVERNANCE.md).
+* **Roadmap**: See [ROADMAP.md](ROADMAP.md).
+
+Apache Gravitino is a [Top-Level Project of the ASF](https://www.apache.org/foundation/).
+
+## 💬 Community and Communication
+
+Gravitino is a collaborative project. We encourage open communication and transparent decision-making. You can:
+
+* Subscribe to the developer mailing list: `dev@gravitino.apache.org`
+  * [View archives](https://lists.apache.org/list.html?dev@gravitino.apache.org)
+* Discuss issues via [GitHub Issues](https://github.com/apache/gravitino/issues)
+* Join discussions via ASF Slack (invite link: [https://s.apache.org/slack-invite](https://s.apache.org/slack-invite))
+
+Please follow the [ASF Code of Conduct](https://www.apache.org/foundation/policies/conduct.html) in all interactions.
+
+## 🔐 Code of Conduct
+
+We are committed to fostering a welcoming and inclusive community. Please review and adhere to our [Code of Conduct](https://github.com/apache/gravitino/blob/main/CODE_OF_CONDUCT.md) in all project spaces.
+
+## 📬 How Decisions Are Made
+
+Gravitino uses [Apache’s consensus-based decision-making](https://www.apache.org/foundation/glossary.html#ConsensusApproval). Most decisions happen on the `dev@` mailing list or via GitHub PR discussions.
+
+## 🌱 Growing Your Involvement
+
+Contributors who participate actively and constructively may be invited to become committers or join the PMC. Merit is earned through consistent contributions and community engagement.
+
+## 🧪 Continuous Integration
+
+All PRs are automatically tested using GitHub Actions. Please check test results and fix failures before requesting a review.
+
+## 🆘 Need Help?
+
+If you're stuck, ask on the `dev@` mailing list or open a GitHub Discussion. We're here to help.
+
+## 🚀 Getting Started
+
+### Fork the Repository
+
+Click the "Fork" button on GitHub or use:
 
 ```bash
 git clone https://github.com/apache/gravitino.git
 cd gravitino
 ```
 
-### Development Setup
+Check out the [ASF New Contributor Guide](https://www.apache.org/dev/new-committers-guide.html) for an overview of how ASF projects work.
 
-Once you have cloned the [GitHub repository](https://github.com/apache/gravitino), see [how to build](/docs/how-to-build.md) for instructions on how to build, or you can use the provided docker images at [Apache DockerHub repository](https://hub.docker.com/u/apache).
+## 🛍️ Quick Start for First-Time Contributors
 
-To stop and start a local Gravitino server via `bin/gravitino.sh start` and `bin/gravitino.sh stop` in a Gravitino distribution, see [how to build](/docs/how-to-build.md) for more instructions.
+1. Fork and clone the repository
+2. Build the project using [how to build](/docs/how-to-build.md)
+3. Pick an issue or start a discussion
+4. Submit a pull request and collaborate with reviewers
 
-### Using IntelliJ (Optional)
+## 🙌 Making Contributions
 
-**On Windows:**
+We welcome all types of contributions:
 
-1. Open the Gravitino project that was just downloaded.
+* **Code** – bug fixes, new features, refactoring, integrations
+  * If you're adding or updating a connector, catalog, or integration, please discuss it on the dev@ mailing list first.
+* **Documentation** – tutorials, guides, references
+* **Review** – triage and review issues and PRs
+* **Community** – answer questions, join discussions
 
-2. Go to `File > Project Structure > Project` and change to the SDK you downloaded in WSL.
+Look for [good first issues](https://github.com/apache/gravitino/labels/good%20first%20issue) to get started. Discuss plans on GitHub or the dev@ mailing list. Small pull requests are easiest to review.
 
-3. If the SDK does not appear, manually add the SDK.
+## 📝 Contributing to Design and Documentation
 
-4. To find the SDK location, run this command in WSL:
+Design and documentation are essential to Gravitino’s usability and growth.
 
-    **On Ubuntu (WSL):**
-    ```sh
-    which java
-    ```
+You can contribute by:
 
-IntelliJ IDEA is an integrated development environment (IDE) for Java development. Setting the project SDK ensures that IntelliJ uses the correct Java version for building and running the project.
+* Improving documentation in `docs/`
+* Clarifying APIs and references
+* Reviewing documents for accuracy
+* Submitting mockups or usability suggestions
 
-You can open up WSL in the IntelliJ terminal. Find the down arrow and select ubuntu.
+## 🔍 Reviewing and Triaging Contributions
 
-### Using VS Code (Optional)
+Reviewing and triaging helps maintain the project. You can:
 
-#### Set up WSL Extension in VSCode
+* Reproduce bugs and confirm issues
+* Add labels to categorize
+* Suggest improvements on PRs
+* Review code and give feedback
 
-**On Windows:**
+## 🔃 Creating Pull Requests
 
-1. Open VSCode extension marketplace, search for and install **WSL**.
+* Use feature branches
+* Write clear commit messages and PR descriptions
+* Link to issues (e.g., `Fixes #123`)
+* Respond to reviewer feedback
 
-2. On Windows, press `Ctrl+Shift+P` to open the command palette, and run `Shell Command: Install 'code' command in PATH`.
+## 💻 Setting Up Development Environment
 
-Installing the WSL extension in VSCode allows you to open and edit files in your WSL environment directly from VSCode. Adding the `code` command to your PATH enables you to open VSCode from the WSL terminal.
-
-#### Verify and Configure Environment Variables
-
-**On Windows:**
-
-1. Add VSCode path to the environment variables. The default installation path for VSCode is usually:
-
-    ```plaintext
-    C:\Users\<Your-Username>\AppData\Local\Programs\Microsoft VS Code\bin
-    ```
-
-    Replace `<Your-Username>` with your actual Windows username.
-
-    Example:
-
-    ```plaintext
-    C:\Users\epic\AppData\Local\Programs\Microsoft VS Code\bin
-    ```
-
-Adding VSCode to the environment variables ensures that you can open VSCode from any command prompt or terminal window.
-
-**On Ubuntu (WSL):**
-
-```sh
-code --version
-cd gravitino
-code .
-```
-
-Running `code --version` verifies that the `code` command is available. Using `code .` opens the current directory in VSCode.
-
-#### Open a WSL Project in Windows VSCode
-
-**On Ubuntu (WSL):**
-
-1. **Navigate to Your Project Directory**
-
-   Use the terminal to navigate to the directory of your project. For example:
-
-   ```sh
-   cd gravitino
-   ```
-
-2. **Open the Project in VSCode**
-
-   In the WSL terminal, type the following command to open the current directory in VSCode:
-
-   ```sh
-   code .
-   ```
-
-  This command will open the current WSL directory in VSCode on Windows. If you haven't added `code` to your path, follow these steps:
-
-- Open VSCode on Windows.
-
-- Press `Ctrl+Shift+P` to open the command palette.
-
-- Type and select `Shell Command: Install 'code' command in PATH`.
-
-3. **Ensure Remote - WSL is Active**
-
-   When VSCode opens, you should see a green bottom-left corner indicating that VSCode is connected to WSL. If it isn't, click on the green area and select `Remote-WSL: New Window` or `Remote-WSL: Reopen Folder in WSL`.
-
-4. **Edit and Develop Your Project**
-
-   You can now edit and develop your project files in VSCode as if they were local files. The Remote - WSL extension seamlessly bridges the file system between Windows and WSL.
-
-### Handling Memory Issues in WSL
-
-If you ran into a memory issue when using WSL, here are some solutions to resolve it.
-
-1. **Shut down WSL**  
-   If your WSL is open, you can shut it down in Windows PowerShell using the following command:  
-
-   ```powershell
-   wsl --shutdown
-   ```
-
-2. **Navigate to user folder**  
-
-   Open up File Explorer and navigate to `C:\Users\<your-username>`.
-
-3. **Create the `.wslconfig` file**  
-
-   Open up Notepad or another text editor and input the following:  
-
-   ```plaintext
-   [wsl2]
-   memory=4GB   # Limits VM memory in WSL 2 up to 4GB
-   processors=4 # Makes the WSL 2 VM use four virtual processors
-   ```
-
-   *The memory and processor usage can be changed depending on your system's hardware.*
-
-4. **Save the file**  
-
-   Save the file as `".wslconfig"`. Be sure to include the quotes to let Windows know that this isn't a text file.
-
-## Project Overview and Policies
-
-### Project Overview
-
-For an overview of the project, see [README.md](README.md).
-
-### Management Policies
-
-For project management policies, refer to [GOVERNANCE.md](GOVERNANCE.md).
-
-### Future Development Directions
-
-For future development directions, refer to the [ROADMAP.md](ROADMAP.md) document.
-
-## Contribution guidelines
-
-### Code of Conduct
-
-Please read and follow the [Code of Conduct](CODE_OF_CONDUCT.md). Gravitino provides a welcoming and inclusive environment for all contributors.
-
-### Reporting bugs
-
-If you find a bug in Gravitino, please open an issue on GitHub. Be sure to include as much detail as possible, such as a clear description, steps to reproduce, and your environment. Please follow the template provided. If you encounter a security issue, please refer to [SECURITY.md](SECURITY.md).
-
-### Suggesting enhancements
-
-If you have ideas for enhancements or new features, feel free to create an issue to discuss them. Gravitino welcomes suggestions and provides prompt feedback on their feasibility and relevance.
-
-### Good First Issues
-
-If you are new to open source or can't find something to work on, check out the [Good First Issues list](https://github.com/apache/gravitino/contribute).
-
-### Working on Issues
-
-Check out the list of open issues and find one that interests you. You can also comment on an issue to indicate that you're working on it. Please keep the issue updated with your progress.
-
-## Creating Pull Requests
-
-Create a new branch from `main` for your changes:
+Follow [how to build](/docs/how-to-build.md) or use [Apache DockerHub](https://hub.docker.com/u/apache). Start Gravitino with:
 
 ```bash
-git checkout -b your-branch-name
+bin/gravitino.sh start
+bin/gravitino.sh stop
 ```
 
-Make your changes and commit them. Be sure to write clear and concise commit messages.
+You can also build manually with:
 
 ```bash
-git commit -m "Your commit message"
+./mvnw clean install
 ```
 
-Push your changes to your fork on GitHub:
+## 🧰 Setting Up Your IDE (Optional)
 
-```bash
-git push your-branch-name
-```
+Import Gravitino into IntelliJ IDEA or Eclipse as a Gradle project.
 
-After you have pushed your changes, create a pull request (PR) in the Gravitino repository. Be sure to provide a detailed description of your changes, reference any related issues, and please follow the template provided. Gravitino's maintainers evaluate pull requests, offer feedback, and assist in merging project changes.
+## 💡 Tips for WSL Users
 
-### The Review Process
+If using WSL on Windows, install Java and dev tools inside WSL. Access files via `/mnt/c/...` paths.
 
-For details on the review process, please refer to [MAINTAINERS.md](MAINTAINERS.md).
+## ⚙️ Build Profiles and JDK Requirements
 
-## Testing
+Gravitino uses Maven profiles for Scala:
 
-The CI infrastructure runs unit and integration tests on each pull request, please make sure these tests pass before making a pull request.
+* `-Pscala-2.12` for Scala 2.12
+* `-Pscala-2.13` for Scala 2.13 (default)
 
-The unit tests run on every build and integration tests run as needed. See [how to test](docs/how-to-test.md) for more information.
+Gravitino supports JDK 8, 11 and 17.
 
-When adding new code or fixing a bug be sure to add unit tests to provide coverage.
+## 🎨 Formatting Code with Spotless
 
-## Coding standards
-
-Spotless checks code formatting. If your code isn't correctly formatted, the build fails. To correctly format your code please use Spotless.
+We use [Spotless](https://github.com/diffplug/spotless) for code formatting. Run:
 
 ```bash
 ./gradlew spotlessApply
 ```
 
-All files must have a license header and the build fails if any files are missing license headers. If you are adding third-party code be sure to understand how to add the third-party license to Gravitino LICENSE and NOTICE files.
+## 🗂️ File Structure Overview
 
-For any bugs or new code please add unit tests to provide coverage of the code. The project may not accept code without unit tests.
+Key directories in the Gravitino repo:
 
-All text files should use macOS/unix style line endings (LF) not windows style line endings (CRLF).
+* `api/`, `clients/`, `core/`, `server/` – Main components
+* `docs/`, `rfc/` – Documentation and design
+* `conf/`, `bin/` – Configs and scripts
+* `catalogs/`, `spark-connector/`, `trino-connector/` – Integrations
 
-## Community and communication
+## 🧪 Writing and Running Tests
 
-Join the [community mailing list](https://lists.apache.org/list.html?dev@gravitino.apache.org) to discuss ideas and seek help and are also encouraged to use GitHub discussions.
+Add or update tests in your PR. Test open PRs locally to help maintainers.
 
-## License
+## 🧭 Following Coding Standards
 
-When contributing to this project, you agree that your contributions use the Apache License version 2. Please ensure you have permission to do this if required by your employer.
+* Follow Java and Python idioms
+* Include useful comments
+* Keep methods and classes focused
+* Format with Spotless
 
-Thank you for your contributions to Gravitino! The project appreciates your help in making it a success.
+## 📦 Managing Dependencies
+
+* Avoid unnecessary dependencies
+* Prefer well-maintained libraries
+* Discuss major additions on dev@
+
+## 🛡️ Performing Compliance and Legal Checks
+
+Before contributing:
+
+* Review [ASF License and IP Guidelines](https://www.apache.org/legal/)
+* Ensure all code is original or properly licensed and compatable with the Apache License
+
+## 📄 License
+
+Contributions are under the [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0).
+
+If contributing on behalf of an employer or regularly, you may need to submit an [ICLA](https://www.apache.org/licenses/icla.html). See [ASF Contributor FAQs](https://www.apache.org/dev/new-committers-guide.html#cla).
+
+Official repo: [https://github.com/apache/gravitino](https://github.com/apache/gravitino)
+
+## 🔐 Reporting Security Issues
+
+To report a vulnerability, follow the [SECURITY.md](SECURITY.md) instructions. Responsible disclosure is appreciated and handled per ASF guidelines.
+
+## 🙏 Acknowledging Contributors
+
+Contributors are recognized in release notes. All types of contributions are valued.
+
+See the full list of contributors on GitHub: [https://github.com/apache/gravitino/graphs/contributors](https://github.com/apache/gravitino/graphs/contributors)
+
+## 📘 Glossary
+
+* **ASF**: Apache Software Foundation
+* **ICLA**: Individual Contributor License Agreement
+* **PMC**: Project Management Committee
+* **RAT**: Release Audit Tool
+* **Spotless**: Code formatter
+* **CI**: Continuous Integration
+* **PR**: Pull Request
+* **WSL**: Windows Subsystem for Linux
+* **TLP**: Top-Level Project
+* **dev@ list**: Primary development mailing list
+* **AI**: Artificial Intelligence
+* **IDE**: Integrated Development Environment

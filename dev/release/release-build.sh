@@ -29,7 +29,7 @@ usage: release-build.sh <package|docs|publish-release|finalize>
 Creates build deliverables from a Apache Gravitino commit.
 
 Top level targets are
-  package: Create binary packages and commit them to dist.apache.org/repos/dist/dev/incubator/gravitino/
+  package: Create binary packages and commit them to dist.apache.org/repos/dist/dev/gravitino/
   docs: Build the Java and Python docs, and copy them to a local path.
   publish-release: Publish a release to Apache release repo
   finalize: Finalize the release after an RC passes vote
@@ -37,8 +37,8 @@ Top level targets are
 All other inputs are environment variables
 
 GIT_REF - Release tag or commit to build from
-GRAVITINO_PACKAGE_VERSION - Release identifier in top level package directory (e.g. 0.6.0-incubating-rc1)
-GRAVITINO_VERSION - (optional) Version of Gravitino being built (e.g. 0.6.0-incubating)
+GRAVITINO_PACKAGE_VERSION - Release identifier in top level package directory (e.g. 0.10.0-rc1)
+GRAVITINO_VERSION - (optional) Version of Gravitino being built (e.g. 0.10.0)
 
 ASF_USERNAME - Username of ASF committer account
 ASF_PASSWORD - Password of ASF committer account
@@ -85,8 +85,8 @@ export LANG=C.UTF-8
 # Commit ref to checkout when building
 GIT_REF=${GIT_REF:-main}
 
-RELEASE_STAGING_LOCATION="https://dist.apache.org/repos/dist/dev/incubator/gravitino"
-RELEASE_LOCATION="https://dist.apache.org/repos/dist/release/incubator/gravitino"
+RELEASE_STAGING_LOCATION="https://dist.apache.org/repos/dist/dev/gravitino"
+RELEASE_LOCATION="https://dist.apache.org/repos/dist/release/gravitino"
 
 GPG="gpg -u $GPG_KEY --no-tty --batch --pinentry-mode loopback"
 NEXUS_ROOT=https://repository.apache.org/service/local/staging
@@ -95,6 +95,9 @@ BASE_DIR=$(pwd)
 
 init_java
 init_gradle
+
+function uriencode { jq -nSRr --arg v "$1" '$v|@uri'; }
+declare -r ENCODED_ASF_PASSWORD=$(uriencode "$ASF_PASSWORD")
 
 if [[ "$1" == "finalize" ]]; then
   if [[ -z "$PYPI_API_TOKEN" ]]; then
@@ -110,7 +113,7 @@ if [[ "$1" == "finalize" ]]; then
     echo "v$RELEASE_VERSION already exists. Skip creating it."
   else
     rm -rf gravitino
-    git clone "https://$ASF_USERNAME:$ASF_PASSWORD@$ASF_GRAVITINO_REPO" -b main
+    git clone "https://$ASF_USERNAME:$ENCODED_ASF_PASSWORD@$ASF_GRAVITINO_REPO" -b main
     cd gravitino
     git tag "v$RELEASE_VERSION" "$RELEASE_TAG"
     git push origin "v$RELEASE_VERSION"
@@ -119,20 +122,24 @@ if [[ "$1" == "finalize" ]]; then
     echo "git tag v$RELEASE_VERSION created"
   fi
 
-  # download Gravitino Python binary from the dev directory and upload to PyPi.
+  PYGRAVITINO_VERSION="${RELEASE_VERSION}"
+  git clone "https://$ASF_USERNAME:$ENCODED_ASF_PASSWORD@$ASF_GRAVITINO_REPO" -b "v$RELEASE_VERSION"
+  cd gravitino
+  $GRADLE :clients:client-python:distribution -x test
+  cd ..
+  cp gravitino/clients/client-python/dist/apache_gravitino-$PYGRAVITINO_VERSION.tar.gz .
+  echo $GPG_PASSPHRASE | $GPG --passphrase-fd 0 --armour \
+    --output apache_gravitino-$PYGRAVITINO_VERSION.tar.gz.asc \
+    --detach-sig apache_gravitino-$PYGRAVITINO_VERSION.tar.gz
+
+  # upload to PyPi.
   echo "Uploading Gravitino to PyPi"
-  svn co --depth=empty "$RELEASE_STAGING_LOCATION/$RELEASE_TAG" svn-gravitino
-  cd svn-gravitino
-  PYGRAVITINO_VERSION=`echo "$RELEASE_VERSION" |  sed -e "s/-/./" -e "s/preview/dev/"`
-  svn update "apache_gravitino-$PYGRAVITINO_VERSION.tar.gz"
-  svn update "apache_gravitino-$PYGRAVITINO_VERSION.tar.gz.asc"
   twine upload -u __token__  -p $PYPI_API_TOKEN \
     --repository-url https://upload.pypi.org/legacy/ \
     "apache_gravitino-$PYGRAVITINO_VERSION.tar.gz" \
     "apache_gravitino-$PYGRAVITINO_VERSION.tar.gz.asc"
-  cd ..
-  rm -rf svn-gravitino
   echo "Python Gravitino package uploaded"
+  rm -fr gravitino
 
   # Moves the binaries from dev directory to release directory.
   echo "Moving Gravitino binaries to the release directory"
@@ -167,6 +174,16 @@ if [ -z "$PYGRAVITINO_VERSION"]; then
   PYGRAVITINO_VERSION=$(cat clients/client-python/setup.py | grep "version=" | awk -F"\"" '{print $2}')
 fi
 
+if [[ "$PYGRAVITINO_VERSION" == *"dev"* ]]; then
+  RC_PYGRAVITINO_VERSION="${PYGRAVITINO_VERSION}"
+else
+  if [ -z "$RC_COUNT" ]; then
+    echo "ERROR: RC_COUNT must be set to run this script"
+    exit_with_usage
+  fi
+  RC_PYGRAVITINO_VERSION="${PYGRAVITINO_VERSION}rc${RC_COUNT}"
+fi
+
 # This is a band-aid fix to avoid the failure of Maven nightly snapshot in some Jenkins
 # machines by explicitly calling /usr/sbin/lsof.
 LSOF=lsof
@@ -190,8 +207,12 @@ if [[ "$1" == "package" ]]; then
 
   rm -f gravitino-$GRAVITINO_VERSION-src/LICENSE.bin
   rm -f gravitino-$GRAVITINO_VERSION-src/NOTICE.bin
-  rm -f gravitino-$GRAVITINO_VERSION-src/web/LICENSE.bin
-  rm -f gravitino-$GRAVITINO_VERSION-src/web/NOTICE.bin
+  rm -f gravitino-$GRAVITINO_VERSION-src/LICENSE.rest
+  rm -f gravitino-$GRAVITINO_VERSION-src/NOTICE.rest
+  rm -f gravitino-$GRAVITINO_VERSION-src/LICENSE.trino
+  rm -f gravitino-$GRAVITINO_VERSION-src/NOTICE.trino
+  rm -f gravitino-$GRAVITINO_VERSION-src/web/web/LICENSE.bin
+  rm -f gravitino-$GRAVITINO_VERSION-src/web/web/NOTICE.bin
 
   rm -f *.asc
   tar cvzf gravitino-$GRAVITINO_VERSION-src.tar.gz --exclude gravitino-$GRAVITINO_VERSION-src/.git gravitino-$GRAVITINO_VERSION-src
@@ -208,6 +229,7 @@ if [[ "$1" == "package" ]]; then
 
     echo "Creating distribution"
 
+    sed -i".tmp3" 's/    version=.*$/    version="'"$RC_PYGRAVITINO_VERSION"'",/g' clients/client-python/setup.py
     $GRADLE assembleDistribution -x test
     $GRADLE :clients:client-python:distribution -x test
     cd ..
@@ -234,24 +256,33 @@ if [[ "$1" == "package" ]]; then
     shasum -a 512 gravitino-trino-connector-$GRAVITINO_VERSION.tar.gz > gravitino-trino-connector-$GRAVITINO_VERSION.tar.gz.sha512
 
     echo "Copying and signing Gravitino Python client binary distribution"
-    cp gravitino-$GRAVITINO_VERSION-bin/clients/client-python/dist/apache_gravitino-$PYGRAVITINO_VERSION.tar.gz .
+    cp gravitino-$GRAVITINO_VERSION-bin/clients/client-python/dist/apache_gravitino-$RC_PYGRAVITINO_VERSION.tar.gz .
     echo $GPG_PASSPHRASE | $GPG --passphrase-fd 0 --armour \
-      --output apache_gravitino-$PYGRAVITINO_VERSION.tar.gz.asc \
-      --detach-sig apache_gravitino-$PYGRAVITINO_VERSION.tar.gz
-    shasum -a 512 apache_gravitino-$PYGRAVITINO_VERSION.tar.gz > apache_gravitino-$PYGRAVITINO_VERSION.tar.gz.sha512
+      --output apache_gravitino-$RC_PYGRAVITINO_VERSION.tar.gz.asc \
+      --detach-sig apache_gravitino-$RC_PYGRAVITINO_VERSION.tar.gz
+    shasum -a 512 apache_gravitino-$RC_PYGRAVITINO_VERSION.tar.gz > apache_gravitino-$RC_PYGRAVITINO_VERSION.tar.gz.sha512
   }
 
   make_binary_release
   rm -rf gravitino-$GRAVITINO_VERSION-bin/
 
   if ! is_dry_run; then
+    if [[ -z "$PYPI_API_TOKEN" ]]; then
+      error 'The environment variable PYPI_API_TOKEN is not set. Exiting.'
+    fi
+
+    echo "Uploading Gravitino Python package $RC_RC_PYGRAVITINO_VERSION to PyPi"
+    twine upload -u __token__  -p $PYPI_API_TOKEN \
+      --repository-url https://upload.pypi.org/legacy/ \
+      "apache_gravitino-$RC_PYGRAVITINO_VERSION.tar.gz" \
+      "apache_gravitino-$RC_PYGRAVITINO_VERSION.tar.gz.asc"
+
     svn co --depth=empty $RELEASE_STAGING_LOCATION svn-gravitino
     rm -rf "svn-gravitino/${DEST_DIR_NAME}"
     mkdir -p "svn-gravitino/${DEST_DIR_NAME}"
 
     echo "Copying release tarballs"
     cp gravitino-* "svn-gravitino/${DEST_DIR_NAME}/"
-    cp apache_gravitino-* "svn-gravitino/${DEST_DIR_NAME}/"
     svn add "svn-gravitino/${DEST_DIR_NAME}"
 
     cd svn-gravitino
@@ -269,11 +300,11 @@ if [[ "$1" == "docs" ]]; then
   cd gravitino-$GRAVITINO_VERSION-docs
   echo "Building Gravitino Java and Python docs"
   $GRADLE :clients:client-java:build -x test
-  $GRADLE :clients:client-python:pydoc
+  $GRADLE :clients:client-python:doc
   cd ..
 
   cp -r gravitino-$GRAVITINO_VERSION-docs/clients/client-java/build/docs/javadoc gravitino-$GRAVITINO_VERSION-javadoc
-  cp -r gravitino-$GRAVITINO_VERSION-docs/clients/client-python/docs gravitino-$PYGRAVITINO_VERSION-pydoc
+  cp -r gravitino-$GRAVITINO_VERSION-docs/clients/client-python/docs/build/html gravitino-$PYGRAVITINO_VERSION-pydoc
 
   rm -fr gravitino-$GRAVITINO_VERSION-docs
 fi
@@ -314,7 +345,7 @@ if [[ "$1" == "publish-release" ]]; then
   pushd $tmp_repo/org/apache/gravitino
 
   # Remove any extra files generated during install
-  find . -type f |grep -v \.jar |grep -v \.pom |grep -v cyclonedx | xargs rm
+  find . -type f |grep -v \.jar |grep -v \.pom |grep -v cyclonedx | grep -v \.module | xargs rm
 
   echo "Creating hash and signature files"
   # this must have .asc, .md5 and .sha1 - it really doesn't like anything else there
@@ -335,7 +366,7 @@ if [[ "$1" == "publish-release" ]]; then
   if ! is_dry_run; then
     nexus_upload=$NEXUS_ROOT/deployByRepositoryId/$staged_repo_id
     echo "Uploading files to $nexus_upload"
-    for file in $(find . -type f -not -path "./docs/*" -not -path "./web/*")
+    for file in $(find . -type f -not -path "./docs/*" -not -path "./web/*" -not -path "./integration-test-common/*" -not -path "./integration-test/*")
     do
       # strip leading ./
       file_short=$(echo $file | sed -e "s/\.\///")

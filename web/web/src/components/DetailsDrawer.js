@@ -41,7 +41,7 @@ import EmptyText from '@/components/EmptyText'
 import { formatToDateTime, isValidDate } from '@/lib/utils/date'
 
 const DetailsDrawer = props => {
-  const { openDrawer, setOpenDrawer, drawerData = {}, isMetalakePage } = props
+  const { openDrawer, setOpenDrawer, drawerData = {} } = props
 
   const { audit = {} } = drawerData
 
@@ -121,26 +121,112 @@ const DetailsDrawer = props => {
             }}
             data-refer='details-title'
           >
-            {drawerData.name}
+            {drawerData.name || drawerData.version}
           </Typography>
         </Grid>
 
-        {isMetalakePage ? (
-          <>
-            <Grid item xs={12} md={6} sx={{ mb: [0, 5] }}>
-              <Typography variant='body2' sx={{ mb: 2 }}>
-                Type
-              </Typography>
-              {renderFieldText({ value: drawerData.type })}
-            </Grid>
-            <Grid item xs={12} md={6} sx={{ mb: [0, 5] }}>
-              <Typography variant='body2' sx={{ mb: 2 }}>
-                Provider
-              </Typography>
-              {renderFieldText({ value: drawerData.provider })}
-            </Grid>
-          </>
-        ) : null}
+        {drawerData.uri && (
+          <Grid item xs={12} md={6} sx={{ mb: [0, 5] }}>
+            <Typography variant='body2' sx={{ mb: 2 }}>
+              URI
+            </Typography>
+            {renderFieldText({ value: drawerData.uri })}
+          </Grid>
+        )}
+
+        {drawerData.aliases && (
+          <Grid item xs={12} md={6} sx={{ mb: [0, 5] }}>
+            <Typography variant='body2' sx={{ mb: 2 }}>
+              Aliases
+            </Typography>
+            {renderFieldText({ value: drawerData.aliases.join(', ') })}
+          </Grid>
+        )}
+
+        {drawerData.type && (
+          <Grid item xs={12} md={6} sx={{ mb: [0, 5] }}>
+            <Typography variant='body2' sx={{ mb: 2 }}>
+              Type
+            </Typography>
+            {renderFieldText({ value: drawerData.type })}
+          </Grid>
+        )}
+
+        {drawerData.provider && drawerData?.type !== 'model' && (
+          <Grid item xs={12} md={6} sx={{ mb: [0, 5] }}>
+            <Typography variant='body2' sx={{ mb: 2 }}>
+              Provider
+            </Typography>
+            {renderFieldText({ value: drawerData.provider })}
+          </Grid>
+        )}
+
+        {drawerData.storageLocation && (
+          <Grid item xs={12} md={6} sx={{ mb: [0, 5] }}>
+            <Typography variant='body2' sx={{ mb: 2 }}>
+              Storage Location
+            </Typography>
+            {renderFieldText({ value: drawerData.storageLocation })}
+          </Grid>
+        )}
+
+        {drawerData.storageLocations && (
+          <Grid item xs={12} sx={{ mb: [0, 5] }}>
+            <Typography variant='body2' sx={{ mb: 2 }}>
+              Storage Location(s)
+            </Typography>
+
+            <TableContainer>
+              <Table>
+                <TableHead
+                  sx={{
+                    backgroundColor: theme => theme.palette.action.hover
+                  }}
+                >
+                  <TableRow>
+                    <TableCell sx={{ py: 2 }}>Name</TableCell>
+                    <TableCell sx={{ py: 2 }}>Location</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody data-refer='details-props-table'>
+                  {Object.keys(drawerData.storageLocations).map((name, index) => {
+                    return (
+                      <TableRow key={index} data-refer={`details-props-index-${index}`}>
+                        <TableCell
+                          className={'twc-py-[0.7rem] twc-truncate twc-max-w-[134px]'}
+                          data-refer={`storageLocations-name-${name}`}
+                        >
+                          <Tooltip
+                            title={<span data-refer={`tip-storageLocations-name-${name}`}>{name}</span>}
+                            placement='bottom'
+                          >
+                            {name}
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell
+                          className={'twc-py-[0.7rem] twc-truncate twc-max-w-[134px]'}
+                          data-refer={`storageLocations-location-${drawerData.storageLocations[name]}`}
+                          data-prev-refer={`storageLocations-name-${name}`}
+                        >
+                          <Tooltip
+                            title={
+                              <span data-prev-refer={`storageLocations-name-${name}`}>
+                                {drawerData.storageLocations[name]}
+                              </span>
+                            }
+                            placement='bottom'
+                          >
+                            {drawerData.storageLocations[name]}
+                          </Tooltip>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Grid>
+        )}
 
         <Grid item xs={12} sx={{ mb: [0, 5] }}>
           <Typography variant='body2' sx={{ mb: 2 }}>
@@ -156,26 +242,32 @@ const DetailsDrawer = props => {
           {renderFieldText({ value: audit.creator })}
         </Grid>
 
-        <Grid item xs={12} sx={{ mb: [0, 5] }}>
-          <Typography variant='body2' sx={{ mb: 2 }}>
-            Created at
-          </Typography>
-          {renderFieldText({ value: audit.createTime, isDate: true })}
-        </Grid>
+        {audit.createTime && (
+          <Grid item xs={12} sx={{ mb: [0, 5] }}>
+            <Typography variant='body2' sx={{ mb: 2 }}>
+              Created at
+            </Typography>
+            {renderFieldText({ value: audit.createTime, isDate: true })}
+          </Grid>
+        )}
 
-        <Grid item xs={12} sx={{ mb: [0, 5] }}>
-          <Typography variant='body2' sx={{ mb: 2 }}>
-            Last modified by
-          </Typography>
-          {renderFieldText({ value: audit.lastModifier })}
-        </Grid>
+        {audit.lastModifier && (
+          <Grid item xs={12} sx={{ mb: [0, 5] }}>
+            <Typography variant='body2' sx={{ mb: 2 }}>
+              Last modified by
+            </Typography>
+            {renderFieldText({ value: audit.lastModifier })}
+          </Grid>
+        )}
 
-        <Grid item xs={12} sx={{ mb: [0, 5] }}>
-          <Typography variant='body2' sx={{ mb: 2 }}>
-            Last modified at
-          </Typography>
-          {renderFieldText({ value: audit.lastModifiedTime, isDate: true })}
-        </Grid>
+        {audit.lastModifiedTime && (
+          <Grid item xs={12} sx={{ mb: [0, 5] }}>
+            <Typography variant='body2' sx={{ mb: 2 }}>
+              Last modified at
+            </Typography>
+            {renderFieldText({ value: audit.lastModifiedTime, isDate: true })}
+          </Grid>
+        )}
 
         <Grid item xs={12} sx={{ mb: [0, 5] }}>
           <Typography variant='body2' sx={{ mb: 2 }}>
@@ -198,16 +290,19 @@ const DetailsDrawer = props => {
                 {properties.map((item, index) => {
                   return (
                     <TableRow key={index} data-refer={`details-props-index-${index}`}>
-                      <TableCell className={'twc-py-[0.7rem]'} data-refer={`details-props-key-${item.key}`}>
+                      <TableCell
+                        className={'twc-py-[0.7rem] twc-truncate twc-max-w-[134px]'}
+                        data-refer={`details-props-key-${item.key}`}
+                      >
                         <Tooltip
                           title={<span data-refer={`tip-details-props-key-${item.key}`}>{item.key}</span>}
                           placement='bottom'
                         >
-                          {item.key.length > 22 ? `${item.key.substring(0, 22)}...` : item.key}
+                          {item.key}
                         </Tooltip>
                       </TableCell>
                       <TableCell
-                        className={'twc-py-[0.7rem]'}
+                        className={'twc-py-[0.7rem] twc-truncate twc-max-w-[134px]'}
                         data-refer={`details-props-value-${item.value}`}
                         data-prev-refer={`details-props-key-${item.key}`}
                       >
@@ -217,7 +312,7 @@ const DetailsDrawer = props => {
                             title={<span data-prev-refer={`tip-details-props-key-${item.key}`}>{item.value}</span>}
                             placement='bottom'
                           >
-                            {item.value.length > 22 ? `${item.value.substring(0, 22)}...` : item.value}
+                            {item.value}
                           </Tooltip>
                         )}
                       </TableCell>

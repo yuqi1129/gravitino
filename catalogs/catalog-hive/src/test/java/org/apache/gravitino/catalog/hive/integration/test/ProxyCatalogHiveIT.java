@@ -18,13 +18,12 @@
  */
 package org.apache.gravitino.catalog.hive.integration.test;
 
-import static org.apache.gravitino.catalog.hive.HiveCatalogPropertiesMeta.IMPERSONATION_ENABLE;
-import static org.apache.gravitino.catalog.hive.HiveCatalogPropertiesMeta.METASTORE_URIS;
+import static org.apache.gravitino.catalog.hive.HiveCatalogPropertiesMetadata.IMPERSONATION_ENABLE;
+import static org.apache.gravitino.catalog.hive.HiveCatalogPropertiesMetadata.METASTORE_URIS;
 import static org.apache.gravitino.server.GravitinoServer.WEBSERVER_CONF_PREFIX;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
-import java.lang.reflect.Field;
 import java.time.LocalDate;
 import java.util.Collections;
 import java.util.Map;
@@ -39,7 +38,7 @@ import org.apache.gravitino.dto.rel.partitioning.Partitioning;
 import org.apache.gravitino.hive.HiveClientPool;
 import org.apache.gravitino.integration.test.container.ContainerSuite;
 import org.apache.gravitino.integration.test.container.HiveContainer;
-import org.apache.gravitino.integration.test.util.AbstractIT;
+import org.apache.gravitino.integration.test.util.BaseIT;
 import org.apache.gravitino.integration.test.util.GravitinoITUtils;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.Table;
@@ -64,7 +63,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 @Tag("gravitino-docker-test")
-public class ProxyCatalogHiveIT extends AbstractIT {
+public class ProxyCatalogHiveIT extends BaseIT {
 
   public static final String METALAKE_NAME =
       GravitinoITUtils.genRandomName("ProxyCatalogHiveIT_metalake");
@@ -72,7 +71,7 @@ public class ProxyCatalogHiveIT extends AbstractIT {
   public static final String SCHEMA_PREFIX = "ProxyCatalogHiveIT_schema";
   public static final String TABLE_PREFIX = "ProxyCatalogHiveIT_table";
   private static final String PROVIDER = "hive";
-  private static final String EXPECT_USER = "datastrato";
+  private static final String EXPECT_USER = "gravitino";
   private static final String HADOOP_USER_NAME = "HADOOP_USER_NAME";
 
   private static final ContainerSuite containerSuite = ContainerSuite.getInstance();
@@ -88,19 +87,19 @@ public class ProxyCatalogHiveIT extends AbstractIT {
   private static GravitinoAdminClient anotherClientWithNotExistingName;
   private static Catalog anotherCatalog;
   private static Catalog anotherCatalogWithUsername;
-  private static Catalog anotherCatatlogWithNotExistingName;
+  private static Catalog anotherCatalogWithNotExistingName;
 
   @BeforeAll
-  public static void startIntegrationTest() throws Exception {
+  public void startIntegrationTest() throws Exception {
     originHadoopUser = System.getenv(HADOOP_USER_NAME);
     setEnv(HADOOP_USER_NAME, null);
 
-    System.setProperty("user.name", "datastrato");
+    System.setProperty("user.name", "gravitino");
 
     Map<String, String> configs = Maps.newHashMap();
     configs.put(Configs.AUTHENTICATORS.getKey(), AuthenticatorType.SIMPLE.name().toLowerCase());
     registerCustomConfigs(configs);
-    AbstractIT.startIntegrationTest();
+    super.startIntegrationTest();
     containerSuite.startHiveContainer();
     HIVE_METASTORE_URIS =
         String.format(
@@ -137,18 +136,18 @@ public class ProxyCatalogHiveIT extends AbstractIT {
   }
 
   @AfterAll
-  public static void stop() {
+  public void stop() {
     setEnv(HADOOP_USER_NAME, originHadoopUser);
     anotherClient.close();
     anotherClientWithUsername.close();
     anotherClientWithNotExistingName.close();
 
-    AbstractIT.client = null;
+    client = null;
   }
 
   @Test
   public void testOperateSchema() throws Exception {
-    // create schema normally using user datastrato
+    // create schema normally using user gravitino
     String schemaName = GravitinoITUtils.genRandomName(SCHEMA_PREFIX);
     String anotherSchemaName = GravitinoITUtils.genRandomName(SCHEMA_PREFIX);
 
@@ -195,7 +194,7 @@ public class ProxyCatalogHiveIT extends AbstractIT {
         Assertions.assertThrows(
             RuntimeException.class,
             () ->
-                anotherCatatlogWithNotExistingName
+                anotherCatalogWithNotExistingName
                     .asSchemas()
                     .createSchema("new_schema", comment, properties));
     Assertions.assertTrue(e.getMessage().contains("AccessControlException Permission denied"));
@@ -203,7 +202,7 @@ public class ProxyCatalogHiveIT extends AbstractIT {
 
   @Test
   public void testOperateTable() throws Exception {
-    // create table normally using user datastrato
+    // create table normally using user gravitino
     Column[] columns = createColumns();
     String schemaName = GravitinoITUtils.genRandomName(SCHEMA_PREFIX);
     String tableName = GravitinoITUtils.genRandomName(TABLE_PREFIX);
@@ -256,7 +255,7 @@ public class ProxyCatalogHiveIT extends AbstractIT {
         Assertions.assertThrows(
             RuntimeException.class,
             () -> {
-              anotherCatatlogWithNotExistingName
+              anotherCatalogWithNotExistingName
                   .asTableCatalog()
                   .createTable(
                       anotherIdentWithNotExisting,
@@ -309,7 +308,7 @@ public class ProxyCatalogHiveIT extends AbstractIT {
                   Transforms.identity(columns[1].name()), Transforms.identity(columns[2].name())
                 });
 
-    // add partition "col2=2023-01-02/col3=gravitino_it_test2" by user datastrato
+    // add partition "col2=2023-01-02/col3=gravitino_it_test2" by user gravitino
     String[] field1 = new String[] {"col2"};
     String[] field2 = new String[] {"col3"};
     Literal<?> primaryPartition = Literals.dateLiteral(LocalDate.parse("2023-01-02"));
@@ -370,7 +369,7 @@ public class ProxyCatalogHiveIT extends AbstractIT {
         Assertions.assertThrows(
             RuntimeException.class,
             () ->
-                anotherCatatlogWithNotExistingName
+                anotherCatalogWithNotExistingName
                     .asTableCatalog()
                     .loadTable(nameIdentifier)
                     .supportPartitions()
@@ -385,14 +384,13 @@ public class ProxyCatalogHiveIT extends AbstractIT {
     return new Column[] {col1, col2, col3};
   }
 
-  private static void createMetalake() {
+  private void createMetalake() {
     GravitinoMetalake[] gravitinoMetalakes = client.listMetalakes();
     Assertions.assertEquals(0, gravitinoMetalakes.length);
 
-    GravitinoMetalake createdMetalake =
-        client.createMetalake(METALAKE_NAME, "comment", Collections.emptyMap());
+    client.createMetalake(METALAKE_NAME, "comment", Collections.emptyMap());
     GravitinoMetalake loadMetalake = client.loadMetalake(METALAKE_NAME);
-    Assertions.assertEquals(createdMetalake, loadMetalake);
+    Assertions.assertEquals(METALAKE_NAME, loadMetalake.name());
 
     metalake = loadMetalake;
   }
@@ -421,24 +419,7 @@ public class ProxyCatalogHiveIT extends AbstractIT {
     anotherCatalogWithUsername =
         anotherClientWithUsername.loadMetalake(METALAKE_NAME).loadCatalog(CATALOG_NAME);
 
-    anotherCatatlogWithNotExistingName =
+    anotherCatalogWithNotExistingName =
         anotherClientWithNotExistingName.loadMetalake(METALAKE_NAME).loadCatalog(CATALOG_NAME);
-  }
-
-  public static void setEnv(String key, String value) {
-    try {
-      Map<String, String> env = System.getenv();
-      Class<?> cl = env.getClass();
-      Field field = cl.getDeclaredField("m");
-      field.setAccessible(true);
-      Map<String, String> writableEnv = (Map<String, String>) field.get(env);
-      if (value == null) {
-        writableEnv.remove(key);
-      } else {
-        writableEnv.put(key, value);
-      }
-    } catch (Exception e) {
-      throw new IllegalStateException("Failed to set environment variable", e);
-    }
   }
 }

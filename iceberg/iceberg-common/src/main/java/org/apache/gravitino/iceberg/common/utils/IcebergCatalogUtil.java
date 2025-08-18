@@ -22,16 +22,17 @@ import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_SECURITY
 import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHORIZATION;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Preconditions;
 import java.io.File;
 import java.io.IOException;
+import java.sql.SQLException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import org.apache.gravitino.catalog.lakehouse.iceberg.IcebergCatalogBackend;
 import org.apache.gravitino.catalog.lakehouse.iceberg.IcebergConstants;
+import org.apache.gravitino.exceptions.ConnectionFailedException;
 import org.apache.gravitino.iceberg.common.ClosableHiveCatalog;
-import org.apache.gravitino.iceberg.common.IcebergCatalogBackend;
 import org.apache.gravitino.iceberg.common.IcebergConfig;
 import org.apache.gravitino.iceberg.common.authentication.AuthenticationConfig;
 import org.apache.gravitino.iceberg.common.authentication.kerberos.HiveBackendProxy;
@@ -44,6 +45,7 @@ import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.hive.HiveCatalog;
 import org.apache.iceberg.inmemory.InMemoryCatalog;
 import org.apache.iceberg.jdbc.JdbcCatalog;
+import org.apache.iceberg.jdbc.UncheckedSQLException;
 import org.apache.iceberg.rest.RESTCatalog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,7 +58,9 @@ public class IcebergCatalogUtil {
     String icebergCatalogName = icebergConfig.getCatalogBackendName();
     InMemoryCatalog memoryCatalog = new InMemoryCatalog();
     Map<String, String> resultProperties = icebergConfig.getIcebergCatalogProperties();
-    resultProperties.put(CatalogProperties.WAREHOUSE_LOCATION, "/tmp");
+    if (!resultProperties.containsKey(IcebergConstants.WAREHOUSE)) {
+      resultProperties.put(IcebergConstants.WAREHOUSE, "/tmp");
+    }
     memoryCatalog.initialize(icebergCatalogName, resultProperties);
     return memoryCatalog;
   }
@@ -112,17 +116,12 @@ public class IcebergCatalogUtil {
     }
   }
 
+  @SuppressWarnings("FormatStringAnnotation")
   private static JdbcCatalog loadJdbcCatalog(IcebergConfig icebergConfig) {
     String driverClassName = icebergConfig.getJdbcDriver();
     String icebergCatalogName = icebergConfig.getCatalogBackendName();
 
     Map<String, String> properties = icebergConfig.getIcebergCatalogProperties();
-    Preconditions.checkNotNull(
-        properties.get(IcebergConstants.ICEBERG_JDBC_USER),
-        IcebergConstants.ICEBERG_JDBC_USER + " is null");
-    Preconditions.checkNotNull(
-        properties.get(IcebergConstants.ICEBERG_JDBC_PASSWORD),
-        IcebergConstants.ICEBERG_JDBC_PASSWORD + " is null");
     try {
       // Load the jdbc driver
       Class.forName(driverClassName);
@@ -135,7 +134,15 @@ public class IcebergCatalogUtil {
     HdfsConfiguration hdfsConfiguration = new HdfsConfiguration();
     properties.forEach(hdfsConfiguration::set);
     jdbcCatalog.setConf(hdfsConfiguration);
-    jdbcCatalog.initialize(icebergCatalogName, properties);
+    try {
+      jdbcCatalog.initialize(icebergCatalogName, properties);
+    } catch (UncheckedSQLException e) {
+      if (e.getCause() instanceof SQLException
+          && e.getCause().getMessage().contains("Access denied")) {
+        throw new ConnectionFailedException(e, e.getMessage());
+      }
+      throw e;
+    }
     return jdbcCatalog;
   }
 

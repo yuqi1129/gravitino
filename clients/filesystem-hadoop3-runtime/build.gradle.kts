@@ -26,8 +26,11 @@ plugins {
 }
 
 dependencies {
-  implementation(project(":clients:filesystem-hadoop3"))
+  implementation(project(":clients:filesystem-hadoop3")) {
+    exclude(group = "org.slf4j")
+  }
   implementation(project(":clients:client-java-runtime", configuration = "shadow"))
+  implementation(libs.commons.lang3)
 }
 
 tasks.withType<ShadowJar>(ShadowJar::class.java) {
@@ -38,6 +41,12 @@ tasks.withType<ShadowJar>(ShadowJar::class.java) {
   // Relocate dependencies to avoid conflicts
   relocate("com.google", "org.apache.gravitino.shaded.com.google")
   relocate("com.github.benmanes.caffeine", "org.apache.gravitino.shaded.com.github.benmanes.caffeine")
+  // relocate common lang3 package
+  relocate("org.apache.commons.lang3", "org.apache.gravitino.shaded.org.apache.commons.lang3")
+  relocate("org.apache.hc", "org.apache.gravitino.shaded.org.apache.hc")
+  relocate("org.checkerframework", "org.apache.gravitino.shaded.org.checkerframework")
+
+  mergeServiceFiles()
 }
 
 tasks.jar {

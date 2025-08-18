@@ -18,8 +18,11 @@
  */
 package org.apache.gravitino.client;
 
+import static org.apache.gravitino.dto.util.DTOConverters.toDTO;
+
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Sets;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -27,6 +30,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.gravitino.Catalog;
@@ -46,10 +50,17 @@ import org.apache.gravitino.dto.AuditDTO;
 import org.apache.gravitino.dto.MetalakeDTO;
 import org.apache.gravitino.dto.authorization.SecurableObjectDTO;
 import org.apache.gravitino.dto.requests.CatalogCreateRequest;
+import org.apache.gravitino.dto.requests.CatalogSetRequest;
 import org.apache.gravitino.dto.requests.CatalogUpdateRequest;
 import org.apache.gravitino.dto.requests.CatalogUpdatesRequest;
 import org.apache.gravitino.dto.requests.GroupAddRequest;
+import org.apache.gravitino.dto.requests.JobRunRequest;
+import org.apache.gravitino.dto.requests.JobTemplateRegisterRequest;
 import org.apache.gravitino.dto.requests.OwnerSetRequest;
+import org.apache.gravitino.dto.requests.PolicyCreateRequest;
+import org.apache.gravitino.dto.requests.PolicySetRequest;
+import org.apache.gravitino.dto.requests.PolicyUpdateRequest;
+import org.apache.gravitino.dto.requests.PolicyUpdatesRequest;
 import org.apache.gravitino.dto.requests.PrivilegeGrantRequest;
 import org.apache.gravitino.dto.requests.PrivilegeRevokeRequest;
 import org.apache.gravitino.dto.requests.RoleCreateRequest;
@@ -59,6 +70,7 @@ import org.apache.gravitino.dto.requests.TagCreateRequest;
 import org.apache.gravitino.dto.requests.TagUpdateRequest;
 import org.apache.gravitino.dto.requests.TagUpdatesRequest;
 import org.apache.gravitino.dto.requests.UserAddRequest;
+import org.apache.gravitino.dto.responses.BaseResponse;
 import org.apache.gravitino.dto.responses.CatalogListResponse;
 import org.apache.gravitino.dto.responses.CatalogResponse;
 import org.apache.gravitino.dto.responses.DeleteResponse;
@@ -67,8 +79,14 @@ import org.apache.gravitino.dto.responses.EntityListResponse;
 import org.apache.gravitino.dto.responses.ErrorResponse;
 import org.apache.gravitino.dto.responses.GroupListResponse;
 import org.apache.gravitino.dto.responses.GroupResponse;
+import org.apache.gravitino.dto.responses.JobListResponse;
+import org.apache.gravitino.dto.responses.JobResponse;
+import org.apache.gravitino.dto.responses.JobTemplateListResponse;
+import org.apache.gravitino.dto.responses.JobTemplateResponse;
 import org.apache.gravitino.dto.responses.NameListResponse;
 import org.apache.gravitino.dto.responses.OwnerResponse;
+import org.apache.gravitino.dto.responses.PolicyListResponse;
+import org.apache.gravitino.dto.responses.PolicyResponse;
 import org.apache.gravitino.dto.responses.RemoveResponse;
 import org.apache.gravitino.dto.responses.RoleResponse;
 import org.apache.gravitino.dto.responses.SetResponse;
@@ -77,19 +95,36 @@ import org.apache.gravitino.dto.responses.TagResponse;
 import org.apache.gravitino.dto.responses.UserListResponse;
 import org.apache.gravitino.dto.responses.UserResponse;
 import org.apache.gravitino.exceptions.CatalogAlreadyExistsException;
+import org.apache.gravitino.exceptions.CatalogInUseException;
 import org.apache.gravitino.exceptions.GroupAlreadyExistsException;
+import org.apache.gravitino.exceptions.IllegalMetadataObjectException;
 import org.apache.gravitino.exceptions.IllegalPrivilegeException;
+import org.apache.gravitino.exceptions.IllegalRoleException;
+import org.apache.gravitino.exceptions.InUseException;
+import org.apache.gravitino.exceptions.JobTemplateAlreadyExistsException;
 import org.apache.gravitino.exceptions.NoSuchCatalogException;
 import org.apache.gravitino.exceptions.NoSuchGroupException;
+import org.apache.gravitino.exceptions.NoSuchJobException;
+import org.apache.gravitino.exceptions.NoSuchJobTemplateException;
 import org.apache.gravitino.exceptions.NoSuchMetadataObjectException;
 import org.apache.gravitino.exceptions.NoSuchMetalakeException;
+import org.apache.gravitino.exceptions.NoSuchPolicyException;
 import org.apache.gravitino.exceptions.NoSuchRoleException;
 import org.apache.gravitino.exceptions.NoSuchTagException;
 import org.apache.gravitino.exceptions.NoSuchUserException;
+import org.apache.gravitino.exceptions.NonEmptyEntityException;
 import org.apache.gravitino.exceptions.NotFoundException;
+import org.apache.gravitino.exceptions.PolicyAlreadyExistsException;
 import org.apache.gravitino.exceptions.RoleAlreadyExistsException;
 import org.apache.gravitino.exceptions.TagAlreadyExistsException;
 import org.apache.gravitino.exceptions.UserAlreadyExistsException;
+import org.apache.gravitino.job.JobHandle;
+import org.apache.gravitino.job.JobTemplate;
+import org.apache.gravitino.job.SupportsJobs;
+import org.apache.gravitino.policy.Policy;
+import org.apache.gravitino.policy.PolicyChange;
+import org.apache.gravitino.policy.PolicyContent;
+import org.apache.gravitino.policy.PolicyOperations;
 import org.apache.gravitino.rest.RESTUtils;
 import org.apache.gravitino.tag.Tag;
 import org.apache.gravitino.tag.TagChange;
@@ -101,15 +136,17 @@ import org.apache.gravitino.tag.TagOperations;
  * create, load, alter and drop a catalog with specified identifier.
  */
 public class GravitinoMetalake extends MetalakeDTO
-    implements SupportsCatalogs, TagOperations, SupportsRoles {
+    implements SupportsCatalogs, TagOperations, SupportsRoles, SupportsJobs, PolicyOperations {
   private static final String API_METALAKES_CATALOGS_PATH = "api/metalakes/%s/catalogs/%s";
   private static final String API_PERMISSION_PATH = "api/metalakes/%s/permissions/%s";
   private static final String API_METALAKES_USERS_PATH = "api/metalakes/%s/users/%s";
   private static final String API_METALAKES_GROUPS_PATH = "api/metalakes/%s/groups/%s";
   private static final String API_METALAKES_ROLES_PATH = "api/metalakes/%s/roles/%s";
   private static final String API_METALAKES_OWNERS_PATH = "api/metalakes/%s/owners/%s";
-
   private static final String API_METALAKES_TAGS_PATH = "api/metalakes/%s/tags";
+  private static final String API_METALAKES_JOB_TEMPLATES_PATH = "api/metalakes/%s/jobs/templates";
+  private static final String API_METALAKES_JOB_PATH = "api/metalakes/%s/jobs/runs";
+  private static final String API_METALAKES_POLICIES_PATH = "api/metalakes/%s/policies";
   private static final String BLANK_PLACEHOLDER = "";
 
   private final RESTClient restClient;
@@ -250,7 +287,10 @@ public class GravitinoMetalake extends MetalakeDTO
 
     CatalogResponse resp =
         restClient.put(
-            String.format(API_METALAKES_CATALOGS_PATH, this.name(), catalogName),
+            String.format(
+                API_METALAKES_CATALOGS_PATH,
+                RESTUtils.encodeString(this.name()),
+                RESTUtils.encodeString(catalogName)),
             updatesRequest,
             CatalogResponse.class,
             Collections.emptyMap(),
@@ -261,21 +301,83 @@ public class GravitinoMetalake extends MetalakeDTO
   }
 
   /**
-   * Drop the catalog with specified identifier.
+   * Drop a catalog with specified name. If the force flag is true, it will:
    *
-   * @param catalogName the name of the catalog.
-   * @return true if the catalog is dropped successfully, false if the catalog does not exist.
+   * <ul>
+   *   <li>Cascade drop all sub-entities (schemas, tables, etc.) of the catalog in Gravitino store.
+   *   <li>Drop the catalog even if it is in use.
+   *   <li>External resources (e.g. database, table, etc.) associated with sub-entities will not be
+   *       dropped unless it is managed (such as managed fileset).
+   * </ul>
+   *
+   * @param catalogName The identifier of the catalog.
+   * @param force Whether to force the drop.
+   * @return True if the catalog was dropped, false if the catalog does not exist.
+   * @throws NonEmptyEntityException If the catalog is not empty and force is false.
+   * @throws CatalogInUseException If the catalog is in use and force is false.
    */
   @Override
-  public boolean dropCatalog(String catalogName) {
+  public boolean dropCatalog(String catalogName, boolean force)
+      throws NonEmptyEntityException, CatalogInUseException {
+    Map<String, String> params = new HashMap<>();
+    params.put("force", String.valueOf(force));
+
     DropResponse resp =
         restClient.delete(
-            String.format(API_METALAKES_CATALOGS_PATH, this.name(), catalogName),
+            String.format(
+                API_METALAKES_CATALOGS_PATH,
+                RESTUtils.encodeString(this.name()),
+                RESTUtils.encodeString(catalogName)),
+            params,
             DropResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.catalogErrorHandler());
     resp.validate();
     return resp.dropped();
+  }
+
+  @Override
+  public void enableCatalog(String catalogName) throws NoSuchCatalogException {
+    CatalogSetRequest req = new CatalogSetRequest(true);
+
+    ErrorResponse resp =
+        restClient.patch(
+            String.format(
+                API_METALAKES_CATALOGS_PATH,
+                RESTUtils.encodeString(this.name()),
+                RESTUtils.encodeString(catalogName)),
+            req,
+            ErrorResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.catalogErrorHandler());
+
+    if (resp.getCode() == 0) {
+      return;
+    }
+
+    ErrorHandlers.catalogErrorHandler().accept(resp);
+  }
+
+  @Override
+  public void disableCatalog(String catalogName) throws NoSuchCatalogException {
+    CatalogSetRequest req = new CatalogSetRequest(false);
+
+    ErrorResponse resp =
+        restClient.patch(
+            String.format(
+                API_METALAKES_CATALOGS_PATH,
+                RESTUtils.encodeString(this.name()),
+                RESTUtils.encodeString(catalogName)),
+            req,
+            ErrorResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.catalogErrorHandler());
+
+    if (resp.getCode() == 0) {
+      return;
+    }
+
+    ErrorHandlers.catalogErrorHandler().accept(resp);
   }
 
   /**
@@ -306,7 +408,8 @@ public class GravitinoMetalake extends MetalakeDTO
     // only)
     ErrorResponse resp =
         restClient.post(
-            String.format("api/metalakes/%s/catalogs/testConnection", this.name()),
+            String.format(
+                "api/metalakes/%s/catalogs/testConnection", RESTUtils.encodeString(this.name())),
             req,
             ErrorResponse.class,
             Collections.emptyMap(),
@@ -325,7 +428,7 @@ public class GravitinoMetalake extends MetalakeDTO
     return this;
   }
 
-  /*
+  /**
    * List all the tag names under a metalake.
    *
    * @return A list of the tag names under the current metalake.
@@ -335,7 +438,7 @@ public class GravitinoMetalake extends MetalakeDTO
   public String[] listTags() throws NoSuchMetalakeException {
     NameListResponse resp =
         restClient.get(
-            String.format(API_METALAKES_TAGS_PATH, this.name()),
+            String.format(API_METALAKES_TAGS_PATH, RESTUtils.encodeString(this.name())),
             NameListResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.tagErrorHandler());
@@ -354,7 +457,7 @@ public class GravitinoMetalake extends MetalakeDTO
     Map<String, String> params = ImmutableMap.of("details", "true");
     TagListResponse resp =
         restClient.get(
-            String.format(API_METALAKES_TAGS_PATH, this.name()),
+            String.format(API_METALAKES_TAGS_PATH, RESTUtils.encodeString(this.name())),
             params,
             TagListResponse.class,
             Collections.emptyMap(),
@@ -379,7 +482,9 @@ public class GravitinoMetalake extends MetalakeDTO
 
     TagResponse resp =
         restClient.get(
-            String.format(API_METALAKES_TAGS_PATH, this.name()) + "/" + name,
+            String.format(API_METALAKES_TAGS_PATH, RESTUtils.encodeString(this.name()))
+                + "/"
+                + RESTUtils.encodeString(name),
             TagResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.tagErrorHandler());
@@ -406,7 +511,7 @@ public class GravitinoMetalake extends MetalakeDTO
 
     TagResponse resp =
         restClient.post(
-            String.format(API_METALAKES_TAGS_PATH, this.name()),
+            String.format(API_METALAKES_TAGS_PATH, RESTUtils.encodeString(this.name())),
             req,
             TagResponse.class,
             Collections.emptyMap(),
@@ -436,7 +541,9 @@ public class GravitinoMetalake extends MetalakeDTO
 
     TagResponse resp =
         restClient.put(
-            String.format(API_METALAKES_TAGS_PATH, this.name()) + "/" + name,
+            String.format(API_METALAKES_TAGS_PATH, RESTUtils.encodeString(this.name()))
+                + "/"
+                + RESTUtils.encodeString(name),
             req,
             TagResponse.class,
             Collections.emptyMap(),
@@ -458,10 +565,190 @@ public class GravitinoMetalake extends MetalakeDTO
 
     DropResponse resp =
         restClient.delete(
-            String.format(API_METALAKES_TAGS_PATH, this.name()) + "/" + name,
+            String.format(API_METALAKES_TAGS_PATH, RESTUtils.encodeString(this.name()))
+                + "/"
+                + RESTUtils.encodeString(name),
             DropResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.tagErrorHandler());
+    resp.validate();
+    return resp.dropped();
+  }
+
+  /**
+   * List all the policies under the current metalake.
+   *
+   * @return A list of the policy names under the current metalake.
+   * @throws NoSuchMetalakeException If the metalake does not exist.
+   */
+  @Override
+  public String[] listPolicies() throws NoSuchMetalakeException {
+    NameListResponse resp =
+        restClient.get(
+            String.format(API_METALAKES_POLICIES_PATH, RESTUtils.encodeString(this.name())),
+            NameListResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.policyErrorHandler());
+    resp.validate();
+    return resp.getNames();
+  }
+
+  /**
+   * List all the policies with detailed information under the current metalake.
+   *
+   * @return A list of {@link Policy} under the current metalake.
+   * @throws NoSuchMetalakeException If the metalake does not exist.
+   */
+  @Override
+  public Policy[] listPolicyInfos() throws NoSuchMetalakeException {
+    Map<String, String> params = ImmutableMap.of("details", "true");
+    PolicyListResponse resp =
+        restClient.get(
+            String.format(API_METALAKES_POLICIES_PATH, RESTUtils.encodeString(this.name())),
+            params,
+            PolicyListResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.policyErrorHandler());
+    resp.validate();
+
+    return Arrays.stream(resp.getPolicies())
+        .map(p -> new GenericPolicy(p, restClient, this.name()))
+        .toArray(Policy[]::new);
+  }
+
+  /**
+   * Get a policy by its name under the current metalake.
+   *
+   * @param name The name of the policy.
+   * @return The policy.
+   * @throws NoSuchPolicyException If the policy does not exist.
+   */
+  @Override
+  public Policy getPolicy(String name) throws NoSuchPolicyException {
+    Preconditions.checkArgument(
+        StringUtils.isNotBlank(name), "policy name must not be null or empty");
+
+    PolicyResponse resp =
+        restClient.get(
+            String.format(API_METALAKES_POLICIES_PATH, RESTUtils.encodeString(this.name()))
+                + "/"
+                + RESTUtils.encodeString(name),
+            PolicyResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.policyErrorHandler());
+    resp.validate();
+
+    return new GenericPolicy(resp.getPolicy(), restClient, this.name());
+  }
+
+  /**
+   * Create a new policy under the current metalake.
+   *
+   * @param name The name of the policy.
+   * @param type The type of the policy.
+   * @param comment The comment of the policy.
+   * @param enabled Whether the policy is enabled or not.
+   * @param content The content of the policy.
+   * @return The created policy.
+   * @throws PolicyAlreadyExistsException If the policy already exists.
+   */
+  @Override
+  public Policy createPolicy(
+      String name, String type, String comment, boolean enabled, PolicyContent content)
+      throws PolicyAlreadyExistsException {
+    PolicyCreateRequest req = new PolicyCreateRequest(name, type, comment, enabled, toDTO(content));
+    req.validate();
+
+    PolicyResponse resp =
+        restClient.post(
+            String.format(API_METALAKES_POLICIES_PATH, RESTUtils.encodeString(this.name())),
+            req,
+            PolicyResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.policyErrorHandler());
+    resp.validate();
+
+    return new GenericPolicy(resp.getPolicy(), restClient, this.name());
+  }
+
+  /**
+   * Enable a policy under the current metalake. If the policy is already enabled, this method does
+   * nothing.
+   *
+   * @param name The name of the policy to enable.
+   * @throws NoSuchPolicyException If the policy does not exist.
+   */
+  @Override
+  public void enablePolicy(String name) throws NoSuchPolicyException {
+    setPolicyEnabled(name, true);
+  }
+
+  /**
+   * Disable a policy under the current metalake. If the policy is already disabled, this method
+   * does nothing.
+   *
+   * @param name The name of the policy to disable.
+   * @throws NoSuchPolicyException If the policy does not exist.
+   */
+  @Override
+  public void disablePolicy(String name) throws NoSuchPolicyException {
+    setPolicyEnabled(name, false);
+  }
+
+  /**
+   * Alter a policy under the current metalake by applying the changes.
+   *
+   * @param name The name of the policy.
+   * @param changes The changes to apply to the policy.
+   * @return The altered policy.
+   * @throws NoSuchPolicyException If the policy does not exist.
+   * @throws IllegalArgumentException If the changes cannot be applied to the policy.
+   */
+  @Override
+  public Policy alterPolicy(String name, PolicyChange... changes)
+      throws NoSuchPolicyException, IllegalArgumentException {
+    Preconditions.checkArgument(
+        StringUtils.isNotBlank(name), "policy name must not be null or empty");
+    List<PolicyUpdateRequest> updates =
+        Arrays.stream(changes)
+            .map(DTOConverters::toPolicyUpdateRequest)
+            .collect(Collectors.toList());
+    PolicyUpdatesRequest req = new PolicyUpdatesRequest(updates);
+    req.validate();
+
+    PolicyResponse resp =
+        restClient.put(
+            String.format(API_METALAKES_POLICIES_PATH, RESTUtils.encodeString(this.name()))
+                + "/"
+                + RESTUtils.encodeString(name),
+            req,
+            PolicyResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.policyErrorHandler());
+    resp.validate();
+
+    return new GenericPolicy(resp.getPolicy(), restClient, this.name());
+  }
+
+  /**
+   * Deletes a policy under the current metalake.
+   *
+   * @param name The name of the policy.
+   * @return True if the policy was deleted, false if the policy does not exist.
+   */
+  @Override
+  public boolean deletePolicy(String name) {
+    Preconditions.checkArgument(
+        StringUtils.isNotBlank(name), "policy name must not be null or empty");
+
+    DropResponse resp =
+        restClient.delete(
+            String.format(API_METALAKES_POLICIES_PATH, RESTUtils.encodeString(this.name()))
+                + "/"
+                + RESTUtils.encodeString(name),
+            DropResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.policyErrorHandler());
     resp.validate();
     return resp.dropped();
   }
@@ -481,7 +768,8 @@ public class GravitinoMetalake extends MetalakeDTO
 
     UserResponse resp =
         restClient.post(
-            String.format(API_METALAKES_USERS_PATH, this.name(), BLANK_PLACEHOLDER),
+            String.format(
+                API_METALAKES_USERS_PATH, RESTUtils.encodeString(this.name()), BLANK_PLACEHOLDER),
             req,
             UserResponse.class,
             Collections.emptyMap(),
@@ -503,7 +791,10 @@ public class GravitinoMetalake extends MetalakeDTO
   public boolean removeUser(String user) throws NoSuchMetalakeException {
     RemoveResponse resp =
         restClient.delete(
-            String.format(API_METALAKES_USERS_PATH, this.name(), RESTUtils.encodeString(user)),
+            String.format(
+                API_METALAKES_USERS_PATH,
+                RESTUtils.encodeString(this.name()),
+                RESTUtils.encodeString(user)),
             RemoveResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.userErrorHandler());
@@ -524,7 +815,10 @@ public class GravitinoMetalake extends MetalakeDTO
   public User getUser(String user) throws NoSuchUserException, NoSuchMetalakeException {
     UserResponse resp =
         restClient.get(
-            String.format(API_METALAKES_USERS_PATH, this.name(), RESTUtils.encodeString(user)),
+            String.format(
+                API_METALAKES_USERS_PATH,
+                RESTUtils.encodeString(this.name()),
+                RESTUtils.encodeString(user)),
             UserResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.userErrorHandler());
@@ -545,7 +839,8 @@ public class GravitinoMetalake extends MetalakeDTO
 
     UserListResponse resp =
         restClient.get(
-            String.format(API_METALAKES_USERS_PATH, name(), BLANK_PLACEHOLDER),
+            String.format(
+                API_METALAKES_USERS_PATH, RESTUtils.encodeString(this.name()), BLANK_PLACEHOLDER),
             params,
             UserListResponse.class,
             Collections.emptyMap(),
@@ -564,7 +859,8 @@ public class GravitinoMetalake extends MetalakeDTO
   public String[] listUserNames() throws NoSuchMetalakeException {
     NameListResponse resp =
         restClient.get(
-            String.format(API_METALAKES_USERS_PATH, name(), BLANK_PLACEHOLDER),
+            String.format(
+                API_METALAKES_USERS_PATH, RESTUtils.encodeString(this.name()), BLANK_PLACEHOLDER),
             NameListResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.userErrorHandler());
@@ -588,7 +884,8 @@ public class GravitinoMetalake extends MetalakeDTO
 
     GroupResponse resp =
         restClient.post(
-            String.format(API_METALAKES_GROUPS_PATH, this.name(), BLANK_PLACEHOLDER),
+            String.format(
+                API_METALAKES_GROUPS_PATH, RESTUtils.encodeString(this.name()), BLANK_PLACEHOLDER),
             req,
             GroupResponse.class,
             Collections.emptyMap(),
@@ -610,7 +907,10 @@ public class GravitinoMetalake extends MetalakeDTO
   public boolean removeGroup(String group) throws NoSuchMetalakeException {
     RemoveResponse resp =
         restClient.delete(
-            String.format(API_METALAKES_GROUPS_PATH, this.name(), RESTUtils.encodeString(group)),
+            String.format(
+                API_METALAKES_GROUPS_PATH,
+                RESTUtils.encodeString(this.name()),
+                RESTUtils.encodeString(group)),
             RemoveResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.groupErrorHandler());
@@ -631,7 +931,10 @@ public class GravitinoMetalake extends MetalakeDTO
   public Group getGroup(String group) throws NoSuchGroupException, NoSuchMetalakeException {
     GroupResponse resp =
         restClient.get(
-            String.format(API_METALAKES_GROUPS_PATH, this.name(), RESTUtils.encodeString(group)),
+            String.format(
+                API_METALAKES_GROUPS_PATH,
+                RESTUtils.encodeString(this.name()),
+                RESTUtils.encodeString(group)),
             GroupResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.groupErrorHandler());
@@ -652,7 +955,8 @@ public class GravitinoMetalake extends MetalakeDTO
 
     GroupListResponse resp =
         restClient.get(
-            String.format(API_METALAKES_GROUPS_PATH, name(), BLANK_PLACEHOLDER),
+            String.format(
+                API_METALAKES_GROUPS_PATH, RESTUtils.encodeString(this.name()), BLANK_PLACEHOLDER),
             params,
             GroupListResponse.class,
             Collections.emptyMap(),
@@ -670,7 +974,8 @@ public class GravitinoMetalake extends MetalakeDTO
   public String[] listGroupNames() throws NoSuchMetalakeException {
     NameListResponse resp =
         restClient.get(
-            String.format(API_METALAKES_GROUPS_PATH, name(), BLANK_PLACEHOLDER),
+            String.format(
+                API_METALAKES_GROUPS_PATH, RESTUtils.encodeString(this.name()), BLANK_PLACEHOLDER),
             NameListResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.groupErrorHandler());
@@ -690,7 +995,10 @@ public class GravitinoMetalake extends MetalakeDTO
   public Role getRole(String role) throws NoSuchRoleException, NoSuchMetalakeException {
     RoleResponse resp =
         restClient.get(
-            String.format(API_METALAKES_ROLES_PATH, this.name(), RESTUtils.encodeString(role)),
+            String.format(
+                API_METALAKES_ROLES_PATH,
+                RESTUtils.encodeString(this.name()),
+                RESTUtils.encodeString(role)),
             RoleResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.roleErrorHandler());
@@ -711,7 +1019,10 @@ public class GravitinoMetalake extends MetalakeDTO
   public boolean deleteRole(String role) throws NoSuchMetalakeException {
     DeleteResponse resp =
         restClient.delete(
-            String.format(API_METALAKES_ROLES_PATH, this.name(), RESTUtils.encodeString(role)),
+            String.format(
+                API_METALAKES_ROLES_PATH,
+                RESTUtils.encodeString(this.name()),
+                RESTUtils.encodeString(role)),
             DeleteResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.roleErrorHandler());
@@ -729,12 +1040,12 @@ public class GravitinoMetalake extends MetalakeDTO
    * @return The created Role instance.
    * @throws RoleAlreadyExistsException If a Role with the same name already exists.
    * @throws NoSuchMetalakeException If the Metalake with the given name does not exist.
-   * @throws NoSuchMetadataObjectException If the securable object doesn't exist
+   * @throws IllegalMetadataObjectException If the securable object is invalid
    * @throws RuntimeException If creating the Role encounters storage issues.
    */
   public Role createRole(
       String role, Map<String, String> properties, List<SecurableObject> securableObjects)
-      throws RoleAlreadyExistsException, NoSuchMetalakeException, NoSuchMetadataObjectException {
+      throws RoleAlreadyExistsException, NoSuchMetalakeException, IllegalMetadataObjectException {
     RoleCreateRequest req =
         new RoleCreateRequest(
             role,
@@ -746,7 +1057,8 @@ public class GravitinoMetalake extends MetalakeDTO
 
     RoleResponse resp =
         restClient.post(
-            String.format(API_METALAKES_ROLES_PATH, this.name(), BLANK_PLACEHOLDER),
+            String.format(
+                API_METALAKES_ROLES_PATH, RESTUtils.encodeString(this.name()), BLANK_PLACEHOLDER),
             req,
             RoleResponse.class,
             Collections.emptyMap(),
@@ -765,7 +1077,8 @@ public class GravitinoMetalake extends MetalakeDTO
   public String[] listRoleNames() {
     NameListResponse resp =
         restClient.get(
-            String.format(API_METALAKES_ROLES_PATH, this.name(), BLANK_PLACEHOLDER),
+            String.format(
+                API_METALAKES_ROLES_PATH, RESTUtils.encodeString(this.name()), BLANK_PLACEHOLDER),
             NameListResponse.class,
             Collections.emptyMap(),
             ErrorHandlers.roleErrorHandler());
@@ -781,12 +1094,12 @@ public class GravitinoMetalake extends MetalakeDTO
    * @param roles The names of the Role.
    * @return The Group after granted.
    * @throws NoSuchUserException If the User with the given name does not exist.
-   * @throws NoSuchRoleException If the Role with the given name does not exist.
+   * @throws IllegalRoleException If the Role with the given name is invalid.
    * @throws NoSuchMetalakeException If the Metalake with the given name does not exist.
    * @throws RuntimeException If granting roles to a user encounters storage issues.
    */
   public User grantRolesToUser(List<String> roles, String user)
-      throws NoSuchUserException, NoSuchRoleException, NoSuchMetalakeException {
+      throws NoSuchUserException, IllegalRoleException, NoSuchMetalakeException {
     RoleGrantRequest request = new RoleGrantRequest(roles);
     request.validate();
 
@@ -794,7 +1107,7 @@ public class GravitinoMetalake extends MetalakeDTO
         restClient.put(
             String.format(
                 API_PERMISSION_PATH,
-                this.name(),
+                RESTUtils.encodeString(this.name()),
                 String.format("users/%s/grant", RESTUtils.encodeString(user))),
             request,
             UserResponse.class,
@@ -812,7 +1125,7 @@ public class GravitinoMetalake extends MetalakeDTO
    * @param roles The names of the Role.
    * @return The Group after granted.
    * @throws NoSuchGroupException If the Group with the given name does not exist.
-   * @throws NoSuchRoleException If the Role with the given name does not exist.
+   * @throws IllegalRoleException If the Role with the given name is invalid.
    * @throws NoSuchMetalakeException If the Metalake with the given name does not exist.
    * @throws RuntimeException If granting roles to a group encounters storage issues.
    */
@@ -825,7 +1138,7 @@ public class GravitinoMetalake extends MetalakeDTO
         restClient.put(
             String.format(
                 API_PERMISSION_PATH,
-                this.name(),
+                RESTUtils.encodeString(this.name()),
                 String.format("groups/%s/grant", RESTUtils.encodeString(group))),
             request,
             GroupResponse.class,
@@ -843,7 +1156,7 @@ public class GravitinoMetalake extends MetalakeDTO
    * @param roles The names of the Role.
    * @return The User after revoked.
    * @throws NoSuchUserException If the User with the given name does not exist.
-   * @throws NoSuchRoleException If the Role with the given name does not exist.
+   * @throws IllegalRoleException If the Role with the given name is invalid.
    * @throws NoSuchMetalakeException If the Metalake with the given name does not exist.
    * @throws RuntimeException If revoking roles from a user encounters storage issues.
    */
@@ -856,7 +1169,7 @@ public class GravitinoMetalake extends MetalakeDTO
         restClient.put(
             String.format(
                 API_PERMISSION_PATH,
-                this.name(),
+                RESTUtils.encodeString(this.name()),
                 String.format("users/%s/revoke", RESTUtils.encodeString(user))),
             request,
             UserResponse.class,
@@ -874,12 +1187,12 @@ public class GravitinoMetalake extends MetalakeDTO
    * @param roles The names of the Role.
    * @return The Group after revoked.
    * @throws NoSuchGroupException If the Group with the given name does not exist.
-   * @throws NoSuchRoleException If the Role with the given name does not exist.
+   * @throws IllegalRoleException If the Role with the given name is invalid.
    * @throws NoSuchMetalakeException If the Metalake with the given name does not exist.
    * @throws RuntimeException If revoking roles from a group encounters storage issues.
    */
   public Group revokeRolesFromGroup(List<String> roles, String group)
-      throws NoSuchGroupException, NoSuchRoleException, NoSuchMetalakeException {
+      throws NoSuchGroupException, IllegalRoleException, NoSuchMetalakeException {
     RoleRevokeRequest request = new RoleRevokeRequest(roles);
     request.validate();
 
@@ -887,7 +1200,7 @@ public class GravitinoMetalake extends MetalakeDTO
         restClient.put(
             String.format(
                 API_PERMISSION_PATH,
-                this.name(),
+                RESTUtils.encodeString(this.name()),
                 String.format("groups/%s/revoke", RESTUtils.encodeString(group))),
             request,
             GroupResponse.class,
@@ -915,6 +1228,27 @@ public class GravitinoMetalake extends MetalakeDTO
   public Role grantPrivilegesToRole(String role, MetadataObject object, List<Privilege> privileges)
       throws NoSuchRoleException, NoSuchMetadataObjectException, NoSuchMetalakeException,
           IllegalPrivilegeException {
+    Set<Privilege> privilegeSet = Sets.newHashSet(privileges);
+    return grantPrivilegesToRole(role, object, privilegeSet);
+  }
+
+  /**
+   * Grant privileges to a role.
+   *
+   * @param role The name of the role.
+   * @param privileges The privileges to grant.
+   * @param object The object is associated with privileges to grant.
+   * @return The role after granted.
+   * @throws NoSuchRoleException If the role with the given name does not exist.
+   * @throws NoSuchMetadataObjectException If the metadata object with the given name does not
+   *     exist.
+   * @throws NoSuchMetalakeException If the Metalake with the given name does not exist.
+   * @throws IllegalPrivilegeException If any privilege can't be bind to the metadata object.
+   * @throws RuntimeException If granting privileges to a role encounters storage issues.
+   */
+  public Role grantPrivilegesToRole(String role, MetadataObject object, Set<Privilege> privileges)
+      throws NoSuchRoleException, NoSuchMetadataObjectException, NoSuchMetalakeException,
+          IllegalPrivilegeException {
     PrivilegeGrantRequest request =
         new PrivilegeGrantRequest(DTOConverters.toPrivileges(privileges));
     request.validate();
@@ -923,12 +1257,12 @@ public class GravitinoMetalake extends MetalakeDTO
         restClient.put(
             String.format(
                 API_PERMISSION_PATH,
-                this.name(),
+                RESTUtils.encodeString(this.name()),
                 String.format(
                     "roles/%s/%s/%s/grant",
                     RESTUtils.encodeString(role),
                     object.type().name().toLowerCase(Locale.ROOT),
-                    object.fullName())),
+                    RESTUtils.encodeString(object.fullName()))),
             request,
             RoleResponse.class,
             Collections.emptyMap(),
@@ -952,9 +1286,33 @@ public class GravitinoMetalake extends MetalakeDTO
    * @throws NoSuchMetalakeException If the Metalake with the given name does not exist.
    * @throws IllegalPrivilegeException If any privilege can't be bind to the metadata object.
    * @throws RuntimeException If revoking privileges from a role encounters storage issues.
+   * @deprecated use {@link #revokePrivilegesFromRole(String, MetadataObject, Set)} instead.
    */
+  @Deprecated
   public Role revokePrivilegesFromRole(
       String role, MetadataObject object, List<Privilege> privileges)
+      throws NoSuchRoleException, NoSuchMetadataObjectException, NoSuchMetalakeException,
+          IllegalPrivilegeException {
+    Set<Privilege> privilegeSet = Sets.newHashSet(privileges);
+    return revokePrivilegesFromRole(role, object, privilegeSet);
+  }
+
+  /**
+   * Revoke privileges from a role.
+   *
+   * @param role The name of the role.
+   * @param privileges The privileges to revoke.
+   * @param object The object is associated with privileges to revoke.
+   * @return The role after revoked.
+   * @throws NoSuchRoleException If the role with the given name does not exist.
+   * @throws NoSuchMetadataObjectException If the metadata object with the given name does not
+   *     exist.
+   * @throws NoSuchMetalakeException If the Metalake with the given name does not exist.
+   * @throws IllegalPrivilegeException If any privilege can't be bind to the metadata object.
+   * @throws RuntimeException If revoking privileges from a role encounters storage issues.
+   */
+  public Role revokePrivilegesFromRole(
+      String role, MetadataObject object, Set<Privilege> privileges)
       throws NoSuchRoleException, NoSuchMetadataObjectException, NoSuchMetalakeException,
           IllegalPrivilegeException {
     PrivilegeRevokeRequest request =
@@ -965,12 +1323,12 @@ public class GravitinoMetalake extends MetalakeDTO
         restClient.put(
             String.format(
                 API_PERMISSION_PATH,
-                this.name(),
+                RESTUtils.encodeString(this.name()),
                 String.format(
                     "roles/%s/%s/%s/revoke",
                     RESTUtils.encodeString(role),
                     object.type().name().toLowerCase(Locale.ROOT),
-                    object.fullName())),
+                    RESTUtils.encodeString(object.fullName()))),
             request,
             RoleResponse.class,
             Collections.emptyMap(),
@@ -994,7 +1352,7 @@ public class GravitinoMetalake extends MetalakeDTO
         restClient.get(
             String.format(
                 API_METALAKES_OWNERS_PATH,
-                this.name(),
+                RESTUtils.encodeString(this.name()),
                 String.format(
                     "%s/%s",
                     object.type().name().toLowerCase(Locale.ROOT),
@@ -1022,7 +1380,7 @@ public class GravitinoMetalake extends MetalakeDTO
         restClient.put(
             String.format(
                 API_METALAKES_OWNERS_PATH,
-                this.name(),
+                RESTUtils.encodeString(this.name()),
                 String.format(
                     "%s/%s",
                     object.type().name().toLowerCase(Locale.ROOT),
@@ -1037,6 +1395,160 @@ public class GravitinoMetalake extends MetalakeDTO
   @Override
   public String[] listBindingRoleNames() {
     return metadataObjectRoleOperations.listBindingRoleNames();
+  }
+
+  @Override
+  public List<JobTemplate> listJobTemplates() {
+    JobTemplateListResponse resp =
+        restClient.get(
+            String.format(API_METALAKES_JOB_TEMPLATES_PATH, RESTUtils.encodeString(this.name())),
+            ImmutableMap.of("details", "true"),
+            JobTemplateListResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.jobErrorHandler());
+    resp.validate();
+
+    return resp.getJobTemplates().stream()
+        .map(org.apache.gravitino.dto.util.DTOConverters::fromDTO)
+        .collect(Collectors.toList());
+  }
+
+  @Override
+  public void registerJobTemplate(JobTemplate jobTemplate)
+      throws JobTemplateAlreadyExistsException {
+    JobTemplateRegisterRequest req =
+        new JobTemplateRegisterRequest(DTOConverters.toJobTemplateDTO(jobTemplate));
+
+    BaseResponse resp =
+        restClient.post(
+            String.format(API_METALAKES_JOB_TEMPLATES_PATH, RESTUtils.encodeString(this.name())),
+            req,
+            BaseResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.jobErrorHandler());
+    resp.validate();
+  }
+
+  @Override
+  public JobTemplate getJobTemplate(String jobTemplateName) throws NoSuchJobTemplateException {
+    Preconditions.checkArgument(
+        StringUtils.isNotBlank(jobTemplateName), "job template name must not be null or empty");
+
+    JobTemplateResponse resp =
+        restClient.get(
+            String.format(API_METALAKES_JOB_TEMPLATES_PATH, RESTUtils.encodeString(this.name()))
+                + "/"
+                + RESTUtils.encodeString(jobTemplateName),
+            JobTemplateResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.jobErrorHandler());
+    resp.validate();
+
+    return org.apache.gravitino.dto.util.DTOConverters.fromDTO(resp.getJobTemplate());
+  }
+
+  @Override
+  public boolean deleteJobTemplate(String jobTemplateName) throws InUseException {
+    Preconditions.checkArgument(
+        StringUtils.isNotBlank(jobTemplateName), "job template name must not be null or empty");
+
+    DropResponse resp =
+        restClient.delete(
+            String.format(API_METALAKES_JOB_TEMPLATES_PATH, RESTUtils.encodeString(this.name()))
+                + "/"
+                + RESTUtils.encodeString(jobTemplateName),
+            DropResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.jobErrorHandler());
+    resp.validate();
+
+    return resp.dropped();
+  }
+
+  @Override
+  public List<JobHandle> listJobs(String jobTemplateName) throws NoSuchJobTemplateException {
+    Preconditions.checkArgument(
+        StringUtils.isNotBlank(jobTemplateName), "job template name must not be null or empty");
+
+    JobListResponse resp =
+        restClient.get(
+            String.format(API_METALAKES_JOB_PATH, RESTUtils.encodeString(this.name())),
+            ImmutableMap.of("jobTemplateName", RESTUtils.encodeString(jobTemplateName)),
+            JobListResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.jobErrorHandler());
+    resp.validate();
+
+    return resp.getJobs().stream().map(GenericJobHandle::new).collect(Collectors.toList());
+  }
+
+  @Override
+  public List<JobHandle> listJobs() {
+    JobListResponse resp =
+        restClient.get(
+            String.format(API_METALAKES_JOB_PATH, RESTUtils.encodeString(this.name())),
+            Collections.emptyMap(),
+            JobListResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.jobErrorHandler());
+    resp.validate();
+
+    return resp.getJobs().stream().map(GenericJobHandle::new).collect(Collectors.toList());
+  }
+
+  @Override
+  public JobHandle runJob(String jobTemplateName, Map<String, String> jobConf)
+      throws NoSuchJobTemplateException {
+    Preconditions.checkArgument(
+        StringUtils.isNotBlank(jobTemplateName), "job template name must not be null or empty");
+
+    JobRunRequest req = new JobRunRequest(jobTemplateName, jobConf);
+
+    JobResponse resp =
+        restClient.post(
+            String.format(API_METALAKES_JOB_PATH, RESTUtils.encodeString(this.name())),
+            req,
+            JobResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.jobErrorHandler());
+
+    resp.validate();
+    return new GenericJobHandle(resp.getJob());
+  }
+
+  @Override
+  public JobHandle getJob(String jobId) throws NoSuchJobException {
+    Preconditions.checkArgument(StringUtils.isNotBlank(jobId), "job id must not be null or empty");
+
+    JobResponse resp =
+        restClient.get(
+            String.format(API_METALAKES_JOB_PATH, RESTUtils.encodeString(this.name()))
+                + "/"
+                + RESTUtils.encodeString(jobId),
+            JobResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.jobErrorHandler());
+    resp.validate();
+
+    return new GenericJobHandle(resp.getJob());
+  }
+
+  @Override
+  public JobHandle cancelJob(String jobId) throws NoSuchJobException {
+    Preconditions.checkArgument(StringUtils.isNotBlank(jobId), "job id must not be null or empty");
+
+    JobResponse resp =
+        restClient.post(
+            String.format(API_METALAKES_JOB_PATH, RESTUtils.encodeString(this.name()))
+                + "/"
+                + RESTUtils.encodeString(jobId),
+            null,
+            JobResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.jobErrorHandler());
+    resp.validate();
+
+    return new GenericJobHandle(resp.getJob());
   }
 
   static class Builder extends MetalakeDTO.Builder<Builder> {
@@ -1078,5 +1590,25 @@ public class GravitinoMetalake extends MetalakeDTO
   /** @return the builder for creating a new instance of GravitinoMetaLake. */
   public static Builder builder() {
     return new Builder();
+  }
+
+  private void setPolicyEnabled(String policyName, boolean enabled) {
+    PolicySetRequest req = new PolicySetRequest(enabled);
+
+    ErrorResponse resp =
+        restClient.patch(
+            String.format(API_METALAKES_POLICIES_PATH, RESTUtils.encodeString(this.name()))
+                + "/"
+                + RESTUtils.encodeString(policyName),
+            req,
+            ErrorResponse.class,
+            Collections.emptyMap(),
+            ErrorHandlers.policyErrorHandler());
+
+    if (resp.getCode() == 0) {
+      return;
+    }
+
+    ErrorHandlers.policyErrorHandler().accept(resp);
   }
 }

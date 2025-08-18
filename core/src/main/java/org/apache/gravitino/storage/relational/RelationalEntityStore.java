@@ -23,18 +23,22 @@ import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_STORE;
 import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.gravitino.Config;
 import org.apache.gravitino.Configs;
 import org.apache.gravitino.Entity;
 import org.apache.gravitino.EntityAlreadyExistsException;
-import org.apache.gravitino.EntitySerDe;
 import org.apache.gravitino.EntityStore;
 import org.apache.gravitino.HasIdentifier;
 import org.apache.gravitino.MetadataObject;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Namespace;
 import org.apache.gravitino.SupportsRelationOperations;
+import org.apache.gravitino.cache.CacheFactory;
+import org.apache.gravitino.cache.EntityCache;
+import org.apache.gravitino.cache.NoOpsCache;
 import org.apache.gravitino.exceptions.NoSuchEntityException;
 import org.apache.gravitino.meta.TagEntity;
 import org.apache.gravitino.tag.SupportsTagOperations;
@@ -55,12 +59,17 @@ public class RelationalEntityStore
           Configs.DEFAULT_ENTITY_RELATIONAL_STORE, JDBCBackend.class.getCanonicalName());
   private RelationalBackend backend;
   private RelationalGarbageCollector garbageCollector;
+  private EntityCache cache;
 
   @Override
   public void initialize(Config config) throws RuntimeException {
     this.backend = createRelationalEntityBackend(config);
     this.garbageCollector = new RelationalGarbageCollector(backend, config);
     this.garbageCollector.start();
+    this.cache =
+        config.get(Configs.CACHE_ENABLED)
+            ? CacheFactory.getEntityCache(config)
+            : new NoOpsCache(config);
   }
 
   private static RelationalBackend createRelationalEntityBackend(Config config) {
@@ -82,11 +91,6 @@ public class RelationalEntityStore
   }
 
   @Override
-  public void setSerDe(EntitySerDe entitySerDe) {
-    throw new UnsupportedOperationException("Unsupported operation in relational entity store.");
-  }
-
-  @Override
   public <E extends Entity & HasIdentifier> List<E> list(
       Namespace namespace, Class<E> type, Entity.EntityType entityType) throws IOException {
     return backend.list(namespace, entityType, false);
@@ -101,19 +105,22 @@ public class RelationalEntityStore
 
   @Override
   public boolean exists(NameIdentifier ident, Entity.EntityType entityType) throws IOException {
-    return backend.exists(ident, entityType);
+    boolean existsInCache = cache.contains(ident, entityType);
+    return existsInCache || backend.exists(ident, entityType);
   }
 
   @Override
   public <E extends Entity & HasIdentifier> void put(E e, boolean overwritten)
       throws IOException, EntityAlreadyExistsException {
     backend.insert(e, overwritten);
+    cache.put(e);
   }
 
   @Override
   public <E extends Entity & HasIdentifier> E update(
       NameIdentifier ident, Class<E> type, Entity.EntityType entityType, Function<E, E> updater)
       throws IOException, NoSuchEntityException, EntityAlreadyExistsException {
+    cache.invalidate(ident, entityType);
     return backend.update(ident, entityType, updater);
   }
 
@@ -121,15 +128,26 @@ public class RelationalEntityStore
   public <E extends Entity & HasIdentifier> E get(
       NameIdentifier ident, Entity.EntityType entityType, Class<E> e)
       throws NoSuchEntityException, IOException {
-    return backend.get(ident, entityType);
+    return cache.withCacheLock(
+        () -> {
+          Optional<E> entityFromCache = cache.getIfPresent(ident, entityType);
+          if (entityFromCache.isPresent()) {
+            return entityFromCache.get();
+          }
+
+          E entity = backend.get(ident, entityType);
+          cache.put(entity);
+          return entity;
+        });
   }
 
   @Override
   public boolean delete(NameIdentifier ident, Entity.EntityType entityType, boolean cascade)
       throws IOException {
     try {
+      cache.invalidate(ident, entityType);
       return backend.delete(ident, entityType, cascade);
-    } catch (NoSuchEntityException nse) {
+    } catch (NoSuchEntityException e) {
       return false;
     }
   }
@@ -141,6 +159,7 @@ public class RelationalEntityStore
 
   @Override
   public void close() throws IOException {
+    cache.clear();
     garbageCollector.close();
     backend.close();
   }
@@ -190,7 +209,31 @@ public class RelationalEntityStore
   public <E extends Entity & HasIdentifier> List<E> listEntitiesByRelation(
       Type relType, NameIdentifier nameIdentifier, Entity.EntityType identType, boolean allFields)
       throws IOException {
-    return backend.listEntitiesByRelation(relType, nameIdentifier, identType, allFields);
+    return cache.withCacheLock(
+        () -> {
+          Optional<List<E>> entities = cache.getIfPresent(relType, nameIdentifier, identType);
+          if (entities.isPresent()) {
+            return entities.get();
+          }
+
+          List<E> backendEntities =
+              backend.listEntitiesByRelation(relType, nameIdentifier, identType, allFields);
+
+          cache.put(nameIdentifier, identType, relType, backendEntities);
+
+          return backendEntities;
+        });
+  }
+
+  @Override
+  public <E extends Entity & HasIdentifier> E getEntityByRelation(
+      Type relType,
+      NameIdentifier srcIdentifier,
+      Entity.EntityType srcType,
+      NameIdentifier destEntityIdent)
+      throws IOException, NoSuchEntityException {
+    // todo: support cache
+    return backend.getEntityByRelation(relType, srcIdentifier, srcType, destEntityIdent);
   }
 
   @Override
@@ -202,6 +245,33 @@ public class RelationalEntityStore
       Entity.EntityType dstType,
       boolean override)
       throws IOException {
-    backend.insertRelation(relType, srcIdentifier, srcType, dstIdentifier, dstType, true);
+    cache.invalidate(srcIdentifier, srcType, relType);
+    backend.insertRelation(relType, srcIdentifier, srcType, dstIdentifier, dstType, override);
+  }
+
+  @Override
+  public <E extends Entity & HasIdentifier> List<E> updateEntityRelations(
+      Type relType,
+      NameIdentifier srcEntityIdent,
+      Entity.EntityType srcEntityType,
+      NameIdentifier[] destEntitiesToAdd,
+      NameIdentifier[] destEntitiesToRemove)
+      throws IOException, NoSuchEntityException, EntityAlreadyExistsException {
+    cache.invalidate(srcEntityIdent, srcEntityType, relType);
+    return backend.updateEntityRelations(
+        relType, srcEntityIdent, srcEntityType, destEntitiesToAdd, destEntitiesToRemove);
+  }
+
+  @Override
+  public int batchDelete(
+      List<Pair<NameIdentifier, Entity.EntityType>> entitiesToDelete, boolean cascade)
+      throws IOException {
+    return backend.batchDelete(entitiesToDelete, cascade);
+  }
+
+  @Override
+  public <E extends Entity & HasIdentifier> void batchPut(List<E> entities, boolean overwritten)
+      throws IOException, EntityAlreadyExistsException {
+    backend.batchPut(entities, overwritten);
   }
 }

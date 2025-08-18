@@ -70,17 +70,24 @@ dependencies {
   testRuntimeOnly(libs.junit.jupiter.engine)
 }
 
+tasks.register("setupDependencies") {
+  dependsOn(":trino-connector:trino-connector:jar")
+  dependsOn(":catalogs:catalog-lakehouse-iceberg:jar", ":catalogs:catalog-lakehouse-iceberg:runtimeJars")
+  dependsOn(":catalogs:catalog-jdbc-mysql:jar", ":catalogs:catalog-jdbc-mysql:runtimeJars")
+  dependsOn(":catalogs:catalog-jdbc-postgresql:jar", ":catalogs:catalog-jdbc-postgresql:runtimeJars")
+  dependsOn(":catalogs:catalog-hive:jar", ":catalogs:catalog-hive:runtimeJars")
+}
+
+tasks.build {
+  dependsOn("setupDependencies")
+}
+
 tasks.test {
   val skipITs = project.hasProperty("skipITs")
   if (skipITs) {
     exclude("**/integration/test/**")
   } else {
-    dependsOn(":trino-connector:trino-connector:jar")
-    dependsOn(":catalogs:catalog-lakehouse-iceberg:jar", ":catalogs:catalog-lakehouse-iceberg:runtimeJars")
-    dependsOn(":catalogs:catalog-jdbc-mysql:jar", ":catalogs:catalog-jdbc-mysql:runtimeJars")
-    dependsOn(":catalogs:catalog-jdbc-postgresql:jar", ":catalogs:catalog-jdbc-postgresql:runtimeJars")
-    dependsOn(":catalogs:catalog-hive:jar", ":catalogs:catalog-hive:runtimeJars")
-
+    dependsOn("setupDependencies")
     doFirst {
       copy {
         from("${project.rootDir}/dev/docker/trino/conf")
@@ -102,9 +109,9 @@ tasks.test {
         }
 
         if (invalidGravitinoJars!!.isNotEmpty()) {
-          val message = "Found mismatched versions of gravitino jars in trino-connector/build/libs:\n" +
+          val message = "Mismatched Gravitino JAR versions found in trino-connector/build/libs:\n" +
             "${invalidGravitinoJars.joinToString(", ") { it.name }}\n" +
-            "The current version of the project is $version. Please clean the project and rebuild it."
+            "The expected project version is $version. Please clean and rebuild the project."
           throw GradleException(message)
         }
       }
@@ -114,7 +121,7 @@ tasks.test {
 
 tasks.register<JavaExec>("TrinoTest") {
   classpath = sourceSets["test"].runtimeClasspath
-  mainClass.set("org.apache.gravitino.integration.test.trino.TrinoQueryTestTool")
+  mainClass.set("org.apache.gravitino.trino.connector.integration.test.TrinoQueryTestTool")
 
   if (JavaVersion.current() > JavaVersion.VERSION_1_8) {
     jvmArgs = listOf(

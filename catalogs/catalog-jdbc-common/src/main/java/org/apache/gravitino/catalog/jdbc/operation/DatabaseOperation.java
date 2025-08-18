@@ -44,6 +44,7 @@ public interface DatabaseOperation {
    *
    * @param databaseName The name of the database.
    * @param comment The comment of the database.
+   * @param properties Additional properties for the database creation.
    */
   void create(String databaseName, String comment, Map<String, String> properties)
       throws SchemaAlreadyExistsException;
@@ -57,6 +58,14 @@ public interface DatabaseOperation {
 
   /** @return The list name of databases. */
   List<String> listDatabases();
+
+  /**
+   * Checks if the specified database exists.
+   *
+   * @param databaseName The name of the database to check.
+   * @return true if the database exists; false otherwise.
+   */
+  boolean exist(String databaseName);
 
   /**
    * @param databaseName The name of the database to check.

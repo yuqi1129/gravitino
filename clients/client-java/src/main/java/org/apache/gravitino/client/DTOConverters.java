@@ -18,8 +18,10 @@
  */
 package org.apache.gravitino.client;
 
+import static org.apache.gravitino.dto.util.DTOConverters.toDTO;
 import static org.apache.gravitino.dto.util.DTOConverters.toFunctionArg;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.apache.gravitino.Catalog;
@@ -34,15 +36,27 @@ import org.apache.gravitino.dto.CatalogDTO;
 import org.apache.gravitino.dto.MetalakeDTO;
 import org.apache.gravitino.dto.authorization.PrivilegeDTO;
 import org.apache.gravitino.dto.authorization.SecurableObjectDTO;
+import org.apache.gravitino.dto.job.JobTemplateDTO;
+import org.apache.gravitino.dto.job.ShellJobTemplateDTO;
+import org.apache.gravitino.dto.job.SparkJobTemplateDTO;
 import org.apache.gravitino.dto.requests.CatalogUpdateRequest;
 import org.apache.gravitino.dto.requests.FilesetUpdateRequest;
 import org.apache.gravitino.dto.requests.MetalakeUpdateRequest;
+import org.apache.gravitino.dto.requests.ModelUpdateRequest;
+import org.apache.gravitino.dto.requests.ModelVersionUpdateRequest;
+import org.apache.gravitino.dto.requests.PolicyUpdateRequest;
 import org.apache.gravitino.dto.requests.SchemaUpdateRequest;
 import org.apache.gravitino.dto.requests.TableUpdateRequest;
 import org.apache.gravitino.dto.requests.TagUpdateRequest;
 import org.apache.gravitino.dto.requests.TopicUpdateRequest;
 import org.apache.gravitino.file.FilesetChange;
+import org.apache.gravitino.job.JobTemplate;
+import org.apache.gravitino.job.ShellJobTemplate;
+import org.apache.gravitino.job.SparkJobTemplate;
 import org.apache.gravitino.messaging.TopicChange;
+import org.apache.gravitino.model.ModelChange;
+import org.apache.gravitino.model.ModelVersionChange;
+import org.apache.gravitino.policy.PolicyChange;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.TableChange;
 import org.apache.gravitino.rel.expressions.Expression;
@@ -124,6 +138,18 @@ class DTOConverters {
             .withAudit((AuditDTO) catalog.auditInfo())
             .withRestClient(client)
             .build();
+      case MODEL:
+        return GenericModelCatalog.builder()
+            .withNamespace(namespace)
+            .withName(catalog.name())
+            .withType(catalog.type())
+            .withProvider(catalog.provider())
+            .withComment(catalog.comment())
+            .withProperties(catalog.properties())
+            .withAudit((AuditDTO) catalog.auditInfo())
+            .withRestClient(client)
+            .build();
+
       default:
         throw new UnsupportedOperationException("Unsupported catalog type: " + catalog.type());
     }
@@ -309,7 +335,7 @@ class DTOConverters {
         .build();
   }
 
-  static List<PrivilegeDTO> toPrivileges(List<Privilege> privileges) {
+  static List<PrivilegeDTO> toPrivileges(Collection<Privilege> privileges) {
     return privileges.stream()
         .map(
             privilege ->
@@ -340,6 +366,122 @@ class DTOConverters {
     } else {
       throw new IllegalArgumentException(
           "Unknown change type: " + change.getClass().getSimpleName());
+    }
+  }
+
+  static PolicyUpdateRequest toPolicyUpdateRequest(PolicyChange change) {
+    if (change instanceof PolicyChange.RenamePolicy) {
+      return new PolicyUpdateRequest.RenamePolicyRequest(
+          ((PolicyChange.RenamePolicy) change).getNewName());
+
+    } else if (change instanceof PolicyChange.UpdatePolicyComment) {
+      return new PolicyUpdateRequest.UpdatePolicyCommentRequest(
+          ((PolicyChange.UpdatePolicyComment) change).getNewComment());
+
+    } else if (change instanceof PolicyChange.UpdateContent) {
+      PolicyChange.UpdateContent updateContent = (PolicyChange.UpdateContent) change;
+      String policyType = updateContent.getPolicyType();
+      return new PolicyUpdateRequest.UpdatePolicyContentRequest(
+          policyType, toDTO(updateContent.getContent()));
+
+    } else {
+      throw new IllegalArgumentException(
+          "Unknown change type: " + change.getClass().getSimpleName());
+    }
+  }
+
+  static ModelUpdateRequest toModelUpdateRequest(ModelChange change) {
+    if (change instanceof ModelChange.RenameModel) {
+      return new ModelUpdateRequest.RenameModelRequest(
+          ((ModelChange.RenameModel) change).newName());
+
+    } else if (change instanceof ModelChange.RemoveProperty) {
+      return new ModelUpdateRequest.RemoveModelPropertyRequest(
+          ((ModelChange.RemoveProperty) change).property());
+
+    } else if (change instanceof ModelChange.SetProperty) {
+      return new ModelUpdateRequest.SetModelPropertyRequest(
+          ((ModelChange.SetProperty) change).property(),
+          ((ModelChange.SetProperty) change).value());
+
+    } else if (change instanceof ModelChange.UpdateComment) {
+      return new ModelUpdateRequest.UpdateModelCommentRequest(
+          ((ModelChange.UpdateComment) change).newComment());
+
+    } else {
+      throw new IllegalArgumentException(
+          "Unknown model change type: " + change.getClass().getSimpleName());
+    }
+  }
+
+  /**
+   * Converts a {@link ModelVersionChange} to a {@link ModelVersionUpdateRequest}.
+   *
+   * @param change The change to convert.
+   * @return The converted request.
+   */
+  static ModelVersionUpdateRequest toModelVersionUpdateRequest(ModelVersionChange change) {
+    if (change instanceof ModelVersionChange.UpdateComment) {
+      return new ModelVersionUpdateRequest.UpdateModelVersionComment(
+          ((ModelVersionChange.UpdateComment) change).newComment());
+
+    } else if (change instanceof ModelVersionChange.SetProperty) {
+      return new ModelVersionUpdateRequest.SetModelVersionPropertyRequest(
+          ((ModelVersionChange.SetProperty) change).property(),
+          ((ModelVersionChange.SetProperty) change).value());
+
+    } else if (change instanceof ModelVersionChange.RemoveProperty) {
+      return new ModelVersionUpdateRequest.RemoveModelVersionPropertyRequest(
+          ((ModelVersionChange.RemoveProperty) change).property());
+
+    } else if (change instanceof ModelVersionChange.UpdateUri) {
+      return new ModelVersionUpdateRequest.UpdateModelVersionUriRequest(
+          ((ModelVersionChange.UpdateUri) change).newUri());
+
+    } else if (change instanceof ModelVersionChange.UpdateAliases) {
+      ModelVersionChange.UpdateAliases updateAliases = (ModelVersionChange.UpdateAliases) change;
+      return new ModelVersionUpdateRequest.UpdateModelVersionAliasesRequest(
+          (updateAliases.aliasesToAdd().toArray(new String[0])),
+          updateAliases.aliasesToRemove().toArray(new String[0]));
+
+    } else {
+      throw new IllegalArgumentException(
+          "Unknown model version change type: " + change.getClass().getSimpleName());
+    }
+  }
+
+  static JobTemplateDTO toJobTemplateDTO(JobTemplate jobTemplate) {
+    switch (jobTemplate.jobType()) {
+      case SHELL:
+        return ShellJobTemplateDTO.builder()
+            .withJobType(jobTemplate.jobType())
+            .withName(jobTemplate.name())
+            .withComment(jobTemplate.comment())
+            .withExecutable(jobTemplate.executable())
+            .withArguments(jobTemplate.arguments())
+            .withEnvironments(jobTemplate.environments())
+            .withCustomFields(jobTemplate.customFields())
+            .withScripts(((ShellJobTemplate) jobTemplate).scripts())
+            .build();
+
+      case SPARK:
+        return SparkJobTemplateDTO.builder()
+            .withJobType(jobTemplate.jobType())
+            .withName(jobTemplate.name())
+            .withComment(jobTemplate.comment())
+            .withExecutable(jobTemplate.executable())
+            .withArguments(jobTemplate.arguments())
+            .withEnvironments(jobTemplate.environments())
+            .withCustomFields(jobTemplate.customFields())
+            .withClassName(((SparkJobTemplate) jobTemplate).className())
+            .withJars(((SparkJobTemplate) jobTemplate).jars())
+            .withFiles(((SparkJobTemplate) jobTemplate).files())
+            .withArchives(((SparkJobTemplate) jobTemplate).archives())
+            .withConfigs(((SparkJobTemplate) jobTemplate).configs())
+            .build();
+
+      default:
+        throw new IllegalArgumentException("Unsupported job type: " + jobTemplate.jobType());
     }
   }
 }

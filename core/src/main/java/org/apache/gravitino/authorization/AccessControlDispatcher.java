@@ -20,8 +20,10 @@ package org.apache.gravitino.authorization;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.apache.gravitino.MetadataObject;
 import org.apache.gravitino.exceptions.GroupAlreadyExistsException;
+import org.apache.gravitino.exceptions.IllegalRoleException;
 import org.apache.gravitino.exceptions.NoSuchGroupException;
 import org.apache.gravitino.exceptions.NoSuchMetadataObjectException;
 import org.apache.gravitino.exceptions.NoSuchMetalakeException;
@@ -155,12 +157,12 @@ public interface AccessControlDispatcher {
    * @param roles The names of the Role.
    * @return The User after granted.
    * @throws NoSuchUserException If the User with the given name does not exist.
-   * @throws NoSuchRoleException If the Role with the given name does not exist.
+   * @throws IllegalRoleException If the Role with the given name does not exist.
    * @throws NoSuchMetalakeException If the Metalake with the given name does not exist.
    * @throws RuntimeException If granting roles to a user encounters storage issues.
    */
   User grantRolesToUser(String metalake, List<String> roles, String user)
-      throws NoSuchUserException, NoSuchRoleException, NoSuchMetalakeException;
+      throws NoSuchUserException, IllegalRoleException, NoSuchMetalakeException;
 
   /**
    * Grant roles to a group.
@@ -170,12 +172,12 @@ public interface AccessControlDispatcher {
    * @param roles The names of the Role.
    * @return The Group after granted.
    * @throws NoSuchGroupException If the Group with the given name does not exist.
-   * @throws NoSuchRoleException If the Role with the given name does not exist.
+   * @throws IllegalRoleException If the Role with the given name does not exist.
    * @throws NoSuchMetalakeException If the Metalake with the given name does not exist.
    * @throws RuntimeException If granting roles to a group encounters storage issues.
    */
   Group grantRolesToGroup(String metalake, List<String> roles, String group)
-      throws NoSuchGroupException, NoSuchRoleException, NoSuchMetalakeException;
+      throws NoSuchGroupException, IllegalRoleException, NoSuchMetalakeException;
 
   /**
    * Revoke roles from a group.
@@ -185,12 +187,12 @@ public interface AccessControlDispatcher {
    * @param roles The name of the Role.
    * @return The Group after revoked.
    * @throws NoSuchGroupException If the Group with the given name does not exist.
-   * @throws NoSuchRoleException If the Role with the given name does not exist.
+   * @throws IllegalRoleException If the Role with the given name does not exist.
    * @throws NoSuchMetalakeException If the Metalake with the given name does not exist.
    * @throws RuntimeException If revoking roles from a group encounters storage issues.
    */
   Group revokeRolesFromGroup(String metalake, List<String> roles, String group)
-      throws NoSuchGroupException, NoSuchRoleException, NoSuchMetalakeException;
+      throws NoSuchGroupException, IllegalRoleException, NoSuchMetalakeException;
 
   /**
    * Revoke roles from a user.
@@ -205,7 +207,7 @@ public interface AccessControlDispatcher {
    * @throws RuntimeException If revoking roles from a user encounters storage issues.
    */
   User revokeRolesFromUser(String metalake, List<String> roles, String user)
-      throws NoSuchUserException, NoSuchRoleException, NoSuchMetalakeException;
+      throws NoSuchUserException, IllegalRoleException, NoSuchMetalakeException;
 
   /**
    * Judges whether the user is the service admin.
@@ -271,6 +273,7 @@ public interface AccessControlDispatcher {
    * Lists the role names associated the metadata object.
    *
    * @param metalake The Metalake of the Role.
+   * @param object The object of the Roles.
    * @return The role list.
    * @throws NoSuchMetalakeException If the Metalake with the given name does not exist.
    * @throws NoSuchMetadataObjectException If the Metadata object with the given name does not
@@ -282,6 +285,7 @@ public interface AccessControlDispatcher {
   /**
    * Grant privileges to a role.
    *
+   * @param metalake The name of the Metalake.
    * @param role The name of the role.
    * @param privileges The privileges to grant.
    * @param object The object is associated with privileges to grant.
@@ -291,12 +295,13 @@ public interface AccessControlDispatcher {
    * @throws RuntimeException If granting roles to a role encounters storage issues.
    */
   Role grantPrivilegeToRole(
-      String metalake, String role, MetadataObject object, List<Privilege> privileges)
+      String metalake, String role, MetadataObject object, Set<Privilege> privileges)
       throws NoSuchGroupException, NoSuchRoleException;
 
   /**
    * Revoke privileges from a role.
    *
+   * @param metalake The name if the Metalake.
    * @param role The name of the role.
    * @param privileges The privileges to revoke.
    * @param object The object is associated with privileges to revoke.
@@ -306,6 +311,6 @@ public interface AccessControlDispatcher {
    * @throws RuntimeException If revoking privileges from a role encounters storage issues.
    */
   Role revokePrivilegesFromRole(
-      String metalake, String role, MetadataObject object, List<Privilege> privileges)
+      String metalake, String role, MetadataObject object, Set<Privilege> privileges)
       throws NoSuchMetalakeException, NoSuchRoleException;
 }

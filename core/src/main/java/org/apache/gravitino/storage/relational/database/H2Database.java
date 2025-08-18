@@ -30,6 +30,7 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.gravitino.Config;
 import org.apache.gravitino.Configs;
+import org.apache.gravitino.config.ConfigConstants;
 import org.apache.gravitino.storage.relational.JDBCDatabase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,7 +59,12 @@ public class H2Database implements JDBCDatabase {
         Statement statement = connection.createStatement()) {
       String sqlContent =
           FileUtils.readFileToString(
-              new File(gravitinoHome + "/scripts/h2/schema-0.6.0-h2.sql"), StandardCharsets.UTF_8);
+              new File(
+                  gravitinoHome
+                      + "/scripts/h2/schema-"
+                      + ConfigConstants.CURRENT_SCRIPT_VERSION
+                      + "-h2.sql"),
+              StandardCharsets.UTF_8);
 
       statement.execute(sqlContent);
     } catch (Exception e) {
@@ -82,6 +88,10 @@ public class H2Database implements JDBCDatabase {
 
     if (!originURI.contains("MODE")) {
       originURI = originURI + ";MODE=MYSQL";
+    }
+
+    if (!originURI.contains("AUTO_SERVER")) {
+      originURI = originURI + ";AUTO_SERVER=TRUE";
     }
 
     return originURI;

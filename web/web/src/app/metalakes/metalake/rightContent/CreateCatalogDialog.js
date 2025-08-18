@@ -50,7 +50,7 @@ import { yupResolver } from '@hookform/resolvers/yup'
 
 import { groupBy } from 'lodash-es'
 import { genUpdates } from '@/lib/utils'
-import { providers, filesetProviders, messagingProviders } from '@/lib/utils/initial'
+import { providers, messagingProviders } from '@/lib/utils/initial'
 import { nameRegex, nameRegexDesc, keyRegex } from '@/lib/utils/regex'
 import { useSearchParams } from 'next/navigation'
 
@@ -64,13 +64,11 @@ const defaultValues = {
 
 const schema = yup.object().shape({
   name: yup.string().required().matches(nameRegex, nameRegexDesc),
-  type: yup.mixed().oneOf(['relational', 'fileset', 'messaging']).required(),
+  type: yup.mixed().oneOf(['relational', 'fileset', 'messaging', 'model']).required(),
   provider: yup.string().when('type', (type, schema) => {
     switch (type) {
       case 'relational':
         return schema.oneOf(providers.map(i => i.value)).required()
-      case 'fileset':
-        return schema.oneOf(filesetProviders.map(i => i.value)).required()
       case 'messaging':
         return schema.oneOf(messagingProviders.map(i => i.value)).required()
       default:
@@ -148,12 +146,7 @@ const CreateCatalogDialog = props => {
   }
 
   const addFields = () => {
-    const duplicateKeys = innerProps
-      .filter(item => item.key.trim() !== '')
-      .some(
-        (item, index, filteredItems) =>
-          filteredItems.findIndex(otherItem => otherItem !== item && otherItem.key.trim() === item.key.trim()) !== -1
-      )
+    const duplicateKeys = innerProps.some(item => item.hasDuplicateKey)
 
     if (duplicateKeys) {
       return
@@ -179,7 +172,7 @@ const CreateCatalogDialog = props => {
     const parentField = innerProps.find(i => i.key === field.parentField)
 
     const check =
-      (parentField && parentField.value === field.hide) ||
+      (parentField && field.hide.includes(parentField.value)) ||
       (field.parentField === 'authentication.type' && parentField === undefined)
 
     return check
@@ -212,16 +205,9 @@ const CreateCatalogDialog = props => {
   }
 
   const onSubmit = data => {
-    const duplicateKeys = innerProps
-      .filter(item => item.key.trim() !== '')
-      .some(
-        (item, index, filteredItems) =>
-          filteredItems.findIndex(otherItem => otherItem !== item && otherItem.key.trim() === item.key.trim()) !== -1
-      )
+    const hasError = innerProps.some(prop => prop.hasDuplicateKey || prop.invalid)
 
-    const invalidKeys = innerProps.some(i => i.invalid)
-
-    if (duplicateKeys || invalidKeys) {
+    if (hasError) {
       return
     }
 
@@ -232,7 +218,7 @@ const CreateCatalogDialog = props => {
     if (
       propItems[0]?.key === 'catalog-backend' &&
       propItems[0]?.value === 'hive' &&
-      providerSelect === 'lakehouse-iceberg'
+      ['lakehouse-iceberg', 'lakehouse-paimon'].includes(providerSelect)
     ) {
       nextProps = propItems.filter(item => !['jdbc-driver', 'jdbc-user', 'jdbc-password'].includes(item.key))
     } else if (
@@ -240,10 +226,18 @@ const CreateCatalogDialog = props => {
       propItems[0]?.value === 'filesystem' &&
       providerSelect === 'lakehouse-paimon'
     ) {
-      nextProps = propItems.filter(item => item.key !== 'uri')
+      nextProps = propItems.filter(item => !['jdbc-driver', 'jdbc-user', 'jdbc-password', 'uri'].includes(item.key))
+    } else if (
+      propItems[0]?.key === 'catalog-backend' &&
+      propItems[0]?.value === 'rest' &&
+      providerSelect === 'lakehouse-iceberg'
+    ) {
+      nextProps = propItems.filter(
+        item => !['jdbc-driver', 'jdbc-user', 'jdbc-password', 'warehouse'].includes(item.key)
+      )
     }
     const parentField = nextProps.find(i => i.key === 'authentication.type')
-    if (parentField && parentField.value === 'simple') {
+    if (!parentField || parentField?.value === 'simple') {
       nextProps = nextProps.filter(
         item => item.key !== 'authentication.kerberos.principal' && item.key !== 'authentication.kerberos.keytab-uri'
       )
@@ -278,7 +272,11 @@ const CreateCatalogDialog = props => {
           ...others
         } = prevProperties
 
-        if (catalogBackend && catalogBackend === 'hive' && providerSelect === 'lakehouse-iceberg') {
+        if (
+          catalogBackend &&
+          catalogBackend === 'hive' &&
+          ['lakehouse-iceberg', 'lakehouse-paimon'].includes(providerSelect)
+        ) {
           properties = {
             'catalog-backend': catalogBackend,
             uri: uri,
@@ -290,19 +288,25 @@ const CreateCatalogDialog = props => {
             ...others
           }
           uri && (properties['uri'] = uri)
-        } else if (
-          (!authType || authType === 'simple') &&
-          ['lakehouse-iceberg', 'lakehouse-paimon'].includes(providerSelect)
-        ) {
+        } else if (catalogBackend && catalogBackend === 'rest' && providerSelect === 'lakehouse-iceberg') {
           properties = {
             'catalog-backend': catalogBackend,
+            uri: uri,
             ...others
           }
-          uri && (properties['uri'] = uri)
-          authType && (properties['authType'] = authType)
         } else {
-          properties = prevProperties
+          properties = {
+            uri: uri,
+            ...others
+          }
+          catalogBackend && (properties['catalog-backend'] = catalogBackend)
+          jdbcDriver && (properties['jdbc-driver'] = jdbcDriver)
+          jdbcUser && (properties['jdbc-user'] = jdbcUser)
+          jdbcPwd && (properties['jdbc-password'] = jdbcPwd)
         }
+        authType && (properties['authentication.type'] = authType)
+        kerberosPrincipal && (properties['authentication.kerberos.principal'] = kerberosPrincipal)
+        kerberosKeytabUri && (properties['authentication.kerberos.keytab-uri'] = kerberosKeytabUri)
 
         const catalogData = {
           ...mainData,
@@ -343,14 +347,15 @@ const CreateCatalogDialog = props => {
         setValue('provider', 'hive')
         break
       }
-      case 'fileset': {
-        setProviderTypes(filesetProviders)
-        setValue('provider', 'hadoop')
-        break
-      }
       case 'messaging': {
         setProviderTypes(messagingProviders)
         setValue('provider', 'kafka')
+        break
+      }
+      case 'fileset':
+      case 'model': {
+        setProviderTypes([])
+        setValue('provider', '')
         break
       }
     }
@@ -367,11 +372,10 @@ const CreateCatalogDialog = props => {
       defaultProps = providerTypes[providerItemIndex].defaultProps
 
       resetPropsFields(providerTypes, providerItemIndex)
-
-      if (type === 'create') {
-        setInnerProps(defaultProps)
-        setValue('propItems', providerTypes[providerItemIndex].defaultProps)
-      }
+    }
+    if (type === 'create') {
+      setInnerProps(defaultProps)
+      setValue('propItems', defaultProps)
     }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -394,12 +398,13 @@ const CreateCatalogDialog = props => {
           providersItems = providers
           break
         }
-        case 'fileset': {
-          providersItems = filesetProviders
-          break
-        }
         case 'messaging': {
           providersItems = messagingProviders
+          break
+        }
+        case 'fileset':
+        case 'model': {
+          providersItems = []
           break
         }
       }
@@ -407,7 +412,7 @@ const CreateCatalogDialog = props => {
       setProviderTypes(providersItems)
 
       const providerItem = providersItems.find(i => i.value === data.provider)
-      let propsItems = [...providerItem.defaultProps].filter(i => i.required)
+      let propsItems = providerItem ? [...providerItem.defaultProps].filter(i => i.required) : []
 
       propsItems = propsItems.map((it, idx) => {
         let propItem = {
@@ -507,9 +512,10 @@ const CreateCatalogDialog = props => {
                       disabled={type === 'update'}
                       data-refer='catalog-type-selector'
                     >
-                      <MenuItem value={'relational'}>relational</MenuItem>
-                      <MenuItem value={'fileset'}>fileset</MenuItem>
-                      <MenuItem value={'messaging'}>messaging</MenuItem>
+                      <MenuItem value={'relational'}>Relational</MenuItem>
+                      <MenuItem value={'fileset'}>Fileset</MenuItem>
+                      <MenuItem value={'messaging'}>Messaging</MenuItem>
+                      <MenuItem value={'model'}>Model</MenuItem>
                     </Select>
                   )}
                 />
@@ -517,41 +523,43 @@ const CreateCatalogDialog = props => {
               </FormControl>
             </Grid>
 
-            <Grid item xs={12}>
-              <FormControl fullWidth>
-                <InputLabel id='select-catalog-provider' error={Boolean(errors.provider)}>
-                  Provider
-                </InputLabel>
-                <Controller
-                  name='provider'
-                  control={control}
-                  rules={{ required: true }}
-                  render={({ field: { value, onChange } }) => (
-                    <Select
-                      value={value}
-                      label='Provider'
-                      defaultValue='hive'
-                      onChange={e => handleChangeProvider(onChange, e)}
-                      error={Boolean(errors.provider)}
-                      labelId='select-catalog-provider'
-                      disabled={type === 'update'}
-                      data-refer='catalog-provider-selector'
-                    >
-                      {providerTypes.map(item => {
-                        return (
-                          <MenuItem key={item.label} value={item.value}>
-                            {item.label}
-                          </MenuItem>
-                        )
-                      })}
-                    </Select>
+            {!['model', 'fileset'].includes(typeSelect) && (
+              <Grid item xs={12}>
+                <FormControl fullWidth>
+                  <InputLabel id='select-catalog-provider' error={Boolean(errors.provider)}>
+                    Provider
+                  </InputLabel>
+                  <Controller
+                    name='provider'
+                    control={control}
+                    rules={{ required: true }}
+                    render={({ field: { value, onChange } }) => (
+                      <Select
+                        value={value}
+                        label='Provider'
+                        defaultValue='hive'
+                        onChange={e => handleChangeProvider(onChange, e)}
+                        error={Boolean(errors.provider)}
+                        labelId='select-catalog-provider'
+                        disabled={type === 'update'}
+                        data-refer='catalog-provider-selector'
+                      >
+                        {providerTypes.map(item => {
+                          return (
+                            <MenuItem key={item.label} value={item.value}>
+                              {item.label}
+                            </MenuItem>
+                          )
+                        })}
+                      </Select>
+                    )}
+                  />
+                  {errors.provider && (
+                    <FormHelperText sx={{ color: 'error.main' }}>{errors.provider.message}</FormHelperText>
                   )}
-                />
-                {errors.provider && (
-                  <FormHelperText sx={{ color: 'error.main' }}>{errors.provider.message}</FormHelperText>
-                )}
-              </FormControl>
-            </Grid>
+                </FormControl>
+              </Grid>
+            )}
 
             <Grid item xs={12}>
               <FormControl fullWidth>
@@ -596,7 +604,9 @@ const CreateCatalogDialog = props => {
                                   name='key'
                                   label='Key'
                                   value={item.key}
-                                  disabled={item.required || item.disabled}
+                                  disabled={
+                                    item.required || item.disabled || (item.key === 'in-use' && type === 'update')
+                                  }
                                   onChange={event => handleFormChange({ index, event })}
                                   error={item.hasDuplicateKey || item.invalid || !item.key.trim()}
                                   data-refer={`props-key-${index}`}
@@ -627,7 +637,7 @@ const CreateCatalogDialog = props => {
                                     label='Value'
                                     error={item.required && item.value === ''}
                                     value={item.value}
-                                    disabled={item.disabled}
+                                    disabled={item.disabled || (item.key === 'in-use' && type === 'update')}
                                     onChange={event => handleFormChange({ index, event })}
                                     data-refer={`props-value-${index}`}
                                     data-prev-refer={`props-${item.key}`}
@@ -636,7 +646,7 @@ const CreateCatalogDialog = props => {
                                 )}
                               </Box>
 
-                              {!(item.required || item.disabled) ? (
+                              {!(item.required || item.disabled || (item.key === 'in-use' && type === 'update')) ? (
                                 <Box sx={{ minWidth: 40 }}>
                                   <IconButton onClick={() => removeFields(index)}>
                                     <Icon icon='mdi:minus-circle-outline' />
@@ -660,12 +670,12 @@ const CreateCatalogDialog = props => {
                           )}
                           {item.key && item.invalid && (
                             <FormHelperText className={'twc-text-error-main'}>
-                              Invalid key, matches strings starting with a letter/underscore, followed by alphanumeric
-                              characters, underscores, hyphens, or dots.
+                              Valid key must starts with a letter/underscore, followed by alphanumeric characters,
+                              underscores, hyphens, or dots.
                             </FormHelperText>
                           )}
                           {!item.key.trim() && (
-                            <FormHelperText className={'twc-text-error-main'}>Key is required field</FormHelperText>
+                            <FormHelperText className={'twc-text-error-main'}>Key is required</FormHelperText>
                           )}
                         </FormControl>
                       </Grid>

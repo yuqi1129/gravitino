@@ -36,6 +36,8 @@ import org.apache.gravitino.authorization.Privileges;
 import org.apache.gravitino.authorization.Role;
 import org.apache.gravitino.authorization.SecurableObject;
 import org.apache.gravitino.authorization.User;
+import org.apache.gravitino.credential.Credential;
+import org.apache.gravitino.credential.CredentialFactory;
 import org.apache.gravitino.dto.AuditDTO;
 import org.apache.gravitino.dto.CatalogDTO;
 import org.apache.gravitino.dto.MetalakeDTO;
@@ -46,8 +48,16 @@ import org.apache.gravitino.dto.authorization.PrivilegeDTO;
 import org.apache.gravitino.dto.authorization.RoleDTO;
 import org.apache.gravitino.dto.authorization.SecurableObjectDTO;
 import org.apache.gravitino.dto.authorization.UserDTO;
+import org.apache.gravitino.dto.credential.CredentialDTO;
+import org.apache.gravitino.dto.file.FileInfoDTO;
 import org.apache.gravitino.dto.file.FilesetDTO;
+import org.apache.gravitino.dto.job.JobTemplateDTO;
+import org.apache.gravitino.dto.job.ShellJobTemplateDTO;
+import org.apache.gravitino.dto.job.SparkJobTemplateDTO;
 import org.apache.gravitino.dto.messaging.TopicDTO;
+import org.apache.gravitino.dto.model.ModelDTO;
+import org.apache.gravitino.dto.model.ModelVersionDTO;
+import org.apache.gravitino.dto.policy.PolicyContentDTO;
 import org.apache.gravitino.dto.rel.ColumnDTO;
 import org.apache.gravitino.dto.rel.DistributionDTO;
 import org.apache.gravitino.dto.rel.SortOrderDTO;
@@ -75,8 +85,16 @@ import org.apache.gravitino.dto.rel.partitions.PartitionDTO;
 import org.apache.gravitino.dto.rel.partitions.RangePartitionDTO;
 import org.apache.gravitino.dto.tag.MetadataObjectDTO;
 import org.apache.gravitino.dto.tag.TagDTO;
+import org.apache.gravitino.file.FileInfo;
 import org.apache.gravitino.file.Fileset;
+import org.apache.gravitino.job.JobTemplate;
+import org.apache.gravitino.job.ShellJobTemplate;
+import org.apache.gravitino.job.SparkJobTemplate;
 import org.apache.gravitino.messaging.Topic;
+import org.apache.gravitino.model.Model;
+import org.apache.gravitino.model.ModelVersion;
+import org.apache.gravitino.policy.PolicyContent;
+import org.apache.gravitino.policy.PolicyContents;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.Table;
 import org.apache.gravitino.rel.expressions.Expression;
@@ -517,6 +535,58 @@ public class DTOConverters {
   }
 
   /**
+   * Converts a PolicyContent to a PolicyContentDTO.
+   *
+   * @param policyContent The policyContent to be converted.
+   * @return The policy content DTO.
+   */
+  public static PolicyContentDTO toDTO(PolicyContent policyContent) {
+    if (policyContent == null) {
+      return null;
+    }
+
+    if (policyContent instanceof PolicyContentDTO) {
+      return (PolicyContentDTO) policyContent;
+    }
+
+    if (policyContent instanceof PolicyContents.CustomContent) {
+      PolicyContents.CustomContent customContent = (PolicyContents.CustomContent) policyContent;
+      return PolicyContentDTO.CustomContentDTO.builder()
+          .withCustomRules(customContent.customRules())
+          .withSupportedObjectTypes(customContent.supportedObjectTypes())
+          .withProperties(customContent.properties())
+          .build();
+    }
+
+    throw new IllegalArgumentException("Unsupported policy content: " + policyContent);
+  }
+
+  /**
+   * Converts credentials to CredentialDTOs.
+   *
+   * @param credentials the credentials to be converted.
+   * @return The credential DTOs.
+   */
+  public static CredentialDTO[] toDTO(Credential[] credentials) {
+    return Arrays.stream(credentials).map(DTOConverters::toDTO).toArray(CredentialDTO[]::new);
+  }
+
+  /**
+   * Converts a Credential to a CredentialDTO.
+   *
+   * @param credential the credential to be converted.
+   * @return The credential DTO.
+   */
+  public static CredentialDTO toDTO(Credential credential) {
+    CredentialDTO.Builder builder =
+        CredentialDTO.builder()
+            .withCredentialType(credential.credentialType())
+            .withExpireTimeInMs(credential.expireTimeInMs())
+            .withCredentialInfo(credential.credentialInfo());
+    return builder.build();
+  }
+
+  /**
    * Converts an Expression to an FunctionArg DTO.
    *
    * @param expression The expression to be converted.
@@ -580,10 +650,30 @@ public class DTOConverters {
         .name(fileset.name())
         .comment(fileset.comment())
         .type(fileset.type())
-        .storageLocation(fileset.storageLocation())
+        .storageLocations(fileset.storageLocations())
         .properties(fileset.properties())
         .audit(toDTO(fileset.auditInfo()))
         .build();
+  }
+
+  /**
+   * Converts array of FileInfo to array of FileInfoDTO.
+   *
+   * @param files The FileInfo array to convert.
+   * @return The converted FileInfoDTO array.
+   */
+  public static FileInfoDTO[] toDTO(FileInfo[] files) {
+    return Arrays.stream(files)
+        .map(
+            file ->
+                FileInfoDTO.builder()
+                    .name(file.name())
+                    .isDir(file.isDir())
+                    .size(file.size())
+                    .lastModified(file.lastModified())
+                    .path(file.path())
+                    .build())
+        .toArray(FileInfoDTO[]::new);
   }
 
   /**
@@ -599,6 +689,52 @@ public class DTOConverters {
         .withProperties(topic.properties())
         .withAudit(toDTO(topic.auditInfo()))
         .build();
+  }
+
+  /**
+   * Converts a Model to a ModelDTO.
+   *
+   * @param model The model to be converted.
+   * @return The model DTO.
+   */
+  public static ModelDTO toDTO(Model model) {
+    return ModelDTO.builder()
+        .withName(model.name())
+        .withComment(model.comment())
+        .withProperties(model.properties())
+        .withLatestVersion(model.latestVersion())
+        .withAudit(toDTO(model.auditInfo()))
+        .build();
+  }
+
+  /**
+   * Converts a ModelVersion to a ModelVersionDTO.
+   *
+   * @param modelVersion The model version to be converted.
+   * @return The model version DTO.
+   */
+  public static ModelVersionDTO toDTO(ModelVersion modelVersion) {
+    return ModelVersionDTO.builder()
+        .withVersion(modelVersion.version())
+        .withComment(modelVersion.comment())
+        .withAliases(modelVersion.aliases())
+        .withUri(modelVersion.uri())
+        .withProperties(modelVersion.properties())
+        .withAudit(toDTO(modelVersion.auditInfo()))
+        .build();
+  }
+
+  /**
+   * Converts an array of ModelVersions to an array of ModelVersionDTOs.
+   *
+   * @param modelVersions The modelVersions to be converted.
+   * @return The array of ModelVersionDTOs.
+   */
+  public static ModelVersionDTO[] toDTOs(ModelVersion[] modelVersions) {
+    if (ArrayUtils.isEmpty(modelVersions)) {
+      return new ModelVersionDTO[0];
+    }
+    return Arrays.stream(modelVersions).map(DTOConverters::toDTO).toArray(ModelVersionDTO[]::new);
   }
 
   /**
@@ -849,7 +985,7 @@ public class DTOConverters {
    */
   public static SortOrder[] fromDTOs(SortOrderDTO[] sortOrderDTO) {
     if (ArrayUtils.isEmpty(sortOrderDTO)) {
-      return new SortOrder[0];
+      return SortOrders.NONE;
     }
 
     return Arrays.stream(sortOrderDTO).map(DTOConverters::fromDTO).toArray(SortOrder[]::new);
@@ -863,7 +999,7 @@ public class DTOConverters {
    */
   public static Transform[] fromDTOs(Partitioning[] partitioning) {
     if (ArrayUtils.isEmpty(partitioning)) {
-      return new Transform[0];
+      return Transforms.EMPTY_TRANSFORM;
     }
     return Arrays.stream(partitioning).map(DTOConverters::fromDTO).toArray(Transform[]::new);
   }
@@ -879,6 +1015,30 @@ public class DTOConverters {
       return new Column[0];
     }
     return Arrays.stream(columns).map(DTOConverters::fromDTO).toArray(Column[]::new);
+  }
+
+  /**
+   * Converts CredentialDTO array to credential array.
+   *
+   * @param credentials The credential DTO array to be converted.
+   * @return The credential array.
+   */
+  public static Credential[] fromDTO(CredentialDTO[] credentials) {
+    if (ArrayUtils.isEmpty(credentials)) {
+      return new Credential[0];
+    }
+    return Arrays.stream(credentials).map(DTOConverters::fromDTO).toArray(Credential[]::new);
+  }
+
+  /**
+   * Converts a CredentialDTO to a credential.
+   *
+   * @param credential The credential DTO to be converted.
+   * @return The credential.
+   */
+  public static Credential fromDTO(CredentialDTO credential) {
+    return CredentialFactory.create(
+        credential.credentialType(), credential.credentialInfo(), credential.expireTimeInMs());
   }
 
   /**
@@ -1017,5 +1177,69 @@ public class DTOConverters {
     } else {
       return Privileges.deny(privilegeDTO.name());
     }
+  }
+
+  /**
+   * Converts a JobTemplateDTO to a JobTemplate.
+   *
+   * @param jobTemplateDTO The job template DTO to be converted.
+   * @return The job template.
+   */
+  public static JobTemplate fromDTO(JobTemplateDTO jobTemplateDTO) {
+    switch (jobTemplateDTO.jobType()) {
+      case SHELL:
+        return ShellJobTemplate.builder()
+            .withName(jobTemplateDTO.name())
+            .withComment(jobTemplateDTO.comment())
+            .withExecutable(jobTemplateDTO.executable())
+            .withArguments(jobTemplateDTO.arguments())
+            .withEnvironments(jobTemplateDTO.environments())
+            .withCustomFields(jobTemplateDTO.customFields())
+            .withScripts(((ShellJobTemplateDTO) jobTemplateDTO).scripts())
+            .build();
+
+      case SPARK:
+        return SparkJobTemplate.builder()
+            .withName(jobTemplateDTO.name())
+            .withComment(jobTemplateDTO.comment())
+            .withExecutable(jobTemplateDTO.executable())
+            .withArguments(jobTemplateDTO.arguments())
+            .withEnvironments(jobTemplateDTO.environments())
+            .withCustomFields(jobTemplateDTO.customFields())
+            .withClassName(((SparkJobTemplateDTO) jobTemplateDTO).className())
+            .withJars(((SparkJobTemplateDTO) jobTemplateDTO).jars())
+            .withFiles(((SparkJobTemplateDTO) jobTemplateDTO).files())
+            .withArchives(((SparkJobTemplateDTO) jobTemplateDTO).archives())
+            .withConfigs(((SparkJobTemplateDTO) jobTemplateDTO).configs())
+            .build();
+
+      default:
+        throw new IllegalArgumentException(
+            "Unsupported job template type: " + jobTemplateDTO.jobType());
+    }
+  }
+
+  /**
+   * Converts a PolicyContentDTO to a PolicyContent.
+   *
+   * @param policyContentDTO The policy content DTO to be converted.
+   * @return The policy content.
+   */
+  public static PolicyContent fromDTO(PolicyContentDTO policyContentDTO) {
+    if (policyContentDTO == null) {
+      return null;
+    }
+
+    if (policyContentDTO instanceof PolicyContentDTO.CustomContentDTO) {
+      PolicyContentDTO.CustomContentDTO customContentDTO =
+          (PolicyContentDTO.CustomContentDTO) policyContentDTO;
+      return PolicyContents.custom(
+          customContentDTO.customRules(),
+          customContentDTO.supportedObjectTypes(),
+          customContentDTO.properties());
+    }
+
+    throw new IllegalArgumentException(
+        "Unsupported policy content type: " + policyContentDTO.getClass());
   }
 }

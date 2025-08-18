@@ -19,6 +19,7 @@
 package org.apache.gravitino.catalog.lakehouse.iceberg;
 
 public class IcebergConstants {
+
   // Iceberg catalog properties constants
   public static final String CATALOG_BACKEND = "catalog-backend";
   public static final String CATALOG_BACKEND_IMPL = "catalog-backend-impl";
@@ -40,11 +41,17 @@ public class IcebergConstants {
   public static final String ICEBERG_S3_ENDPOINT = "s3.endpoint";
   public static final String ICEBERG_S3_ACCESS_KEY_ID = "s3.access-key-id";
   public static final String ICEBERG_S3_SECRET_ACCESS_KEY = "s3.secret-access-key";
+  public static final String ICEBERG_S3_TOKEN = "s3.session-token";
+  public static final String ICEBERG_S3_PATH_STYLE_ACCESS = "s3.path-style-access";
   public static final String AWS_S3_REGION = "client.region";
 
   public static final String ICEBERG_OSS_ENDPOINT = "oss.endpoint";
   public static final String ICEBERG_OSS_ACCESS_KEY_ID = "client.access-key-id";
   public static final String ICEBERG_OSS_ACCESS_KEY_SECRET = "client.access-key-secret";
+
+  public static final String ICEBERG_ADLS_STORAGE_ACCOUNT_NAME =
+      "adls.auth.shared-key.account.name";
+  public static final String ICEBERG_ADLS_STORAGE_ACCOUNT_KEY = "adls.auth.shared-key.account.key";
 
   // Iceberg Table properties constants
 
@@ -68,11 +75,21 @@ public class IcebergConstants {
   public static final String ICEBERG_REST_CATALOG_CACHE_EVICTION_INTERVAL =
       "catalog-cache-eviction-interval-ms";
 
-  public static final String ICEBERG_REST_CATALOG_PROVIDER = "catalog-provider";
+  public static final String ICEBERG_REST_CATALOG_CONFIG_PROVIDER = "catalog-config-provider";
+  public static final String STATIC_ICEBERG_CATALOG_CONFIG_PROVIDER_NAME = "static-config-provider";
+  public static final String DYNAMIC_ICEBERG_CATALOG_CONFIG_PROVIDER_NAME =
+      "dynamic-config-provider";
 
-  public static final String GRAVITINO_URI = "gravitino-uri";
+  private static final String GRAVITINO_PREFIX = "gravitino-";
+  public static final String GRAVITINO_URI = GRAVITINO_PREFIX + "uri";
+  public static final String GRAVITINO_METALAKE = GRAVITINO_PREFIX + "metalake";
+  public static final String GRAVITINO_AUTH_TYPE = GRAVITINO_PREFIX + "auth-type";
+  public static final String GRAVITINO_SIMPLE_USERNAME = GRAVITINO_PREFIX + "simple.user-name";
+  public static final String GRAVITINO_OAUTH2_SERVER_URI = GRAVITINO_PREFIX + "oauth2.server-uri";
+  public static final String GRAVITINO_OAUTH2_CREDENTIAL = GRAVITINO_PREFIX + "oauth2.credential";
+  public static final String GRAVITINO_OAUTH2_TOKEN_PATH = GRAVITINO_PREFIX + "oauth2.token-path";
+  public static final String GRAVITINO_OAUTH2_SCOPE = GRAVITINO_PREFIX + "oauth2.scope";
 
-  public static final String GRAVITINO_METALAKE = "gravitino-metalake";
-
-  public static final String GRAVITINO_DEFAULT_CATALOG = "__gravitino_default_catalog";
+  public static final String ICEBERG_REST_DEFAULT_METALAKE = "gravitino";
+  public static final String ICEBERG_REST_DEFAULT_CATALOG = "default_catalog";
 }

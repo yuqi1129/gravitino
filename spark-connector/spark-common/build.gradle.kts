@@ -30,7 +30,8 @@ repositories {
 val scalaVersion: String = project.properties["scalaVersion"] as? String ?: extra["defaultScalaVersion"].toString()
 val sparkVersion: String = libs.versions.spark33.get()
 val sparkMajorVersion: String = sparkVersion.substringBeforeLast(".")
-val icebergVersion: String = libs.versions.iceberg4spark.get()
+val icebergVersion: String = libs.versions.iceberg4connector.get()
+val paimonVersion: String = libs.versions.paimon.get()
 // kyuubi hive connector for Spark 3.3 doesn't support scala 2.13
 val kyuubiVersion: String = libs.versions.kyuubi4spark34.get()
 val scalaJava8CompatVersion: String = libs.versions.scala.java.compat.get()
@@ -39,10 +40,14 @@ val scalaCollectionCompatVersion: String = libs.versions.scala.collection.compat
 dependencies {
   implementation(project(":catalogs:catalog-common"))
   implementation(libs.guava)
+  implementation(libs.caffeine)
 
   compileOnly(project(":clients:client-java-runtime", configuration = "shadow"))
   compileOnly("org.apache.iceberg:iceberg-spark-runtime-${sparkMajorVersion}_$scalaVersion:$icebergVersion")
   compileOnly("org.apache.kyuubi:kyuubi-spark-connector-hive_$scalaVersion:$kyuubiVersion")
+  compileOnly("org.apache.paimon:paimon-spark-$sparkMajorVersion:$paimonVersion") {
+    exclude("org.apache.spark")
+  }
 
   compileOnly("org.apache.spark:spark-catalyst_$scalaVersion:$sparkVersion")
   compileOnly("org.apache.spark:spark-core_$scalaVersion:$sparkVersion")
@@ -91,7 +96,7 @@ dependencies {
     exclude("com.google.code.findbugs", "sr305")
     exclude("com.tdunning", "json")
     exclude("com.zaxxer", "HikariCP")
-    exclude("io.dropwizard.metricss")
+    exclude("io.dropwizard.metrics")
     exclude("javax.transaction", "transaction-api")
     exclude("org.apache.avro")
     exclude("org.apache.curator")
@@ -109,11 +114,15 @@ dependencies {
   testImplementation(libs.junit.jupiter.api)
   testImplementation(libs.junit.jupiter.params)
   testImplementation(libs.mysql.driver)
+  testImplementation(libs.postgresql.driver)
   testImplementation(libs.testcontainers)
 
   testImplementation("org.apache.iceberg:iceberg-core:$icebergVersion")
   testImplementation("org.apache.iceberg:iceberg-hive-metastore:$icebergVersion")
   testImplementation("org.apache.iceberg:iceberg-spark-runtime-${sparkMajorVersion}_$scalaVersion:$icebergVersion")
+  testImplementation("org.apache.paimon:paimon-spark-$sparkMajorVersion:$paimonVersion") {
+    exclude("org.apache.spark")
+  }
   testImplementation("org.apache.kyuubi:kyuubi-spark-connector-hive_$scalaVersion:$kyuubiVersion")
   // include spark-sql,spark-catalyst,hive-common,hdfs-client
   testImplementation("org.apache.spark:spark-hive_$scalaVersion:$sparkVersion") {
@@ -123,6 +132,9 @@ dependencies {
     exclude("org.glassfish.jersey.inject")
   }
   testImplementation("org.scala-lang.modules:scala-collection-compat_$scalaVersion:$scalaCollectionCompatVersion")
+  testImplementation("org.apache.spark:spark-catalyst_$scalaVersion:$sparkVersion")
+  testImplementation("org.apache.spark:spark-core_$scalaVersion:$sparkVersion")
+  testImplementation("org.apache.spark:spark-sql_$scalaVersion:$sparkVersion")
 
   testRuntimeOnly(libs.junit.jupiter.engine)
 }

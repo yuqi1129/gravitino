@@ -22,12 +22,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.google.common.base.Joiner;
 import org.apache.gravitino.Entity;
 import org.apache.gravitino.MetadataObject;
 import org.apache.gravitino.MetadataObjects;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.exceptions.IllegalNameIdentifierException;
 import org.apache.gravitino.exceptions.IllegalNamespaceException;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 public class TestNameIdentifierUtil {
@@ -61,6 +63,21 @@ public class TestNameIdentifierUtil {
     Throwable excep3 =
         assertThrows(IllegalNamespaceException.class, () -> NameIdentifierUtil.checkTable(abc));
     assertTrue(excep3.getMessage().contains("Table namespace must be non-null and have 3 levels"));
+
+    // test model
+    assertThrows(IllegalNameIdentifierException.class, () -> NameIdentifierUtil.checkModel(null));
+    Throwable excep4 =
+        assertThrows(IllegalNamespaceException.class, () -> NameIdentifierUtil.checkModel(abc));
+    assertTrue(excep4.getMessage().contains("Model namespace must be non-null and have 3 levels"));
+
+    // test model version
+    assertThrows(
+        IllegalNameIdentifierException.class, () -> NameIdentifierUtil.checkModelVersion(null));
+    Throwable excep5 =
+        assertThrows(
+            IllegalNamespaceException.class, () -> NameIdentifierUtil.checkModelVersion(abcd));
+    assertTrue(
+        excep5.getMessage().contains("Model version namespace must be non-null and have 4 levels"));
   }
 
   @Test
@@ -104,12 +121,18 @@ public class TestNameIdentifierUtil {
     assertEquals(
         filesetObject, NameIdentifierUtil.toMetadataObject(fileset, Entity.EntityType.FILESET));
 
-    // test column
-    Throwable e =
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> NameIdentifierUtil.toMetadataObject(fileset, Entity.EntityType.COLUMN));
-    assertTrue(e.getMessage().contains("Entity type COLUMN is not supported"));
+    NameIdentifier column =
+        NameIdentifier.of("metalake1", "catalog1", "schema1", "table1", "column1");
+    MetadataObject columnObject =
+        MetadataObjects.parse("catalog1.schema1.table1.column1", MetadataObject.Type.COLUMN);
+    assertEquals(
+        columnObject, NameIdentifierUtil.toMetadataObject(column, Entity.EntityType.COLUMN));
+
+    // test model
+    NameIdentifier model = NameIdentifier.of("metalake1", "catalog1", "schema1", "model1");
+    MetadataObject modelObject =
+        MetadataObjects.parse("catalog1.schema1.model1", MetadataObject.Type.MODEL);
+    assertEquals(modelObject, NameIdentifierUtil.toMetadataObject(model, Entity.EntityType.MODEL));
 
     // test null
     Throwable e1 =
@@ -123,5 +146,55 @@ public class TestNameIdentifierUtil {
             IllegalArgumentException.class,
             () -> NameIdentifierUtil.toMetadataObject(fileset, Entity.EntityType.TAG));
     assertTrue(e2.getMessage().contains("Entity type TAG is not supported"));
+
+    // test model version
+    Throwable e3 =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> NameIdentifierUtil.toMetadataObject(model, Entity.EntityType.MODEL_VERSION));
+    assertTrue(e3.getMessage().contains("Entity type MODEL_VERSION is not supported"));
+  }
+
+  @Test
+  void testOfUser() {
+    String userName = "userA";
+    String metalake = "demo_metalake";
+
+    NameIdentifier nameIdentifier = NameIdentifierUtil.ofUser(metalake, userName);
+    Assertions.assertEquals(
+        Joiner.on(".")
+            .join(metalake, Entity.SYSTEM_CATALOG_RESERVED_NAME, Entity.USER_SCHEMA_NAME, userName),
+        nameIdentifier.toString());
+    Assertions.assertThrows(
+        IllegalArgumentException.class, () -> NameIdentifierUtil.ofUser(null, userName));
+  }
+
+  @Test
+  void testOfGroup() {
+    String groupName = "groupA";
+    String metalake = "demo_metalake";
+
+    NameIdentifier nameIdentifier = NameIdentifierUtil.ofGroup(metalake, groupName);
+    Assertions.assertEquals(
+        Joiner.on(".")
+            .join(
+                metalake, Entity.SYSTEM_CATALOG_RESERVED_NAME, Entity.GROUP_SCHEMA_NAME, groupName),
+        nameIdentifier.toString());
+    Assertions.assertThrows(
+        IllegalArgumentException.class, () -> NameIdentifierUtil.ofGroup(null, groupName));
+  }
+
+  @Test
+  void testOfRole() {
+    String roleName = "roleA";
+    String metalake = "demo_metalake";
+
+    NameIdentifier nameIdentifier = NameIdentifierUtil.ofRole(metalake, roleName);
+    Assertions.assertEquals(
+        Joiner.on(".")
+            .join(metalake, Entity.SYSTEM_CATALOG_RESERVED_NAME, Entity.ROLE_SCHEMA_NAME, roleName),
+        nameIdentifier.toString());
+    Assertions.assertThrows(
+        IllegalArgumentException.class, () -> NameIdentifierUtil.ofRole(null, roleName));
   }
 }

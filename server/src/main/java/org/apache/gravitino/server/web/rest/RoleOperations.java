@@ -34,6 +34,7 @@ import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.Response;
+import org.apache.gravitino.Entity;
 import org.apache.gravitino.GravitinoEnv;
 import org.apache.gravitino.MetadataObject;
 import org.apache.gravitino.MetadataObjects;
@@ -50,12 +51,16 @@ import org.apache.gravitino.dto.responses.DeleteResponse;
 import org.apache.gravitino.dto.responses.NameListResponse;
 import org.apache.gravitino.dto.responses.RoleResponse;
 import org.apache.gravitino.dto.util.DTOConverters;
-import org.apache.gravitino.lock.LockType;
-import org.apache.gravitino.lock.TreeLockUtils;
+import org.apache.gravitino.exceptions.IllegalMetadataObjectException;
+import org.apache.gravitino.exceptions.NoSuchMetadataObjectException;
 import org.apache.gravitino.metrics.MetricNames;
+import org.apache.gravitino.server.authorization.MetadataFilterHelper;
 import org.apache.gravitino.server.authorization.NameBindings;
+import org.apache.gravitino.server.authorization.annotations.AuthorizationExpression;
+import org.apache.gravitino.server.authorization.annotations.AuthorizationMetadata;
 import org.apache.gravitino.server.web.Utils;
 import org.apache.gravitino.utils.MetadataObjectUtil;
+import org.apache.gravitino.utils.NameIdentifierUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -80,14 +85,26 @@ public class RoleOperations {
     try {
       return Utils.doAs(
           httpRequest,
-          () ->
-              TreeLockUtils.doWithTreeLock(
-                  NameIdentifier.of(metalake),
-                  LockType.READ,
-                  () -> {
-                    String[] names = accessControlManager.listRoleNames(metalake);
-                    return Utils.ok(new NameListResponse(names));
-                  }));
+          () -> {
+            String[] names = accessControlManager.listRoleNames(metalake);
+            names =
+                Arrays.stream(names)
+                    .filter(
+                        role -> {
+                          NameIdentifier[] nameIdentifiers =
+                              new NameIdentifier[] {NameIdentifierUtil.ofRole(metalake, role)};
+                          return MetadataFilterHelper.filterByExpression(
+                                      metalake,
+                                      "METALAKE::OWNER || ROLE::OWNER || ROLE::SELF",
+                                      Entity.EntityType.ROLE,
+                                      nameIdentifiers)
+                                  .length
+                              > 0;
+                        })
+                    .collect(Collectors.toList())
+                    .toArray(new String[0]);
+            return Utils.ok(new NameListResponse(names));
+          });
     } catch (Exception e) {
       return ExceptionHandlers.handleRoleException(OperationType.LIST, "", metalake, e);
     }
@@ -98,18 +115,18 @@ public class RoleOperations {
   @Produces("application/vnd.gravitino.v1+json")
   @Timed(name = "get-role." + MetricNames.HTTP_PROCESS_DURATION, absolute = true)
   @ResponseMetered(name = "get-role", absolute = true)
-  public Response getRole(@PathParam("metalake") String metalake, @PathParam("role") String role) {
+  @AuthorizationExpression(expression = "METALAKE::OWNER || ROLE::OWNER || ROLE::SELF")
+  public Response getRole(
+      @PathParam("metalake") @AuthorizationMetadata(type = Entity.EntityType.METALAKE)
+          String metalake,
+      @PathParam("role") @AuthorizationMetadata(type = Entity.EntityType.ROLE) String role) {
     try {
       return Utils.doAs(
           httpRequest,
           () ->
-              TreeLockUtils.doWithTreeLock(
-                  AuthorizationUtils.ofRole(metalake, role),
-                  LockType.READ,
-                  () ->
-                      Utils.ok(
-                          new RoleResponse(
-                              DTOConverters.toDTO(accessControlManager.getRole(metalake, role))))));
+              Utils.ok(
+                  new RoleResponse(
+                      DTOConverters.toDTO(accessControlManager.getRole(metalake, role)))));
     } catch (Exception e) {
       return ExceptionHandlers.handleRoleException(OperationType.GET, role, metalake, e);
     }
@@ -119,12 +136,17 @@ public class RoleOperations {
   @Produces("application/vnd.gravitino.v1+json")
   @Timed(name = "create-role." + MetricNames.HTTP_PROCESS_DURATION, absolute = true)
   @ResponseMetered(name = "create-role", absolute = true)
-  public Response createRole(@PathParam("metalake") String metalake, RoleCreateRequest request) {
+  @AuthorizationExpression(expression = "METALAKE::OWNER || METALAKE::CREATE_ROLE")
+  public Response createRole(
+      @PathParam("metalake") @AuthorizationMetadata(type = Entity.EntityType.METALAKE)
+          String metalake,
+      RoleCreateRequest request) {
     try {
 
       return Utils.doAs(
           httpRequest,
           () -> {
+            request.validate();
             Set<MetadataObject> metadataObjects = Sets.newHashSet();
             for (SecurableObjectDTO object : request.getSecurableObjects()) {
               MetadataObject metadataObject =
@@ -140,10 +162,14 @@ public class RoleOperations {
 
               Set<Privilege> privileges = Sets.newHashSet(object.privileges());
               AuthorizationUtils.checkDuplicatedNamePrivilege(privileges);
-              for (Privilege privilege : object.privileges()) {
-                AuthorizationUtils.checkPrivilege((PrivilegeDTO) privilege, object, metalake);
+              try {
+                for (Privilege privilege : object.privileges()) {
+                  AuthorizationUtils.checkPrivilege((PrivilegeDTO) privilege, object, metalake);
+                }
+                MetadataObjectUtil.checkMetadataObject(metalake, object);
+              } catch (NoSuchMetadataObjectException nsm) {
+                throw new IllegalMetadataObjectException(nsm);
               }
-              MetadataObjectUtil.checkMetadataObject(metalake, object);
             }
 
             List<SecurableObject> securableObjects =
@@ -160,19 +186,14 @@ public class RoleOperations {
                                                 (PrivilegeDTO) privilege))
                                     .collect(Collectors.toList())))
                     .collect(Collectors.toList());
-
-            return TreeLockUtils.doWithTreeLock(
-                NameIdentifier.of(AuthorizationUtils.ofRoleNamespace(metalake).levels()),
-                LockType.WRITE,
-                () ->
-                    Utils.ok(
-                        new RoleResponse(
-                            DTOConverters.toDTO(
-                                accessControlManager.createRole(
-                                    metalake,
-                                    request.getName(),
-                                    request.getProperties(),
-                                    securableObjects)))));
+            return Utils.ok(
+                new RoleResponse(
+                    DTOConverters.toDTO(
+                        accessControlManager.createRole(
+                            metalake,
+                            request.getName(),
+                            request.getProperties(),
+                            securableObjects))));
           });
 
     } catch (Exception e) {
@@ -186,17 +207,16 @@ public class RoleOperations {
   @Produces("application/vnd.gravitino.v1+json")
   @Timed(name = "delete-role." + MetricNames.HTTP_PROCESS_DURATION, absolute = true)
   @ResponseMetered(name = "delete-role", absolute = true)
+  @AuthorizationExpression(expression = "METALAKE::OWNER || ROLE::OWNER")
   public Response deleteRole(
-      @PathParam("metalake") String metalake, @PathParam("role") String role) {
+      @PathParam("metalake") @AuthorizationMetadata(type = Entity.EntityType.METALAKE)
+          String metalake,
+      @PathParam("role") @AuthorizationMetadata(type = Entity.EntityType.ROLE) String role) {
     try {
       return Utils.doAs(
           httpRequest,
           () -> {
-            boolean deleted =
-                TreeLockUtils.doWithTreeLock(
-                    NameIdentifier.of(AuthorizationUtils.ofRoleNamespace(metalake).levels()),
-                    LockType.WRITE,
-                    () -> accessControlManager.deleteRole(metalake, role));
+            boolean deleted = accessControlManager.deleteRole(metalake, role);
             if (!deleted) {
               LOG.warn("Failed to delete role {} under metalake {}", role, metalake);
             }

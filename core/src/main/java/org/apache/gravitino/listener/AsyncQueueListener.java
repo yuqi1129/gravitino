@@ -29,7 +29,9 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.gravitino.listener.api.EventListenerPlugin;
+import org.apache.gravitino.listener.api.event.BaseEvent;
 import org.apache.gravitino.listener.api.event.Event;
+import org.apache.gravitino.listener.api.event.PreEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,9 +44,10 @@ import org.slf4j.LoggerFactory;
 public class AsyncQueueListener implements EventListenerPlugin {
   private static final Logger LOG = LoggerFactory.getLogger(AsyncQueueListener.class);
   private static final String NAME_PREFIX = "async-queue-listener-";
+  private static final float HIGH_WATERMARK_RATIO = 0.9f;
 
   private final List<EventListenerPlugin> eventListeners;
-  private final BlockingQueue<Event> queue;
+  private final BlockingQueue<BaseEvent> queue;
   private final Thread asyncProcessor;
   private final int dispatcherJoinSeconds;
   private final AtomicBoolean stopped = new AtomicBoolean(false);
@@ -52,6 +55,7 @@ public class AsyncQueueListener implements EventListenerPlugin {
   private final AtomicLong lastDropEventCounters = new AtomicLong(0);
   private Instant lastRecordDropEventTime;
   private final String asyncQueueListenerName;
+  private final int highWatermarkThreshold;
 
   public AsyncQueueListener(
       List<EventListenerPlugin> listeners,
@@ -63,25 +67,19 @@ public class AsyncQueueListener implements EventListenerPlugin {
     this.queue = new LinkedBlockingQueue<>(queueCapacity);
     this.asyncProcessor = new Thread(() -> processEvents());
     this.dispatcherJoinSeconds = dispatcherJoinSeconds;
+    this.highWatermarkThreshold = (int) (queueCapacity * HIGH_WATERMARK_RATIO);
     asyncProcessor.setDaemon(true);
     asyncProcessor.setName(asyncQueueListenerName);
   }
 
   @Override
+  public void onPreEvent(PreEvent event) {
+    enqueueEvent(event);
+  }
+
+  @Override
   public void onPostEvent(Event event) {
-    if (stopped.get()) {
-      LOG.warn(
-          "{} drop event: {}, since AsyncQueueListener is stopped",
-          asyncQueueListenerName,
-          event.getClass().getSimpleName());
-      return;
-    }
-
-    if (queue.offer(event)) {
-      return;
-    }
-
-    logDropEventsIfNecessary();
+    enqueueEvent(event);
   }
 
   @Override
@@ -109,16 +107,26 @@ public class AsyncQueueListener implements EventListenerPlugin {
     eventListeners.forEach(listenerPlugin -> listenerPlugin.stop());
   }
 
+  public boolean isHighWatermark() {
+    return queue.size() > highWatermarkThreshold;
+  }
+
   @VisibleForTesting
-  List<EventListenerPlugin> getEventListeners() {
+  public List<EventListenerPlugin> getEventListeners() {
     return this.eventListeners;
   }
 
   private void processEvents() {
     while (!Thread.currentThread().isInterrupted()) {
       try {
-        Event event = queue.take();
-        this.eventListeners.forEach(listener -> listener.onPostEvent(event));
+        BaseEvent baseEvent = queue.take();
+        if (baseEvent instanceof PreEvent) {
+          this.eventListeners.forEach(listener -> listener.onPreEvent((PreEvent) baseEvent));
+        } else if (baseEvent instanceof Event) {
+          this.eventListeners.forEach(listener -> listener.onPostEvent((Event) baseEvent));
+        } else {
+          LOG.warn("Unknown event type: {}", baseEvent.getClass().getSimpleName());
+        }
       } catch (InterruptedException e) {
         LOG.warn("{} event dispatcher thread is interrupted.", asyncQueueListenerName);
         break;
@@ -153,5 +161,21 @@ public class AsyncQueueListener implements EventListenerPlugin {
         lastRecordDropEventTime = Instant.now();
       }
     }
+  }
+
+  private void enqueueEvent(BaseEvent baseEvent) {
+    if (stopped.get()) {
+      LOG.warn(
+          "{} drop event: {}, since AsyncQueueListener is stopped",
+          asyncQueueListenerName,
+          baseEvent.getClass().getSimpleName());
+      return;
+    }
+
+    if (queue.offer(baseEvent)) {
+      return;
+    }
+
+    logDropEventsIfNecessary();
   }
 }

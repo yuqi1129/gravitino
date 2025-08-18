@@ -26,8 +26,11 @@ repositories {
   mavenCentral()
 }
 
+var paimonVersion: String = libs.versions.paimon.get()
 val flinkVersion: String = libs.versions.flink.get()
 val flinkMajorVersion: String = flinkVersion.substringBeforeLast(".")
+
+val icebergVersion: String = libs.versions.iceberg4connector.get()
 
 // The Flink only support scala 2.12, and all scala api will be removed in a future version.
 // You can find more detail at the following issues:
@@ -38,22 +41,23 @@ val scalaVersion: String = "2.12"
 val artifactName = "${rootProject.name}-flink-${flinkMajorVersion}_$scalaVersion"
 
 dependencies {
-  implementation(project(":api"))
-  implementation(project(":catalogs:catalog-common"))
-  implementation(project(":common"))
-
-  compileOnly(libs.bundles.log4j)
-  implementation(libs.commons.lang3)
+  implementation(project(":core")) {
+    exclude("org.apache.logging.log4j")
+    exclude("org.opensearch.client")
+  }
+  implementation(project(":catalogs:catalog-common")) {
+    exclude("org.apache.logging.log4j")
+  }
   implementation(libs.guava)
-  implementation(libs.httpclient5)
-  implementation(libs.jackson.databind)
-  implementation(libs.jackson.annotations)
-  implementation(libs.jackson.datatype.jdk8)
-  implementation(libs.jackson.datatype.jsr310)
 
+  compileOnly(project(":clients:client-java-runtime", configuration = "shadow"))
+
+  compileOnly("org.apache.iceberg:iceberg-flink-runtime-$flinkMajorVersion:$icebergVersion")
   compileOnly("org.apache.flink:flink-connector-hive_$scalaVersion:$flinkVersion")
   compileOnly("org.apache.flink:flink-table-common:$flinkVersion")
   compileOnly("org.apache.flink:flink-table-api-java:$flinkVersion")
+  compileOnly("org.apache.paimon:paimon-flink-1.18:$paimonVersion")
+  compileOnly(libs.flinkjdbc)
 
   compileOnly(libs.hive2.exec) {
     artifact {
@@ -76,13 +80,13 @@ dependencies {
     exclude("org.slf4j")
   }
 
-  // replace with client-java-runtime in flink connector runtime
-  compileOnly(project(":clients:client-java"))
-
   testAnnotationProcessor(libs.lombok)
-
   testCompileOnly(libs.lombok)
+
+  testImplementation(project(":api"))
   testImplementation(project(":clients:client-java"))
+  testImplementation(project(":core"))
+  testImplementation(project(":common"))
   testImplementation(project(":integration-test-common", "testArtifacts"))
   testImplementation(project(":server"))
   testImplementation(project(":server-common"))
@@ -94,10 +98,16 @@ dependencies {
   testImplementation(libs.testcontainers)
   testImplementation(libs.testcontainers.junit.jupiter)
   testImplementation(libs.testcontainers.mysql)
+  testImplementation(libs.metrics.core)
+  testImplementation(libs.flinkjdbc)
 
+  testImplementation("org.apache.iceberg:iceberg-core:$icebergVersion")
+  testImplementation("org.apache.iceberg:iceberg-hive-metastore:$icebergVersion")
+  testImplementation("org.apache.iceberg:iceberg-flink-runtime-$flinkMajorVersion:$icebergVersion")
   testImplementation("org.apache.flink:flink-connector-hive_$scalaVersion:$flinkVersion")
   testImplementation("org.apache.flink:flink-table-common:$flinkVersion")
   testImplementation("org.apache.flink:flink-table-api-java:$flinkVersion")
+  testImplementation("org.apache.paimon:paimon-flink-$flinkMajorVersion:$paimonVersion")
 
   testImplementation(libs.hive2.exec) {
     artifact {
@@ -146,7 +156,7 @@ dependencies {
     exclude("com.google.code.findbugs", "sr305")
     exclude("com.tdunning", "json")
     exclude("com.zaxxer", "HikariCP")
-    exclude("io.dropwizard.metricss")
+    exclude("io.dropwizard.metrics")
     exclude("javax.transaction", "transaction-api")
     exclude("org.apache.avro")
     exclude("org.apache.curator")

@@ -31,6 +31,8 @@ import org.gradle.kotlin.dsl.support.serviceOf
 import java.io.IOException
 import java.util.Locale
 
+Locale.setDefault(Locale.US)
+
 plugins {
   `maven-publish`
   id("java")
@@ -48,8 +50,8 @@ plugins {
     alias(libs.plugins.spotless)
   } else {
     throw GradleException(
-      "Gravitino Gradle toolchain current doesn't support " +
-        "Java version: ${JavaVersion.current()}. Please use JDK8 to 17."
+      "The Gravitino Gradle toolchain currently does not support " +
+        "Java version ${JavaVersion.current()}. Please use JDK versions 8 through 17."
     )
   }
 
@@ -64,14 +66,14 @@ plugins {
 
 if (extra["jdkVersion"] !in listOf("8", "11", "17")) {
   throw GradleException(
-    "Gravitino current doesn't support building with " +
-      "Java version: ${extra["jdkVersion"]}. Please use JDK8, 11 or 17."
+    "The Gravitino Gradle toolchain currently does not support building with " +
+      "Java version ${extra["jdkVersion"]}. Please use JDK versions 8, 11 or 17."
   )
 }
 
 val scalaVersion: String = project.properties["scalaVersion"] as? String ?: extra["defaultScalaVersion"].toString()
 if (scalaVersion !in listOf("2.12", "2.13")) {
-  throw GradleException("Found unsupported Scala version: $scalaVersion")
+  throw GradleException("Scala version $scalaVersion is not supported.")
 }
 
 project.extra["extraJvmArgs"] = if (extra["jdkVersion"] in listOf("8", "11")) {
@@ -80,9 +82,9 @@ project.extra["extraJvmArgs"] = if (extra["jdkVersion"] in listOf("8", "11")) {
   listOf(
     "-XX:+IgnoreUnrecognizedVMOptions",
     "--add-opens", "java.base/java.io=ALL-UNNAMED",
+    "--add-opens", "java.base/java.lang=ALL-UNNAMED",
     "--add-opens", "java.base/java.lang.invoke=ALL-UNNAMED",
     "--add-opens", "java.base/java.lang.reflect=ALL-UNNAMED",
-    "--add-opens", "java.base/java.lang=ALL-UNNAMED",
     "--add-opens", "java.base/java.math=ALL-UNNAMED",
     "--add-opens", "java.base/java.net=ALL-UNNAMED",
     "--add-opens", "java.base/java.nio=ALL-UNNAMED",
@@ -90,18 +92,16 @@ project.extra["extraJvmArgs"] = if (extra["jdkVersion"] in listOf("8", "11")) {
     "--add-opens", "java.base/java.time=ALL-UNNAMED",
     "--add-opens", "java.base/java.util.concurrent.atomic=ALL-UNNAMED",
     "--add-opens", "java.base/java.util.concurrent=ALL-UNNAMED",
-    "--add-opens", "java.base/java.util.regex=ALL-UNNAMED",
     "--add-opens", "java.base/java.util=ALL-UNNAMED",
+    "--add-opens", "java.base/java.util.regex=ALL-UNNAMED",
     "--add-opens", "java.base/jdk.internal.ref=ALL-UNNAMED",
     "--add-opens", "java.base/jdk.internal.reflect=ALL-UNNAMED",
     "--add-opens", "java.sql/java.sql=ALL-UNNAMED",
-    "--add-opens", "java.base/sun.util.calendar=ALL-UNNAMED",
     "--add-opens", "java.base/sun.nio.ch=ALL-UNNAMED",
     "--add-opens", "java.base/sun.nio.cs=ALL-UNNAMED",
     "--add-opens", "java.base/sun.security.action=ALL-UNNAMED",
     "--add-opens", "java.base/sun.util.calendar=ALL-UNNAMED",
-    "--add-opens", "java.security.jgss/sun.security.krb5=ALL-UNNAMED",
-    "--add-opens", "java.base/java.lang.reflect=ALL-UNNAMED"
+    "--add-opens", "java.security.jgss/sun.security.krb5=ALL-UNNAMED"
   )
 }
 
@@ -146,7 +146,7 @@ allprojects {
           "$1"
         )
 
-        targetExclude("**/build/**")
+        targetExclude("**/build/**", "**/.pnpm/***")
       }
 
       kotlinGradle {
@@ -163,18 +163,26 @@ allprojects {
       // Default use MiniGravitino to run integration tests
       param.environment("GRAVITINO_ROOT_DIR", project.rootDir.path)
       param.environment("IT_PROJECT_DIR", project.buildDir.path)
-      param.environment("HADOOP_USER_NAME", "anonymous")
+      // If the environment variable `HADOOP_USER_NAME` is not customized in submodule,
+      // then set it to "anonymous"
+      if (param.environment["HADOOP_USER_NAME"] == null) {
+        param.environment("HADOOP_USER_NAME", "anonymous")
+      }
       param.environment("HADOOP_HOME", "/tmp")
       param.environment("PROJECT_VERSION", project.version)
 
       // Gravitino CI Docker image
-      param.environment("GRAVITINO_CI_HIVE_DOCKER_IMAGE", "apache/gravitino-ci:hive-0.1.14")
-      param.environment("GRAVITINO_CI_KERBEROS_HIVE_DOCKER_IMAGE", "apache/gravitino-ci:kerberos-hive-0.1.5")
+      param.environment("GRAVITINO_CI_HIVE_DOCKER_IMAGE", "apache/gravitino-ci:hive-0.1.20")
+      param.environment("GRAVITINO_CI_KERBEROS_HIVE_DOCKER_IMAGE", "apache/gravitino-ci:kerberos-hive-0.1.6")
       param.environment("GRAVITINO_CI_DORIS_DOCKER_IMAGE", "apache/gravitino-ci:doris-0.1.5")
       param.environment("GRAVITINO_CI_TRINO_DOCKER_IMAGE", "apache/gravitino-ci:trino-0.1.6")
-      param.environment("GRAVITINO_CI_RANGER_DOCKER_IMAGE", "apache/gravitino-ci:ranger-0.1.1")
+      param.environment("GRAVITINO_CI_RANGER_DOCKER_IMAGE", "apache/gravitino-ci:ranger-0.1.2")
       param.environment("GRAVITINO_CI_KAFKA_DOCKER_IMAGE", "apache/kafka:3.7.0")
       param.environment("GRAVITINO_CI_LOCALSTACK_DOCKER_IMAGE", "localstack/localstack:latest")
+
+      // Disable Ryuk for integration tests
+      // Ryuk need privileged mode, if we want to rootless or run non-privileged mode, we need to disable it.
+      param.environment("TESTCONTAINERS_RYUK_DISABLED", "true")
 
       val dockerRunning = project.rootProject.extra["dockerRunning"] as? Boolean ?: false
       val macDockerConnector = project.rootProject.extra["macDockerConnector"] as? Boolean ?: false
@@ -184,6 +192,9 @@ allprojects {
       ) {
         param.environment("NEED_CREATE_DOCKER_NETWORK", "true")
       }
+
+      val icebergVersion: String = libs.versions.iceberg.get()
+      param.systemProperty("ICEBERG_VERSION", icebergVersion)
 
       // Change poll image pause time from 30s to 60s
       param.environment("TESTCONTAINERS_PULL_PAUSE_TIMEOUT", "60")
@@ -202,9 +213,11 @@ allprojects {
         param.environment("GRAVITINO_WAR", project.rootDir.path + "/web/web/dist/")
         param.systemProperty("testMode", "embedded")
       } else {
-        throw GradleException("Gravitino integration tests only support [-PtestMode=embedded] or [-PtestMode=deploy] mode!")
+        throw GradleException(
+          "Gravitino integration tests are only compatible with the modes " +
+            "[-PtestMode=embedded] or [-PtestMode=deploy]."
+        )
       }
-
       param.useJUnitPlatform()
       val skipUTs = project.hasProperty("skipTests")
       if (skipUTs) {
@@ -273,8 +286,6 @@ subprojects {
         languageVersion.set(JavaLanguageVersion.of(17))
       } else {
         languageVersion.set(JavaLanguageVersion.of(extra["jdkVersion"].toString().toInt()))
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
       }
     }
   }
@@ -297,51 +308,49 @@ subprojects {
     }
   }
 
-  if (project.name != "meta") {
-    apply(plugin = "net.ltgt.errorprone")
-    dependencies {
-      errorprone("com.google.errorprone:error_prone_core:2.10.0")
-    }
+  apply(plugin = "net.ltgt.errorprone")
+  dependencies {
+    errorprone("com.google.errorprone:error_prone_core:2.10.0")
+  }
 
-    tasks.withType<JavaCompile>().configureEach {
-      options.errorprone.isEnabled.set(true)
-      options.errorprone.disableWarningsInGeneratedCode.set(true)
-      options.errorprone.disable(
-        "AlmostJavadoc",
-        "CanonicalDuration",
-        "CheckReturnValue",
-        "ComparableType",
-        "ConstantOverflow",
-        "DoubleBraceInitialization",
-        "EqualsUnsafeCast",
-        "EmptyBlockTag",
-        "FutureReturnValueIgnored",
-        "InconsistentCapitalization",
-        "InconsistentHashCode",
-        "JavaTimeDefaultTimeZone",
-        "JdkObsolete",
-        "LockNotBeforeTry",
-        "MissingSummary",
-        "MissingOverride",
-        "MutableConstantField",
-        "NonOverridingEquals",
-        "ObjectEqualsForPrimitives",
-        "OperatorPrecedence",
-        "ReturnValueIgnored",
-        "SameNameButDifferent",
-        "StaticAssignmentInConstructor",
-        "StringSplitter",
-        "ThreadPriorityCheck",
-        "ThrowIfUncheckedKnownChecked",
-        "TypeParameterUnusedInFormals",
-        "UnicodeEscape",
-        "UnnecessaryParentheses",
-        "UnsafeReflectiveConstructionCast",
-        "UnusedMethod",
-        "VariableNameSameAsType",
-        "WaitNotInLoop"
-      )
-    }
+  tasks.withType<JavaCompile>().configureEach {
+    options.errorprone.isEnabled.set(true)
+    options.errorprone.disableWarningsInGeneratedCode.set(true)
+    options.errorprone.disable(
+      "AlmostJavadoc",
+      "CanonicalDuration",
+      "CheckReturnValue",
+      "ComparableType",
+      "ConstantOverflow",
+      "DoubleBraceInitialization",
+      "EqualsUnsafeCast",
+      "EmptyBlockTag",
+      "FutureReturnValueIgnored",
+      "InconsistentCapitalization",
+      "InconsistentHashCode",
+      "JavaTimeDefaultTimeZone",
+      "JdkObsolete",
+      "LockNotBeforeTry",
+      "MissingOverride",
+      "MissingSummary",
+      "MutableConstantField",
+      "NonOverridingEquals",
+      "ObjectEqualsForPrimitives",
+      "OperatorPrecedence",
+      "ReturnValueIgnored",
+      "SameNameButDifferent",
+      "StaticAssignmentInConstructor",
+      "StringSplitter",
+      "ThreadPriorityCheck",
+      "ThrowIfUncheckedKnownChecked",
+      "TypeParameterUnusedInFormals",
+      "UnicodeEscape",
+      "UnnecessaryParentheses",
+      "UnsafeReflectiveConstructionCast",
+      "UnusedMethod",
+      "VariableNameSameAsType",
+      "WaitNotInLoop"
+    )
   }
 
   tasks.withType<Javadoc> {
@@ -349,7 +358,12 @@ subprojects {
     options.locale = "en_US"
 
     val projectName = project.name
-    if (projectName == "common" || projectName == "api" || projectName == "client-java" || projectName == "filesystem-hadoop3") {
+    if (projectName == "api" ||
+      projectName == "client-java" ||
+      projectName == "client-cli" ||
+      projectName == "common" ||
+      projectName == "filesystem-hadoop3"
+    ) {
       options {
         (this as CoreJavadocOptions).addStringOption("Xwerror", "-quiet")
         isFailOnError = true
@@ -367,6 +381,27 @@ subprojects {
     from(tasks["javadoc"])
   }
 
+  tasks.withType<Jar> {
+    into("META-INF") {
+      from(rootDir) {
+        if (name == "sourcesJar") {
+          include("LICENSE")
+          include("NOTICE")
+        } else if (project.name == "web") {
+          include("web/web/LICENSE.bin")
+          rename("LICENSE.bin", "LICENSE")
+          include("web/web/NOTICE.bin")
+          rename("NOTICE.bin", "NOTICE")
+        } else {
+          include("LICENSE.bin")
+          rename("LICENSE.bin", "LICENSE")
+          include("NOTICE.bin")
+          rename("NOTICE.bin", "NOTICE")
+        }
+      }
+    }
+  }
+
   if (project.name in listOf("web", "docs")) {
     plugins.apply(NodePlugin::class)
     configure<NodeExtension> {
@@ -381,9 +416,19 @@ subprojects {
   publishing {
     publications {
       create<MavenPublication>("MavenJava") {
-        from(components["java"])
-        artifact(sourcesJar)
-        artifact(javadocJar)
+        if (project.name == "docs" ||
+          project.name == "integration-test" ||
+          project.name == "integration-test-common" ||
+          project.name == "web"
+        ) {
+          setArtifacts(emptyList<Any>())
+        } else {
+          from(components["java"])
+          artifact(sourcesJar)
+          artifact(javadocJar)
+        }
+
+        artifactId = "${rootProject.name.lowercase()}-${project.name}"
 
         pom {
           name.set("Gravitino")
@@ -460,7 +505,7 @@ subprojects {
   version = "$version"
 
   tasks.withType<Jar> {
-    archiveBaseName.set("${rootProject.name.lowercase(Locale.getDefault())}-${project.name}")
+    archiveBaseName.set("${rootProject.name.lowercase()}-${project.name}")
     if (project.name == "server") {
       from(sourceSets.main.get().resources)
       setDuplicatesStrategy(DuplicatesStrategy.INCLUDE)
@@ -470,6 +515,9 @@ subprojects {
       exclude("log4j2.properties")
       exclude("test/**")
     }
+  }
+  tasks.named("compileJava").configure {
+    dependsOn("spotlessCheck")
   }
 }
 
@@ -483,43 +531,47 @@ tasks.rat {
   val exclusions = mutableListOf(
     // Ignore files we track but do not need full headers
     "**/.github/**/*",
-    "dev/docker/**/*.xml",
-    "dev/docker/**/*.conf",
-    "dev/docker/kerberos-hive/kadm5.acl",
     "**/*.log",
     "**/*.out",
-    "**/testsets",
+    "**/*.venv",
+    "**/*.egg-info",
+    "**/.pytest_cache",
+    "**/.python-version",
+    "**/.uv",
+    "**/__pycache__",
+    "**/uv.lock",
     "**/licenses/*.txt",
     "**/licenses/*.md",
-    "integration-test/**/*.sql",
-    "integration-test/**/*.txt",
-    "docs/**/*.md",
-    "spark-connector/spark-common/src/test/resources/**",
-    "web/web/.**",
-    "web/web/next-env.d.ts",
-    "web/web/dist/**/*",
-    "web/web/node_modules/**/*",
-    "web/web/src/lib/utils/axios/**/*",
-    "web/web/src/lib/enums/httpEnum.js",
-    "web/web/src/types/axios.d.ts",
-    "web/web/yarn.lock",
-    "web/web/package-lock.json",
-    "web/web/pnpm-lock.yaml",
-    "web/web/src/lib/icons/svg/**/*.svg",
     "**/LICENSE.*",
     "**/NOTICE.*",
-    "DISCLAIMER_WIP.txt",
-    "DISCLAIMER.txt",
+    "**/trino-ci-testset",
     "ROADMAP.md",
-    "clients/client-python/.pytest_cache/*",
-    "clients/client-python/.venv/*",
+    "clients/cli/src/main/resources/*.txt",
     "clients/client-python/venv/*",
-    "clients/client-python/apache_gravitino.egg-info/*",
+    "clients/client-python/docs/build",
+    "clients/client-python/docs/source/generated",
     "clients/client-python/gravitino/utils/http_client.py",
     "clients/client-python/tests/unittests/htmlcov/*",
     "clients/client-python/tests/integration/htmlcov/*",
-    "clients/client-python/docs/build",
-    "clients/client-python/docs/source/generated"
+    "clients/filesystem-fuse/Cargo.lock",
+    "dev/docker/**/*.xml",
+    "dev/docker/**/*.conf",
+    "dev/docker/kerberos-hive/kadm5.acl",
+    "docs/**/*.md",
+    "gradle/wrapper/gradle-wrapper.properties",
+    "lineage/src/test/java/org/apache/gravitino/lineage/source/TestLineageOperations.java",
+    "spark-connector/spark-common/src/test/resources/**",
+    "web/web/.**",
+    "web/web/dist/**/*",
+    "web/web/next-env.d.ts",
+    "web/web/node_modules/**/*",
+    "web/web/package-lock.json",
+    "web/web/pnpm-lock.yaml",
+    "web/web/src/lib/enums/httpEnum.js",
+    "web/web/src/lib/icons/svg/**/*.svg",
+    "web/web/src/lib/utils/axios/**/*",
+    "web/web/src/types/axios.d.ts",
+    "web/web/yarn.lock"
   )
 
   // Add .gitignore excludes to the Apache Rat exclusion list.
@@ -552,7 +604,15 @@ tasks {
   val outputDir = projectDir.dir("distribution")
 
   val compileDistribution by registering {
-    dependsOn(":web:web:build", "copySubprojectDependencies", "copyCatalogLibAndConfigs", "copyAuthorizationLibAndConfigs", "copySubprojectLib", "iceberg:iceberg-rest-server:copyLibAndConfigs")
+    dependsOn(
+      "copyCatalogLibAndConfigs",
+      "copySubprojectDependencies",
+      "copySubprojectLib",
+      "copyCliLib",
+      ":authorizations:copyLibAndConfig",
+      ":iceberg:iceberg-rest-server:copyLibAndConfigs",
+      ":web:web:build"
+    )
 
     group = "gravitino distribution"
     outputs.dir(projectDir.dir("distribution/package"))
@@ -580,7 +640,9 @@ tasks {
         from(projectDir.file("LICENSE.bin")) { into("package") }
         from(projectDir.file("NOTICE.bin")) { into("package") }
         from(projectDir.file("README.md")) { into("package") }
-        from(projectDir.file("DISCLAIMER_WIP.txt")) { into("package") }
+        from(projectDir.dir("web/web/licenses")) { into("package/web/licenses") }
+        from(projectDir.dir("web/web/LICENSE.bin")) { into("package/web") }
+        from(projectDir.dir("web/web/NOTICE.bin")) { into("package/web") }
         into(outputDir)
         rename { fileName ->
           fileName.replace(".bin", "")
@@ -600,11 +662,15 @@ tasks {
     doLast {
       copy {
         from(projectDir.dir("conf")) {
-          include("${rootProject.name}-iceberg-rest-server.conf.template", "${rootProject.name}-env.sh.template", "log4j2.properties.template")
+          include(
+            "${rootProject.name}-iceberg-rest-server.conf.template",
+            "${rootProject.name}-env.sh.template",
+            "log4j2.properties.template"
+          )
           into("${rootProject.name}-iceberg-rest-server/conf")
         }
         from(projectDir.dir("bin")) {
-          include("common.sh", "${rootProject.name}-iceberg-rest-server.sh")
+          include("common.sh.template", "${rootProject.name}-iceberg-rest-server.sh.template")
           into("${rootProject.name}-iceberg-rest-server/bin")
         }
         into(outputDir)
@@ -626,7 +692,6 @@ tasks {
         from(projectDir.file("LICENSE.rest")) { into("${rootProject.name}-iceberg-rest-server") }
         from(projectDir.file("NOTICE.rest")) { into("${rootProject.name}-iceberg-rest-server") }
         from(projectDir.file("README.md")) { into("${rootProject.name}-iceberg-rest-server") }
-        from(projectDir.file("DISCLAIMER_WIP.txt")) { into("${rootProject.name}-iceberg-rest-server") }
         into(outputDir)
         rename { fileName ->
           fileName.replace(".rest", "")
@@ -642,13 +707,12 @@ tasks {
     doLast {
       copy {
         from(projectDir.dir("licenses")) { into("${rootProject.name}-trino-connector/licenses") }
-        from(projectDir.file("LICENSE.bin")) { into("${rootProject.name}-trino-connector") }
-        from(projectDir.file("NOTICE.bin")) { into("${rootProject.name}-trino-connector") }
+        from(projectDir.file("LICENSE.trino")) { into("${rootProject.name}-trino-connector") }
+        from(projectDir.file("NOTICE.trino")) { into("${rootProject.name}-trino-connector") }
         from(projectDir.file("README.md")) { into("${rootProject.name}-trino-connector") }
-        from(projectDir.file("DISCLAIMER_WIP.txt")) { into("${rootProject.name}-trino-connector") }
         into(outputDir)
         rename { fileName ->
-          fileName.replace(".bin", "")
+          fileName.replace(".trino", "")
         }
       }
     }
@@ -742,10 +806,19 @@ tasks {
 
   register("copySubprojectDependencies", Copy::class) {
     subprojects.forEach() {
-      if (!it.name.startsWith("catalog") &&
-        !it.name.startsWith("authorization") &&
-        !it.name.startsWith("client") && !it.name.startsWith("filesystem") && !it.name.startsWith("spark") && !it.name.startsWith("iceberg") && it.name != "trino-connector" &&
-        it.name != "integration-test" && it.name != "hive-metastore-common" && !it.name.startsWith("flink")
+      if (!it.name.startsWith("authorization") &&
+        !it.name.startsWith("catalog") &&
+        !it.name.startsWith("cli") &&
+        !it.name.startsWith("client") &&
+        !it.name.startsWith("filesystem") &&
+        !it.name.startsWith("flink") &&
+        !it.name.startsWith("iceberg") &&
+        !it.name.startsWith("spark") &&
+        it.name != "hadoop-common" &&
+        it.name != "hive-metastore-common" &&
+        it.name != "integration-test" &&
+        it.name != "trino-connector" &&
+        it.parent?.name != "bundles"
       ) {
         from(it.configurations.runtimeClasspath)
         into("distribution/package/libs")
@@ -753,23 +826,37 @@ tasks {
     }
   }
 
+  register("copyCliLib", Copy::class) {
+    dependsOn("clients:cli:build")
+    from("clients/cli/build/libs")
+    into("distribution/package/auxlib")
+    include("gravitino-cli-*.jar")
+    setDuplicatesStrategy(DuplicatesStrategy.EXCLUDE)
+  }
+
   register("copySubprojectLib", Copy::class) {
     subprojects.forEach() {
-      if (!it.name.startsWith("catalog") &&
+      if (!it.name.startsWith("authorization") &&
+        !it.name.startsWith("catalog") &&
+        !it.name.startsWith("cli") &&
         !it.name.startsWith("client") &&
-        !it.name.startsWith("authorization") &&
         !it.name.startsWith("filesystem") &&
-        !it.name.startsWith("spark") &&
+        !it.name.startsWith("flink") &&
         !it.name.startsWith("iceberg") &&
         !it.name.startsWith("integration-test") &&
-        !it.name.startsWith("flink") &&
+        !it.name.startsWith("spark") &&
         !it.name.startsWith("trino-connector") &&
-        it.name != "hive-metastore-common"
+        it.name != "hive-metastore-common" &&
+        it.name != "docs" &&
+        it.name != "hadoop-common" &&
+        it.parent?.name != "bundles"
       ) {
         dependsOn("${it.name}:build")
-        from("${it.name}/build/libs")
+        from("${it.name}/build/libs") {
+          include("*.jar")
+          exclude("*-jcstress.jar", "*-jmh.jar")
+        }
         into("distribution/package/libs")
-        include("*.jar")
         setDuplicatesStrategy(DuplicatesStrategy.INCLUDE)
       }
     }
@@ -777,20 +864,18 @@ tasks {
 
   register("copyCatalogLibAndConfigs", Copy::class) {
     dependsOn(
+      ":catalogs:catalog-fileset:copyLibAndConfig",
       ":catalogs:catalog-hive:copyLibAndConfig",
-      ":catalogs:catalog-lakehouse-iceberg:copyLibAndConfig",
-      ":catalogs:catalog-lakehouse-paimon:copyLibAndConfig",
       ":catalogs:catalog-jdbc-doris:copyLibAndConfig",
       ":catalogs:catalog-jdbc-mysql:copyLibAndConfig",
+      ":catalogs:catalog-jdbc-oceanbase:copyLibAndConfig",
       ":catalogs:catalog-jdbc-postgresql:copyLibAndConfig",
-      ":catalogs:catalog-hadoop:copyLibAndConfig",
-      ":catalogs:catalog-kafka:copyLibAndConfig"
-    )
-  }
-
-  register("copyAuthorizationLibAndConfigs", Copy::class) {
-    dependsOn(
-      ":authorizations:authorization-ranger:copyLibAndConfig"
+      ":catalogs:catalog-jdbc-starrocks:copyLibAndConfig",
+      ":catalogs:catalog-kafka:copyLibAndConfig",
+      ":catalogs:catalog-lakehouse-hudi:copyLibAndConfig",
+      ":catalogs:catalog-lakehouse-iceberg:copyLibAndConfig",
+      ":catalogs:catalog-lakehouse-paimon:copyLibAndConfig",
+      ":catalogs:catalog-model:copyLibAndConfig"
     )
   }
 
@@ -882,7 +967,7 @@ fun printMacDockerTip() {
 
 fun checkMacDockerConnector() {
   if (!OperatingSystem.current().isMacOsX()) {
-    // Only MacOs requires the use of `docker-connector`
+    // Only macOS requires the use of `docker-connector`
     return
   }
 
@@ -897,7 +982,7 @@ fun checkMacDockerConnector() {
       project.extra["macDockerConnector"] = true
     }
   } catch (e: Exception) {
-    println("checkContainerRunning command execution failed: ${e.message}")
+    println("checkContainerRunning failed: ${e.message}")
   }
 }
 
@@ -909,10 +994,10 @@ fun checkDockerStatus() {
     if (exitCode == 0) {
       project.extra["dockerRunning"] = true
     } else {
-      println("checkDockerStatus command execution failed with exit code $exitCode")
+      println("checkDockerStatus failed with exit code $exitCode")
     }
   } catch (e: IOException) {
-    println("checkDockerStatus command execution failed: ${e.message}")
+    println("checkDockerStatus failed: ${e.message}")
   }
 }
 
@@ -927,12 +1012,12 @@ fun checkOrbStackStatus() {
     if (exitCode == 0) {
       val currentContext = process.inputStream.bufferedReader().readText()
       println("Current docker context is: $currentContext")
-      project.extra["isOrbStack"] = currentContext.lowercase(Locale.getDefault()).contains("orbstack")
+      project.extra["isOrbStack"] = currentContext.lowercase().contains("orbstack")
     } else {
-      println("checkOrbStackStatus Command execution failed with exit code $exitCode")
+      println("checkOrbStackStatus failed with exit code $exitCode")
     }
   } catch (e: IOException) {
-    println("checkOrbStackStatus command execution failed: ${e.message}")
+    println("checkOrbStackStatus failed: ${e.message}")
   }
 }
 

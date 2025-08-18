@@ -33,7 +33,7 @@ done
 DRY_RUN=${DRY_RUN:-0}
 export DRY_RUN
 
-cmds=("git" "gpg" "svn" "twine" "shasum" "sha1sum" "jq")
+cmds=("git" "gpg" "svn" "twine" "shasum" "sha1sum" "jq" "make")
 for cmd in "${cmds[@]}"; do
   if ! command -v $cmd &> /dev/null; then
     echo "$cmd is required to run this script."
@@ -47,6 +47,13 @@ if ! command -v md5 &> /dev/null && ! command -v md5sum &> /dev/null; then
 fi
 
 . "$SELF/release-util.sh"
+
+if ! is_dry_run; then
+  if [[ -z "$PYPI_API_TOKEN" ]]; then
+    echo 'The environment variable PYPI_API_TOKEN is not set. Exiting.'
+    exit 1
+  fi
+fi
 
 if [ "$RUNNING_IN_DOCKER" = "1" ]; then
   # Inside docker, need to import the GPG key stored in the current directory.

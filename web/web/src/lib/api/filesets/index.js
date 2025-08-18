@@ -27,7 +27,23 @@ const Apis = {
   GET_DETAIL: ({ metalake, catalog, schema, fileset }) =>
     `/api/metalakes/${encodeURIComponent(metalake)}/catalogs/${encodeURIComponent(
       catalog
-    )}/schemas/${encodeURIComponent(schema)}/filesets/${encodeURIComponent(fileset)}`
+    )}/schemas/${encodeURIComponent(schema)}/filesets/${encodeURIComponent(fileset)}`,
+  LIST_FILES: ({ metalake, catalog, schema, fileset, subPath, locationName }) => {
+    const params = new URLSearchParams()
+    if (subPath) params.append('sub_path', subPath)
+    if (locationName) params.append('location_name', locationName)
+    const queryString = params.toString()
+
+    return `/api/metalakes/${encodeURIComponent(metalake)}/catalogs/${encodeURIComponent(
+      catalog
+    )}/schemas/${encodeURIComponent(schema)}/filesets/${encodeURIComponent(fileset)}/files${queryString ? `?${queryString}` : ''}`
+  },
+  CREATE: ({ metalake, catalog, schema }) =>
+    `/api/metalakes/${encodeURIComponent(metalake)}/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/filesets`,
+  UPDATE: ({ metalake, catalog, schema, fileset }) =>
+    `/api/metalakes/${encodeURIComponent(metalake)}/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/filesets/${encodeURIComponent(fileset)}`,
+  DELETE: ({ metalake, catalog, schema, fileset }) =>
+    `/api/metalakes/${encodeURIComponent(metalake)}/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/filesets/${encodeURIComponent(fileset)}`
 }
 
 export const getFilesetsApi = params => {
@@ -40,4 +56,22 @@ export const getFilesetDetailsApi = ({ metalake, catalog, schema, fileset }) => 
   return defHttp.get({
     url: `${Apis.GET_DETAIL({ metalake, catalog, schema, fileset })}`
   })
+}
+
+export const listFilesetFilesApi = ({ metalake, catalog, schema, fileset, subPath = '/', locationName }) => {
+  return defHttp.get({
+    url: `${Apis.LIST_FILES({ metalake, catalog, schema, fileset, subPath, locationName })}`
+  })
+}
+
+export const createFilesetApi = ({ metalake, catalog, schema, data }) => {
+  return defHttp.post({ url: `${Apis.CREATE({ metalake, catalog, schema })}`, data })
+}
+
+export const updateFilesetApi = ({ metalake, catalog, schema, fileset, data }) => {
+  return defHttp.put({ url: `${Apis.UPDATE({ metalake, catalog, schema, fileset })}`, data })
+}
+
+export const deleteFilesetApi = ({ metalake, catalog, schema, fileset }) => {
+  return defHttp.delete({ url: `${Apis.DELETE({ metalake, catalog, schema, fileset })}` })
 }

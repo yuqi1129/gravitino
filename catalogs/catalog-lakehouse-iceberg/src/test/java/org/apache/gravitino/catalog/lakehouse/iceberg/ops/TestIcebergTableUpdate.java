@@ -18,9 +18,11 @@
  */
 package org.apache.gravitino.catalog.lakehouse.iceberg.ops;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.apache.gravitino.NameIdentifier;
+import org.apache.gravitino.iceberg.common.IcebergConfig;
 import org.apache.gravitino.iceberg.common.ops.IcebergCatalogWrapper;
 import org.apache.gravitino.iceberg.common.ops.IcebergCatalogWrapper.IcebergTableChange;
 import org.apache.gravitino.rel.TableChange;
@@ -43,6 +45,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+@SuppressWarnings("deprecation")
 public class TestIcebergTableUpdate {
   private IcebergCatalogWrapper icebergCatalogWrapper = null;
   private IcebergCatalogWrapperHelper icebergCatalogWrapperHelper = null;
@@ -79,7 +82,7 @@ public class TestIcebergTableUpdate {
 
   @BeforeEach
   public void init() {
-    icebergCatalogWrapper = new IcebergCatalogWrapper();
+    icebergCatalogWrapper = new IcebergCatalogWrapper(new IcebergConfig(Collections.emptyMap()));
     icebergCatalogWrapperHelper =
         new IcebergCatalogWrapperHelper(icebergCatalogWrapper.getCatalog());
     createNamespace(TEST_NAMESPACE_NAME);
@@ -261,17 +264,14 @@ public class TestIcebergTableUpdate {
         });
 
     // add required column
-    IllegalArgumentException exception =
-        Assertions.assertThrowsExactly(
-            IllegalArgumentException.class,
-            () -> {
-              TableChange addColumn1 =
-                  TableChange.addColumn(
-                      new String[] {"required_column"}, Types.IntegerType.get(), false);
-              updateTable(identifier, addColumn1);
-            });
-    Assertions.assertTrue(
-        exception.getMessage().contains("Incompatible change: cannot add required column:"));
+    Assertions.assertThrowsExactly(
+        IllegalArgumentException.class,
+        () -> {
+          TableChange addColumn1 =
+              TableChange.addColumn(
+                  new String[] {"required_column"}, Types.IntegerType.get(), false);
+          updateTable(identifier, addColumn1);
+        });
   }
 
   @Test

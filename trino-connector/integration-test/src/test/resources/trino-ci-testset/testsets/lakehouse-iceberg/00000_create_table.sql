@@ -11,6 +11,7 @@ CREATE TABLE gt_db2.tb02 (
     name varchar,
     salary int
 ) with (
+      format = 'ORC',
       partitioning = ARRAY['name'],
       sorted_by = ARRAY['salary']
     );
@@ -62,6 +63,13 @@ CREATE TABLE gt_db2.tb06 (
 );
 
 show create table gt_db2.tb06;
+
+CREATE TABLE IF NOT EXISTS gt_db2.tb05 (
+   name varchar,
+   salary int
+) with (
+  partitioning = ARRAY['name']
+);
 
 drop table gt_db2.tb01;
 

@@ -19,11 +19,15 @@ on:
           - 'gravitino-playground:hive'
           - 'gravitino-playground:ranger'
           - 'gravitino-iceberg-rest-server'
+      docker_repo_name:
+        description: 'Docker repository name (default is apache)'
+        required: false
+        default: 'apache'
+        type: string
       version:
         description: 'Docker version to apply to this image'
         required: true
         type: string
-
       username:
         description: 'Docker username'
         required: true
@@ -32,6 +36,11 @@ on:
         description: 'Publish Docker token'
         required: true
         type: string
+      publish-latest-tag:
+        description: 'Whether to update the latest tag. This operation is only applicable to official releases and should not be used for Release Candidate (RC).'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   publish-docker-image:
@@ -45,43 +54,49 @@ jobs:
         run: |
           if [ "${{ github.event.inputs.image }}" == "gravitino-ci:hive" ]; then
             echo "image_type=hive" >> $GITHUB_ENV
-            echo "image_name=apache/gravitino-ci" >> $GITHUB_ENV
+            echo "image_name=${{ github.event.inputs.docker_repo_name }}/gravitino-ci" >> $GITHUB_ENV
             echo "tag_name=hive" >> $GITHUB_ENV
           elif [ "${{ github.event.inputs.image }}" == "gravitino-ci:kerberos-hive" ]; then
             echo "image_type=kerberos-hive" >> $GITHUB_ENV
-            echo "image_name=apache/gravitino-ci" >> $GITHUB_ENV
+            echo "image_name=${{ github.event.inputs.docker_repo_name }}/gravitino-ci" >> $GITHUB_ENV
             echo "tag_name=kerberos-hive" >> $GITHUB_ENV
           elif [ "${{ github.event.inputs.image }}" == "gravitino-ci:trino" ]; then
             echo "image_type=trino" >> $GITHUB_ENV
-            echo "image_name=apache/gravitino-ci" >> $GITHUB_ENV
+            echo "image_name=${{ github.event.inputs.docker_repo_name }}/gravitino-ci" >> $GITHUB_ENV
             echo "tag_name=trino" >> $GITHUB_ENV
           elif [ "${{ github.event.inputs.image }}" == "gravitino-ci:doris" ]; then
             echo "image_type=doris" >> $GITHUB_ENV
-            echo "image_name=apache/gravitino-ci" >> $GITHUB_ENV
+            echo "image_name=${{ github.event.inputs.docker_repo_name }}/gravitino-ci" >> $GITHUB_ENV
             echo "tag_name=doris" >> $GITHUB_ENV
           elif [ "${{ github.event.inputs.image }}" == "gravitino-ci:ranger" ]; then
             echo "image_type=ranger" >> $GITHUB_ENV
-            echo "image_name=apache/gravitino-ci" >> $GITHUB_ENV
+            echo "image_name=${{ github.event.inputs.docker_repo_name }}/gravitino-ci" >> $GITHUB_ENV
             echo "tag_name=ranger" >> $GITHUB_ENV
           elif [ "${{ github.event.inputs.image }}" == "gravitino" ]; then
             echo "image_type=gravitino" >> $GITHUB_ENV
-            echo "image_name=apache/gravitino" >> $GITHUB_ENV
-            # `apache/gravitino` is the default image name, didn't need to tag alias name
+            echo "image_name=${{ github.event.inputs.docker_repo_name }}/gravitino" >> $GITHUB_ENV
+            # `${{ github.event.inputs.docker_repo_name }}/gravitino` is the default image name, didn"t need to tag alias name
           elif [ "${{ github.event.inputs.image }}" == "gravitino-playground:trino" ]; then
             echo "image_type=trino" >> $GITHUB_ENV
-            echo "image_name=apache/gravitino-playground" >> $GITHUB_ENV
+            echo "image_name=${{ github.event.inputs.docker_repo_name }}/gravitino-playground" >> $GITHUB_ENV
             echo "tag_name=trino" >> $GITHUB_ENV
           elif [ "${{ github.event.inputs.image }}" == "gravitino-playground:hive" ]; then
             echo "image_type=hive" >> $GITHUB_ENV
-            echo "image_name=apache/gravitino-playground" >> $GITHUB_ENV
+            echo "image_name=${{ github.event.inputs.docker_repo_name }}/gravitino-playground" >> $GITHUB_ENV
             echo "tag_name=hive" >> $GITHUB_ENV
           elif [ "${{ github.event.inputs.image }}" == "gravitino-playground:ranger" ]; then
             echo "image_type=ranger" >> $GITHUB_ENV
-            echo "image_name=apache/gravitino-playground" >> $GITHUB_ENV
+            echo "image_name=${{ github.event.inputs.docker_repo_name }}/gravitino-playground" >> $GITHUB_ENV
             echo "tag_name=ranger" >> $GITHUB_ENV
           elif [ "${{ github.event.inputs.image }}" == "gravitino-iceberg-rest-server" ]; then
             echo "image_type=iceberg-rest-server" >> $GITHUB_ENV
-            echo "image_name=apache/gravitino-iceberg-rest" >> $GITHUB_ENV
+            echo "image_name=${{ github.event.inputs.docker_repo_name }}/gravitino-iceberg-rest" >> $GITHUB_ENV
+          fi
+
+          if [ "${{ github.event.inputs.publish-latest-tag }}" == "true" ]; then
+            echo "publish_latest=true" >> $GITHUB_ENV
+          else
+            echo "publish_latest=false" >> $GITHUB_ENV
           fi
 
       - name: Check publish Docker token
@@ -92,31 +107,39 @@ jobs:
           fi
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ github.event.inputs.username }}
           password: ${{ secrets.DOCKER_REPOSITORY_PASSWORD }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v3
+      - uses: actions/setup-java@v4
         with:
           java-version: '8'
           distribution: 'temurin'
 
       - name: Build and Push the Docker image
-        run: | 
+        run: |
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          
-          if [[ "${image_type}" == "gravitino" || "${image_type}" == "iceberg-rest-server" ]]; then
-            ./dev/docker/build-docker.sh --platform all --type ${image_type} --image ${image_name} --tag ${{ github.event.inputs.version }} --latest
+
+          if [[ -n "${tag_name}" ]]; then
+            full_tag_name="${tag_name}-${{ github.event.inputs.version }}"
           else
-            ./dev/docker/build-docker.sh --platform all --type ${image_type} --image ${image_name} --tag "${tag_name}-${{ github.event.inputs.version }}"
+            full_tag_name="${{ github.event.inputs.version }}"
+          fi
+
+          if [[ "${publish_latest}" == "true" ]]; then
+            echo "Publish tag ${full_tag_name}, and update latest too."
+            ./dev/docker/build-docker.sh --platform all --type ${image_type} --image ${image_name} --tag ${full_tag_name} --latest
+          else
+            echo "Publish tag ${full_tag_name}."
+            ./dev/docker/build-docker.sh --platform all --type ${image_type} --image ${image_name} --tag ${full_tag_name}
           fi

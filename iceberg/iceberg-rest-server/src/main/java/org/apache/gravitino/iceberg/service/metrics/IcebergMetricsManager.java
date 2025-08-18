@@ -30,14 +30,13 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.apache.gravitino.iceberg.common.IcebergConfig;
-import org.apache.gravitino.iceberg.common.ops.IcebergCatalogWrapper;
 import org.apache.gravitino.iceberg.service.IcebergRestUtils;
 import org.apache.iceberg.metrics.MetricsReport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class IcebergMetricsManager {
-  private static final Logger LOG = LoggerFactory.getLogger(IcebergCatalogWrapper.class);
+  private static final Logger LOG = LoggerFactory.getLogger(IcebergMetricsManager.class);
 
   // Register IcebergMetricsStore's short name to its full qualified class name in the map. So
   // that user doesn't need to specify the full qualified class name when creating an
@@ -114,7 +113,7 @@ public class IcebergMetricsManager {
       logMetrics("Drop Iceberg metrics because Iceberg Metrics Manager is closed.", metricsReport);
       return;
     }
-    if (queue.offer(metricsReport) == false) {
+    if (!queue.offer(metricsReport)) {
       logMetrics("Drop Iceberg metrics because metrics queue is full.", metricsReport);
     }
   }
@@ -147,7 +146,7 @@ public class IcebergMetricsManager {
   }
 
   private void writeMetrics() {
-    while (Thread.currentThread().isInterrupted() == false) {
+    while (!Thread.currentThread().isInterrupted()) {
       MetricsReport metricsReport;
       try {
         metricsReport = queue.take();

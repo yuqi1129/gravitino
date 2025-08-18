@@ -26,17 +26,18 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
-import org.apache.gravitino.integration.test.web.ui.utils.AbstractWebIT;
+import org.apache.gravitino.integration.test.web.ui.utils.BaseWebIT;
 import org.openqa.selenium.By;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.Keys;
+import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.support.FindBy;
 import org.openqa.selenium.support.PageFactory;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
-public class CatalogsPage extends AbstractWebIT {
+public class CatalogsPage extends BaseWebIT {
   @FindBy(xpath = "//*[@data-refer='back-home-btn']")
   public WebElement backHomeBtn;
 
@@ -61,6 +62,60 @@ public class CatalogsPage extends AbstractWebIT {
   @FindBy(xpath = "//*[@data-refer='handle-submit-catalog']")
   public WebElement handleSubmitCatalogBtn;
 
+  @FindBy(xpath = "//*[@data-refer='create-schema-btn']")
+  public WebElement createSchemaBtn;
+
+  @FindBy(xpath = "//*[@data-refer='schema-name-field']")
+  public WebElement schemaNameField;
+
+  @FindBy(xpath = "//*[@data-refer='schema-comment-field']")
+  public WebElement schemaCommentField;
+
+  @FindBy(xpath = "//*[@data-refer='handle-submit-schema']")
+  public WebElement handleSubmitSchemaBtn;
+
+  @FindBy(xpath = "//*[@data-refer='create-fileset-btn']")
+  public WebElement createFilesetBtn;
+
+  @FindBy(xpath = "//*[@data-refer='fileset-name-field']")
+  public WebElement filesetNameField;
+
+  @FindBy(xpath = "//*[@data-refer='fileset-storageLocation-field']")
+  public WebElement filesetStorageLocationField;
+
+  @FindBy(xpath = "//*[@data-refer='fileset-comment-field']")
+  public WebElement filesetCommentField;
+
+  @FindBy(xpath = "//button[@data-refer='add-fileset-props']")
+  public WebElement addFilesetPropsBtn;
+
+  @FindBy(xpath = "//*[@data-refer='handle-submit-fileset']")
+  public WebElement handleSubmitFilesetBtn;
+
+  @FindBy(xpath = "//*[@data-refer='create-topic-btn']")
+  public WebElement createTopicBtn;
+
+  @FindBy(xpath = "//*[@data-refer='topic-name-field']")
+  public WebElement topicNameField;
+
+  @FindBy(xpath = "//*[@data-refer='topic-comment-field']")
+  public WebElement topicCommentField;
+
+  @FindBy(xpath = "//*[@data-refer='handle-submit-topic']")
+  public WebElement handleSubmitTopicBtn;
+
+  @FindBy(xpath = "//*[@data-refer='create-table-btn']")
+  public WebElement createTableBtn;
+
+  @FindBy(xpath = "//*[@data-refer='table-name-field']")
+  public WebElement tableNameField;
+
+  @FindBy(xpath = "//*[@data-refer='table-comment-field']")
+  public WebElement tableCommentField;
+
+  @FindBy(xpath = "//*[@data-refer='handle-submit-table']")
+  public WebElement handleSubmitTableBtn;
+
   @FindBy(xpath = "//div[@data-refer='tree-view']")
   public WebElement treeView;
 
@@ -78,6 +133,12 @@ public class CatalogsPage extends AbstractWebIT {
 
   @FindBy(xpath = "//div[@data-refer='tab-details-panel']")
   public WebElement tabDetailsContent;
+
+  @FindBy(xpath = "//button[@data-refer='tab-files']")
+  public WebElement tabFilesBtn;
+
+  @FindBy(xpath = "//div[@data-refer='tab-files-panel']")
+  public WebElement tabFilesContent;
 
   @FindBy(xpath = "//div[@data-refer='details-drawer']")
   public WebElement detailsDrawer;
@@ -115,7 +176,8 @@ public class CatalogsPage extends AbstractWebIT {
   @FindBy(xpath = "//ul[@aria-labelledby='select-catalog-type']")
   public WebElement catalogTypeList;
 
-  public CatalogsPage() {
+  public CatalogsPage(WebDriver driver) {
+    this.driver = driver;
     PageFactory.initElements(driver, this);
   }
 
@@ -142,14 +204,13 @@ public class CatalogsPage extends AbstractWebIT {
     }
   }
 
-  public void setCatalogCommentField(String nameField) {
+  public void setCatalogCommentField(String commentField) {
     try {
-      WebElement metalakeCommentFieldInput =
-          catalogCommentField.findElement(By.tagName("textarea"));
-      metalakeCommentFieldInput.sendKeys(
+      WebElement catalogCommentFieldInput = catalogCommentField.findElement(By.tagName("textarea"));
+      catalogCommentFieldInput.sendKeys(
           Keys.chord(Keys.HOME, Keys.chord(Keys.SHIFT, Keys.END), Keys.DELETE));
-      metalakeCommentFieldInput.clear();
-      metalakeCommentFieldInput.sendKeys(nameField);
+      catalogCommentFieldInput.clear();
+      catalogCommentFieldInput.sendKeys(commentField);
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);
     }
@@ -167,7 +228,7 @@ public class CatalogsPage extends AbstractWebIT {
   }
 
   // set the indexed catalog properties
-  public void setCatalogPropsAt(int index, String key, String value) {
+  public void setPropsAt(int index, String key, String value) {
     try {
       // Set the indexed props key
       String keyPath = "//div[@data-refer='props-key-" + index + "']//input[@name='key']";
@@ -184,7 +245,7 @@ public class CatalogsPage extends AbstractWebIT {
 
   public void clickViewCatalogBtn(String name) {
     try {
-      String xpath = "//button[@data-refer='view-catalog-" + name + "']";
+      String xpath = "//button[@data-refer='view-entity-" + name + "']";
       WebElement btn = driver.findElement(By.xpath(xpath));
       WebDriverWait wait = new WebDriverWait(driver, MAX_TIMEOUT);
       wait.until(ExpectedConditions.elementToBeClickable(By.xpath(xpath)));
@@ -196,7 +257,7 @@ public class CatalogsPage extends AbstractWebIT {
 
   public void clickEditCatalogBtn(String name) {
     try {
-      String xpath = "//button[@data-refer='edit-catalog-" + name + "']";
+      String xpath = "//button[@data-refer='edit-entity-" + name + "']";
       WebElement btn = driver.findElement(By.xpath(xpath));
       WebDriverWait wait = new WebDriverWait(driver, MAX_TIMEOUT);
       wait.until(ExpectedConditions.elementToBeClickable(By.xpath(xpath)));
@@ -206,13 +267,154 @@ public class CatalogsPage extends AbstractWebIT {
     }
   }
 
-  public void clickDeleteCatalogBtn(String name) {
+  public void clickInUseSwitch(String name) {
     try {
-      String xpath = "//button[@data-refer='delete-catalog-" + name + "']";
+      String xpath = "//*[@data-refer='catalog-in-use-" + name + "']";
+      clickAndWait(By.xpath(xpath));
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+    }
+  }
+
+  public void clickDeleteBtn(String name) {
+    try {
+      String xpath = "//button[@data-refer='delete-entity-" + name + "']";
       WebElement btn = driver.findElement(By.xpath(xpath));
       WebDriverWait wait = new WebDriverWait(driver, MAX_TIMEOUT);
       wait.until(ExpectedConditions.elementToBeClickable(By.xpath(xpath)));
       clickAndWait(btn);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+    }
+  }
+
+  public void setSchemaNameField(String nameField) {
+    try {
+      WebElement schemaNameFieldInput = schemaNameField.findElement(By.tagName("input"));
+      schemaNameFieldInput.sendKeys(
+          Keys.chord(Keys.HOME, Keys.chord(Keys.SHIFT, Keys.END), Keys.DELETE));
+      schemaNameFieldInput.clear();
+      schemaNameFieldInput.sendKeys(nameField);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+    }
+  }
+
+  public void setSchemaCommentField(String nameField) {
+    try {
+      WebElement schemaCommentFieldInput = schemaCommentField.findElement(By.tagName("textarea"));
+      schemaCommentFieldInput.sendKeys(
+          Keys.chord(Keys.HOME, Keys.chord(Keys.SHIFT, Keys.END), Keys.DELETE));
+      schemaCommentFieldInput.clear();
+      schemaCommentFieldInput.sendKeys(nameField);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+    }
+  }
+
+  public void setFilesetNameField(String nameField) {
+    try {
+      WebElement filesetNameFieldInput = filesetNameField.findElement(By.tagName("input"));
+      filesetNameFieldInput.sendKeys(
+          Keys.chord(Keys.HOME, Keys.chord(Keys.SHIFT, Keys.END), Keys.DELETE));
+      filesetNameFieldInput.clear();
+      filesetNameFieldInput.sendKeys(nameField);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+    }
+  }
+
+  public void setFilesetStorageLocationField(
+      int index, String locationName, String storageLocation) {
+    try {
+      // Set the indexed storageLocations name
+      String namePath = "//div[@data-refer='storageLocations-name-" + index + "']//input";
+      WebElement nameInput = driver.findElement(By.xpath(namePath));
+      nameInput.sendKeys(locationName);
+      // Set the indexed storageLocations location
+      String locationPath = "//div[@data-refer='storageLocations-location-" + index + "']//input";
+      WebElement locationInput = driver.findElement(By.xpath(locationPath));
+      locationInput.sendKeys(storageLocation);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+    }
+  }
+
+  public void setFilesetCommentField(String commentField) {
+    try {
+      WebElement filesetCommentFieldInput = filesetCommentField.findElement(By.tagName("textarea"));
+      filesetCommentFieldInput.sendKeys(
+          Keys.chord(Keys.HOME, Keys.chord(Keys.SHIFT, Keys.END), Keys.DELETE));
+      filesetCommentFieldInput.clear();
+      filesetCommentFieldInput.sendKeys(commentField);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+    }
+  }
+
+  public void setTopicNameField(String nameField) {
+    try {
+      WebElement topicNameFieldInput = topicNameField.findElement(By.tagName("input"));
+      topicNameFieldInput.sendKeys(
+          Keys.chord(Keys.HOME, Keys.chord(Keys.SHIFT, Keys.END), Keys.DELETE));
+      topicNameFieldInput.clear();
+      topicNameFieldInput.sendKeys(nameField);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+    }
+  }
+
+  public void setTopicCommentField(String commentField) {
+    try {
+      WebElement topicCommentFieldInput = topicCommentField.findElement(By.tagName("textarea"));
+      topicCommentFieldInput.sendKeys(
+          Keys.chord(Keys.HOME, Keys.chord(Keys.SHIFT, Keys.END), Keys.DELETE));
+      topicCommentFieldInput.clear();
+      topicCommentFieldInput.sendKeys(commentField);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+    }
+  }
+
+  public void setTableNameField(String nameField) {
+    try {
+      WebElement tableNameFieldInput = tableNameField.findElement(By.tagName("input"));
+      tableNameFieldInput.sendKeys(
+          Keys.chord(Keys.HOME, Keys.chord(Keys.SHIFT, Keys.END), Keys.DELETE));
+      tableNameFieldInput.clear();
+      tableNameFieldInput.sendKeys(nameField);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+    }
+  }
+
+  public void setTableCommentField(String commentField) {
+    try {
+      WebElement tableCommentFieldInput = tableCommentField.findElement(By.tagName("textarea"));
+      tableCommentFieldInput.sendKeys(
+          Keys.chord(Keys.HOME, Keys.chord(Keys.SHIFT, Keys.END), Keys.DELETE));
+      tableCommentFieldInput.clear();
+      tableCommentFieldInput.sendKeys(commentField);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+    }
+  }
+
+  // set the indexed table columns
+  public void setTableColumnsAt(int index, String name, String type) {
+    try {
+      // Set the indexed column name
+      String columnName = "//div[@data-refer='column-name-" + index + "']//input";
+      WebElement keyInput = driver.findElement(By.xpath(columnName));
+      keyInput.sendKeys(name);
+      // Set the indexed column type
+      String columnType = "//div[@data-refer='column-type-" + index + "']";
+      WebElement typeSelect = driver.findElement(By.xpath(columnType));
+      clickAndWait(typeSelect);
+      WebElement typeList =
+          driver.findElement(By.xpath("//ul[@aria-labelledby='select-column-type']"));
+      WebElement typeItem = typeList.findElement(By.xpath(".//li[@data-value='" + type + "']"));
+      clickAndWait(typeItem);
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);
     }
@@ -378,6 +580,16 @@ public class CatalogsPage extends AbstractWebIT {
     }
   }
 
+  public boolean verifyShowFilesContent() {
+    try {
+      String files = tabFilesContent.getAttribute("hidden");
+      return Objects.equals(files, null);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+      return false;
+    }
+  }
+
   public boolean verifyShowCatalogDetails(String name, String hiveMetastoreUris)
       throws InterruptedException {
     try {
@@ -400,7 +612,8 @@ public class CatalogsPage extends AbstractWebIT {
           waitShowText(
               "false",
               By.xpath(
-                  ".//*[@data-prev-refer='details-props-key-gravitino.bypass.hive.metastore.client.capability.check']"));
+                  ".//*[@data-prev-refer='details-props-key-gravitino."
+                      + "bypass.hive.metastore.client.capability.check']"));
 
       boolean verifyAll = isVisible && isText && isHiveURIS && isShowCheck;
       if (!verifyAll) {
@@ -490,53 +703,83 @@ public class CatalogsPage extends AbstractWebIT {
    */
   public boolean verifyShowPropertiesItemInList(
       String item, String key, String value, Boolean isHighlight) {
-    try {
-      Thread.sleep(ACTION_SLEEP_MILLIS);
-      String xpath;
-      if (isHighlight) {
-        xpath = "//div[@data-refer='props-" + item + "-" + key + "-highlight']";
-      } else {
-        xpath = "//div[@data-refer='props-" + item + "-" + key + "']";
-      }
-      WebElement propertyElement = driver.findElement(By.xpath(xpath));
-      boolean match = Objects.equals(propertyElement.getText(), value);
+    WebDriverWait wait = new WebDriverWait(driver, ACTION_SLEEP);
+    String xpath;
+    if (isHighlight) {
+      xpath = "//div[@data-refer='props-" + item + "-" + key + "-highlight']";
+    } else {
+      xpath = "//div[@data-refer='props-" + item + "-" + key + "']";
+    }
+    WebElement propertyElement =
+        wait.until(ExpectedConditions.visibilityOfElementLocated(By.xpath(xpath)));
 
-      if (!match) {
-        LOG.error("Prop: does not include itemName: {}", value);
-        return false;
-      }
+    boolean match = Objects.equals(propertyElement.getText(), value);
 
-      return true;
-    } catch (Exception e) {
-      LOG.error(e.getMessage(), e);
+    if (!match) {
+      LOG.error("Prop: does not include itemName: {}", value);
       return false;
     }
+    return true;
   }
 
   public boolean verifyShowDataItemInList(String itemName, Boolean isColumnLevel) {
     try {
-      Thread.sleep(ACTION_SLEEP_MILLIS);
-      String xpath =
-          "//div[@data-refer='table-grid']//div[contains(@class, 'MuiDataGrid-main')]/div[contains(@class, 'MuiDataGrid-virtualScroller')]/div/div[@role='rowgroup']//div[@data-field='name']";
-      if (isColumnLevel) {
-        xpath = xpath + "//p";
-      }
-      List<WebElement> list = driver.findElements(By.xpath(xpath));
-      List<String> texts = new ArrayList<>();
-      for (WebElement element : list) {
-        texts.add(element.getText());
-      }
-
-      if (!texts.contains(itemName)) {
-        LOG.error("table list: {} does not include itemName: {}", texts, itemName);
-        return false;
-      }
-
-      return true;
+      Thread.sleep(ACTION_SLEEP * 1000);
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);
+    }
+    WebDriverWait wait = new WebDriverWait(driver, ACTION_SLEEP);
+    String xpath =
+        "//div[@data-refer='table-grid']"
+            + "//div[contains(@class, 'MuiDataGrid-main')]"
+            + "/div[contains(@class, 'MuiDataGrid-virtualScroller')]"
+            + "/div/div[@role='rowgroup']//div[@data-field='name']";
+    if (isColumnLevel) {
+      xpath = xpath + "//p";
+    }
+    List<WebElement> list =
+        wait.until(ExpectedConditions.visibilityOfAllElementsLocatedBy(By.xpath(xpath)));
+    List<String> texts = new ArrayList<>();
+    for (WebElement element : list) {
+      texts.add(element.getText());
+    }
+
+    if (!texts.contains(itemName)) {
+      LOG.error("table list: {} does not include itemName: {}", texts, itemName);
       return false;
     }
+
+    return true;
+  }
+
+  public boolean verifyNoDataItemInList(String itemName, Boolean isColumnLevel) {
+    try {
+      Thread.sleep(ACTION_SLEEP * 1000);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+    }
+    String xpath =
+        "//div[@data-refer='table-grid']"
+            + "//div[contains(@class, 'MuiDataGrid-main')]"
+            + "/div[contains(@class, 'MuiDataGrid-virtualScroller')]"
+            + "/div/div[@role='rowgroup']//div[@data-field='name']";
+    if (isColumnLevel) {
+      xpath = xpath + "//p";
+    }
+    WebDriverWait wait = new WebDriverWait(driver, ACTION_SLEEP);
+    List<WebElement> list =
+        wait.until(ExpectedConditions.visibilityOfAllElementsLocatedBy(By.xpath(xpath)));
+    List<String> texts = new ArrayList<>();
+    for (WebElement element : list) {
+      texts.add(element.getText());
+    }
+
+    if (texts.contains(itemName)) {
+      LOG.error("table list: {} does not include itemName: {}", texts, itemName);
+      return false;
+    }
+
+    return true;
   }
 
   public boolean verifyTableColumns() {
@@ -621,106 +864,90 @@ public class CatalogsPage extends AbstractWebIT {
   }
 
   public boolean verifyBackHomePage() {
-    try {
-      WebDriverWait wait = new WebDriverWait(driver, MAX_TIMEOUT);
-      wait.until(ExpectedConditions.visibilityOf(metalakePageTitle));
-      boolean matchTitle = Objects.equals(metalakePageTitle.getText(), "Metalakes");
-      if (!matchTitle) {
-        LOG.error(
-            "metalakePageTitle: {} does not match with Metalakes", metalakePageTitle.getText());
-        return false;
-      }
-      return true;
-    } catch (Exception e) {
-      LOG.error(e.getMessage(), e);
+    WebDriverWait wait = new WebDriverWait(driver, MAX_TIMEOUT);
+    wait.until(ExpectedConditions.visibilityOf(metalakePageTitle));
+    boolean matchTitle = Objects.equals(metalakePageTitle.getText(), "Metalakes");
+    if (!matchTitle) {
+      LOG.error("metalakePageTitle: {} does not match with Metalakes", metalakePageTitle.getText());
       return false;
     }
+    return true;
   }
 
   public boolean verifyRefreshPage() {
-    try {
-      WebDriverWait wait = new WebDriverWait(driver, MAX_TIMEOUT);
-      wait.until(
-          webDriver ->
-              ((JavascriptExecutor) webDriver)
-                  .executeScript("return document.readyState")
-                  .equals("complete"));
-      wait.until(ExpectedConditions.visibilityOf(metalakeNameLink));
-      boolean isDisplayed = metalakeNameLink.isDisplayed();
-      if (!isDisplayed) {
-        LOG.error("No match with link, get {}", metalakeNameLink.getText());
-        return false;
-      }
-      return true;
-    } catch (Exception e) {
-      LOG.error(e.getMessage(), e);
+    WebDriverWait wait = new WebDriverWait(driver, MAX_TIMEOUT);
+    wait.until(
+        webDriver ->
+            ((JavascriptExecutor) webDriver)
+                .executeScript("return document.readyState")
+                .equals("complete"));
+    wait.until(ExpectedConditions.visibilityOf(metalakeNameLink));
+    boolean isDisplayed = metalakeNameLink.isDisplayed();
+    if (!isDisplayed) {
+      LOG.error("No match with link, get {}", metalakeNameLink.getText());
       return false;
     }
+    return true;
   }
 
   public boolean verifyCreatedCatalogs(List<String> catalogNames) {
-    try {
-      List<WebElement> list =
-          tableGrid.findElements(
-              By.xpath(
-                  "./div[contains(@class, 'MuiDataGrid-main')]/div[contains(@class, 'MuiDataGrid-virtualScroller')]/div/div[@role='rowgroup']//div[@data-field='name']"));
-      List<String> texts = new ArrayList<>();
-      for (WebElement webElement : list) {
-        String rowItemColName = webElement.getText();
-        texts.add(rowItemColName);
-      }
-      if (!texts.containsAll(catalogNames)) {
-        LOG.error("table list: {} does not containsAll catalogNames: {}", texts, catalogNames);
-        return false;
-      }
-      return true;
-    } catch (Exception e) {
-      LOG.error(e.getMessage(), e);
+    List<WebElement> list =
+        tableGrid.findElements(
+            By.xpath(
+                "./div[contains(@class, 'MuiDataGrid-main')]"
+                    + "/div[contains(@class, 'MuiDataGrid-virtualScroller')]"
+                    + "/div/div[@role='rowgroup']//div[@data-field='name']"));
+    List<String> texts = new ArrayList<>();
+    for (WebElement webElement : list) {
+      String rowItemColName = webElement.getText();
+      texts.add(rowItemColName);
+    }
+    if (!texts.containsAll(catalogNames)) {
+      LOG.error("table list: {} does not containsAll catalogNames: {}", texts, catalogNames);
       return false;
     }
+    return true;
   }
 
   public boolean verifyTreeNodes(List<String> treeNodes) {
-    try {
-      Thread.sleep(ACTION_SLEEP_MILLIS);
-      List<WebElement> list =
-          driver.findElements(
-              By.xpath(
-                  "//div[@data-refer='tree-view']//div[@class='ant-tree-list-holder']/div/div[@class='ant-tree-list-holder-inner']/div[contains(@class, 'ant-tree-treenode')]"));
-      List<String> texts = new ArrayList<>();
-      for (WebElement webElement : list) {
-        String nodeName =
-            webElement.findElement(By.xpath(".//span[@class='ant-tree-title']")).getText();
-        texts.add(nodeName);
-      }
-      if (!treeNodes.containsAll(texts)) {
-        LOG.error("tree nodes list: {} does not containsAll treeNodes: {}", texts, treeNodes);
-        return false;
-      }
-      return true;
-    } catch (Exception e) {
-      LOG.error(e.getMessage(), e);
+    WebDriverWait wait = new WebDriverWait(driver, ACTION_SLEEP);
+    List<WebElement> list =
+        wait.until(
+            ExpectedConditions.visibilityOfAllElementsLocatedBy(
+                By.xpath(
+                    "//div[@data-refer='tree-view']"
+                        + "//div[@class='ant-tree-list-holder']"
+                        + "/div/div[@class='ant-tree-list-holder-inner']"
+                        + "/div[contains(@class, 'ant-tree-treenode')]")));
+    List<String> texts = new ArrayList<>();
+    for (WebElement webElement : list) {
+      String nodeName =
+          webElement.findElement(By.xpath(".//span[@class='ant-tree-title']")).getText();
+      texts.add(nodeName);
+    }
+    if (!treeNodes.containsAll(texts)) {
+      LOG.error("tree nodes list: {} does not containsAll treeNodes: {}", texts, treeNodes);
       return false;
     }
+    return true;
   }
 
   public boolean verifySelectedNode(String nodeName) {
-    try {
-      Thread.sleep(ACTION_SLEEP_MILLIS);
-      WebElement selectedNode =
-          driver.findElement(
-              By.xpath(
-                  "//div[@data-refer='tree-view']//div[contains(@class, 'ant-tree-treenode-selected')]//span[@class='ant-tree-title']"));
-      waitShowText(nodeName, selectedNode);
-      if (!selectedNode.getText().equals(nodeName)) {
-        LOG.error(
-            "selectedNode: {} does not match with nodeName: {}", selectedNode.getText(), nodeName);
-        return false;
-      }
-      return true;
-    } catch (Exception e) {
-      LOG.error(e.getMessage(), e);
+
+    WebDriverWait wait = new WebDriverWait(driver, ACTION_SLEEP);
+
+    WebElement selectedNode =
+        wait.until(
+            ExpectedConditions.visibilityOfElementLocated(
+                By.xpath(
+                    "//div[@data-refer='tree-view']"
+                        + "//div[contains(@class, 'ant-tree-treenode-selected')]"
+                        + "//span[@class='ant-tree-title']")));
+    if (!selectedNode.getText().equals(nodeName)) {
+      LOG.error(
+          "selectedNode: {} does not match with nodeName: {}", selectedNode.getText(), nodeName);
       return false;
     }
+    return true;
   }
 }

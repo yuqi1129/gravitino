@@ -1,4 +1,4 @@
-Apache Gravitino (incubating)
+Apache Gravitino
 Copyright 2024 The Apache Software Foundation
 
 This product includes software developed at
@@ -183,14 +183,6 @@ zlib in pure Java, which can be obtained at:
     * license/LICENSE.jzlib.txt (BSD Style License)
   * HOMEPAGE:
     * http://www.jcraft.com/jzlib/
-
-This product optionally depends on 'Protocol Buffers', Google's data
-interchange format, which can be obtained at:
-
-  * LICENSE:
-    * license/LICENSE.protobuf.txt (New BSD License)
-  * HOMEPAGE:
-    * http://code.google.com/p/protobuf/
 
 This product optionally depends on 'SLF4J', a simple logging facade for Java,
 which can be obtained at:
@@ -921,3 +913,8 @@ Third-Party Notices and Licenses:
 - Hadoop: Apache Hadoop is used as a dependency
   License: Apache License 2.0
   Source/Reference: https://github.com/apache/hadoop/blob/trunk/NOTICE.txt
+
+OpenLineage
+This project includes code from the Marquez Project, part of the LFAI & Data Foundation.
+This project includes code from https://github.com/oittaa/uuid6-python repo (MIT license).
+This project includes code from https://github.com/f4b6a3/uuid-creator repo (MIT license).

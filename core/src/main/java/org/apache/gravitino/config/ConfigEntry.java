@@ -19,9 +19,11 @@
 package org.apache.gravitino.config;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -152,16 +154,33 @@ public class ConfigEntry<T> {
 
   /**
    * Split the string to a list, then map each string element to its converted form.
+   * Leading/trailing whitespace of the input and each element will be trimmed, and blank elements
+   * will be ignored before conversion.
+   *
+   * <p>Examples:
+   *
+   * <pre>{@code
+   * strToSeq(null, converter) = []
+   * strToSeq("   ", converter) = []
+   * strToSeq("A,B,C", converter) = ["A", "B", "C"]
+   * strToSeq(" A, B , ,C,   ,D ", converter) = ["A", "B", "C", "D"]
+   * strToSeq(" AB, B C, ,D,   , E F ", converter) = ["AB", "B C", "D", "E F"]
+   * }</pre>
    *
    * @param str The string form of the value list from the conf entry.
    * @param converter The original ConfigEntry valueConverter.
    * @return The list of converted type.
    */
   public List<T> strToSeq(String str, Function<String, T> converter) {
+    if (str == null || str.trim().isEmpty()) {
+      return Collections.emptyList();
+    }
     List<String> strList = Arrays.asList(str.split(","));
-    List<T> valList = strList.stream().map(converter).collect(Collectors.toList());
-
-    return valList;
+    return strList.stream()
+        .map(String::trim)
+        .filter(s -> !s.isEmpty())
+        .map(converter)
+        .collect(Collectors.toList());
   }
 
   /**
@@ -172,9 +191,9 @@ public class ConfigEntry<T> {
    * @return The converted string.
    */
   public String seqToStr(List<T> seq, Function<T, String> converter) {
-    List<String> valList = seq.stream().map(converter).collect(Collectors.toList());
-    String str = String.join(",", valList);
-    return str;
+    List<String> valList =
+        seq.stream().filter(Objects::nonNull).map(converter).collect(Collectors.toList());
+    return String.join(",", valList);
   }
 
   /**
@@ -313,10 +332,9 @@ public class ConfigEntry<T> {
     String stringValue = stringConverter.apply(value);
     if (stringValue == null) {
       // To ensure that a null value is not set in the configuration
-      LOG.warn("Config {} value to set is null, ignore setting to Config.", stringValue);
+      LOG.warn("Config key {} value to set is null, ignore setting to Config.", key);
       return;
     }
-
     properties.put(key, stringValue);
   }
 }

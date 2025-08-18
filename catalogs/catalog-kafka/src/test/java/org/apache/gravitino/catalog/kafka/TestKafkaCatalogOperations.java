@@ -19,17 +19,15 @@
 package org.apache.gravitino.catalog.kafka;
 
 import static org.apache.gravitino.Catalog.Type.MESSAGING;
-import static org.apache.gravitino.Configs.DEFAULT_ENTITY_KV_STORE;
 import static org.apache.gravitino.Configs.DEFAULT_ENTITY_RELATIONAL_STORE;
-import static org.apache.gravitino.Configs.ENTITY_KV_ROCKSDB_BACKEND_PATH;
-import static org.apache.gravitino.Configs.ENTITY_KV_STORE;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_DRIVER;
+import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_MAX_CONNECTIONS;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_PASSWORD;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_PATH;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_URL;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_USER;
+import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_JDBC_BACKEND_WAIT_MILLISECONDS;
 import static org.apache.gravitino.Configs.ENTITY_RELATIONAL_STORE;
-import static org.apache.gravitino.Configs.ENTITY_SERDE;
 import static org.apache.gravitino.Configs.ENTITY_STORE;
 import static org.apache.gravitino.Configs.RELATIONAL_ENTITY_STORE;
 import static org.apache.gravitino.Configs.STORE_DELETE_AFTER_TIME;
@@ -72,6 +70,7 @@ import org.apache.gravitino.meta.AuditInfo;
 import org.apache.gravitino.meta.CatalogEntity;
 import org.apache.gravitino.storage.IdGenerator;
 import org.apache.gravitino.storage.RandomIdGenerator;
+import org.apache.gravitino.storage.relational.helper.CatalogIds;
 import org.apache.gravitino.storage.relational.service.CatalogMetaService;
 import org.apache.gravitino.storage.relational.service.MetalakeMetaService;
 import org.apache.kafka.common.config.TopicConfig;
@@ -117,6 +116,17 @@ public class TestKafkaCatalogOperations extends KafkaClusterEmbedded {
         public PropertiesMetadata topicPropertiesMetadata() throws UnsupportedOperationException {
           return TOPIC_PROPERTIES_METADATA;
         }
+
+        @Override
+        public PropertiesMetadata modelPropertiesMetadata() throws UnsupportedOperationException {
+          throw new UnsupportedOperationException("Not supported");
+        }
+
+        @Override
+        public PropertiesMetadata modelVersionPropertiesMetadata()
+            throws UnsupportedOperationException {
+          throw new UnsupportedOperationException("Does not support model version properties");
+        }
       };
   private static EntityStore store;
   private static IdGenerator idGenerator;
@@ -126,12 +136,6 @@ public class TestKafkaCatalogOperations extends KafkaClusterEmbedded {
   @BeforeAll
   public static void setUp() {
     Config config = Mockito.mock(Config.class);
-    Mockito.when(config.get(ENTITY_STORE)).thenReturn("kv");
-    Mockito.when(config.get(ENTITY_KV_STORE)).thenReturn(DEFAULT_ENTITY_KV_STORE);
-    Mockito.when(config.get(Configs.ENTITY_SERDE)).thenReturn("proto");
-    Mockito.when(config.get(ENTITY_KV_ROCKSDB_BACKEND_PATH)).thenReturn(STORE_PATH);
-
-    Assertions.assertEquals(STORE_PATH, config.get(ENTITY_KV_ROCKSDB_BACKEND_PATH));
     Mockito.when(config.get(STORE_TRANSACTION_MAX_SKEW_TIME)).thenReturn(1000L);
     Mockito.when(config.get(STORE_DELETE_AFTER_TIME)).thenReturn(20 * 60 * 1000L);
 
@@ -144,6 +148,8 @@ public class TestKafkaCatalogOperations extends KafkaClusterEmbedded {
     when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_USER)).thenReturn("gravitino");
     when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_PASSWORD)).thenReturn("gravitino");
     when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_DRIVER)).thenReturn("org.h2.Driver");
+    Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_MAX_CONNECTIONS)).thenReturn(100);
+    Mockito.when(config.get(ENTITY_RELATIONAL_JDBC_BACKEND_WAIT_MILLISECONDS)).thenReturn(1000L);
 
     File f = FileUtils.getFile(STORE_PATH);
     f.deleteOnExit();
@@ -151,7 +157,13 @@ public class TestKafkaCatalogOperations extends KafkaClusterEmbedded {
     when(config.get(VERSION_RETENTION_COUNT)).thenReturn(1L);
     when(config.get(STORE_TRANSACTION_MAX_SKEW_TIME)).thenReturn(1000L);
     when(config.get(STORE_DELETE_AFTER_TIME)).thenReturn(20 * 60 * 1000L);
-    when(config.get(ENTITY_SERDE)).thenReturn("proto");
+    // Fix cache config for test
+    Mockito.when(config.get(Configs.CACHE_ENABLED)).thenReturn(true);
+    Mockito.when(config.get(Configs.CACHE_MAX_ENTRIES)).thenReturn(10_000);
+    Mockito.when(config.get(Configs.CACHE_EXPIRATION_TIME)).thenReturn(3_600_000L);
+    Mockito.when(config.get(Configs.CACHE_WEIGHER_ENABLED)).thenReturn(true);
+    Mockito.when(config.get(Configs.CACHE_STATS_ENABLED)).thenReturn(false);
+    Mockito.when(config.get(Configs.CACHE_IMPLEMENTATION)).thenReturn("caffeine");
 
     // Mock
     MetalakeMetaService metalakeMetaService = MetalakeMetaService.getInstance();
@@ -163,6 +175,9 @@ public class TestKafkaCatalogOperations extends KafkaClusterEmbedded {
     doReturn(1L)
         .when(spyCatalogMetaService)
         .getCatalogIdByMetalakeIdAndName(Mockito.anyLong(), Mockito.anyString());
+    doReturn(new CatalogIds(1L, 1L))
+        .when(spyCatalogMetaService)
+        .getCatalogIdByMetalakeAndCatalogName(Mockito.anyString(), Mockito.anyString());
 
     MockedStatic<MetalakeMetaService> metalakeMetaServiceMockedStatic =
         Mockito.mockStatic(MetalakeMetaService.class);

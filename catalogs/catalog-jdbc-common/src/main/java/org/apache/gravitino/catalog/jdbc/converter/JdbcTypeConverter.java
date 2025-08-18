@@ -29,16 +29,19 @@ public abstract class JdbcTypeConverter
   public static final String TIMESTAMP = "timestamp";
   public static final String VARCHAR = "varchar";
   public static final String TEXT = "text";
+  public static final int PRECISION_SECOND = 0;
 
   public static class JdbcTypeBean {
     /** Data type name. */
     private String typeName;
 
     /** Column size. For example: 20 in varchar (20) and 10 in decimal (10,2). */
-    private String columnSize;
+    private Integer columnSize;
 
     /** Scale. For example: 2 in decimal (10,2). */
-    private String scale;
+    private Integer scale;
+
+    private Integer datetimePrecision;
 
     public JdbcTypeBean(String typeName) {
       this.typeName = typeName;
@@ -52,20 +55,28 @@ public abstract class JdbcTypeConverter
       this.typeName = typeName;
     }
 
-    public String getColumnSize() {
+    public Integer getColumnSize() {
       return columnSize;
     }
 
-    public void setColumnSize(String columnSize) {
+    public void setColumnSize(Integer columnSize) {
       this.columnSize = columnSize;
     }
 
-    public String getScale() {
+    public Integer getScale() {
       return scale;
     }
 
-    public void setScale(String scale) {
+    public void setScale(Integer scale) {
       this.scale = scale;
+    }
+
+    public Integer getDatetimePrecision() {
+      return datetimePrecision;
+    }
+
+    public void setDatetimePrecision(Integer datetimePrecision) {
+      this.datetimePrecision = datetimePrecision;
     }
 
     @Override
@@ -75,12 +86,13 @@ public abstract class JdbcTypeConverter
       JdbcTypeBean typeBean = (JdbcTypeBean) o;
       return Objects.equals(typeName, typeBean.typeName)
           && Objects.equals(columnSize, typeBean.columnSize)
-          && Objects.equals(scale, typeBean.scale);
+          && Objects.equals(scale, typeBean.scale)
+          && Objects.equals(datetimePrecision, typeBean.datetimePrecision);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hash(typeName, columnSize, scale);
+      return Objects.hash(typeName, columnSize, scale, datetimePrecision);
     }
 
     @Override
@@ -94,6 +106,9 @@ public abstract class JdbcTypeConverter
           + '\''
           + ", scale='"
           + scale
+          + '\''
+          + ", datetimePrecision='"
+          + datetimePrecision
           + '\''
           + '}';
     }

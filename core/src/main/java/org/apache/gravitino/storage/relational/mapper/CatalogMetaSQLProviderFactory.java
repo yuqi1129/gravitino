@@ -20,6 +20,7 @@
 package org.apache.gravitino.storage.relational.mapper;
 
 import com.google.common.collect.ImmutableMap;
+import java.util.List;
 import java.util.Map;
 import org.apache.gravitino.storage.relational.JDBCBackend.JDBCBackendType;
 import org.apache.gravitino.storage.relational.mapper.provider.base.CatalogMetaBaseSQLProvider;
@@ -52,8 +53,21 @@ public class CatalogMetaSQLProviderFactory {
 
   static class CatalogMetaH2Provider extends CatalogMetaBaseSQLProvider {}
 
+  public static String listCatalogPOsByMetalakeName(@Param("metalakeName") String metalakeName) {
+    return getProvider().listCatalogPOsByMetalakeName(metalakeName);
+  }
+
   public static String listCatalogPOsByMetalakeId(@Param("metalakeId") Long metalakeId) {
     return getProvider().listCatalogPOsByMetalakeId(metalakeId);
+  }
+
+  public static String listCatalogPOsByCatalogIds(@Param("catalogIds") List<Long> catalogIds) {
+    return getProvider().listCatalogPOsByCatalogIds(catalogIds);
+  }
+
+  public static String selectCatalogIdByName(
+      @Param("metalakeName") String metalakeName, @Param("catalogName") String catalogName) {
+    return getProvider().selectCatalogIdByName(metalakeName, catalogName);
   }
 
   public static String selectCatalogIdByMetalakeIdAndName(
@@ -64,6 +78,16 @@ public class CatalogMetaSQLProviderFactory {
   public static String selectCatalogMetaByMetalakeIdAndName(
       @Param("metalakeId") Long metalakeId, @Param("catalogName") String name) {
     return getProvider().selectCatalogMetaByMetalakeIdAndName(metalakeId, name);
+  }
+
+  public static String selectCatalogMetaByName(
+      @Param("metalakeName") String metalakeName, @Param("catalogName") String catalogName) {
+    return getProvider().selectCatalogMetaByName(metalakeName, catalogName);
+  }
+
+  public static String selectCatalogIdByMetalakeNameAndCatalogName(
+      @Param("metalakeName") String metalakeName, @Param("catalogName") String catalogName) {
+    return getProvider().selectCatalogIdByMetalakeNameAndCatalogName(metalakeName, catalogName);
   }
 
   public static String selectCatalogMetaById(@Param("catalogId") Long catalogId) {

@@ -39,7 +39,7 @@ import org.apache.gravitino.file.Fileset;
 import org.apache.gravitino.integration.test.container.ContainerSuite;
 import org.apache.gravitino.integration.test.container.HiveContainer;
 import org.apache.gravitino.integration.test.container.KafkaContainer;
-import org.apache.gravitino.integration.test.util.AbstractIT;
+import org.apache.gravitino.integration.test.util.BaseIT;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.types.Types;
 import org.apache.gravitino.utils.RandomNameUtils;
@@ -52,7 +52,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 @Tag("gravitino-docker-test")
-public class OwnerIT extends AbstractIT {
+public class OwnerIT extends BaseIT {
 
   private static final Logger LOG = LoggerFactory.getLogger(OwnerIT.class);
 
@@ -61,12 +61,15 @@ public class OwnerIT extends AbstractIT {
   private static String kafkaBootstrapServers;
 
   @BeforeAll
-  public static void startIntegrationTest() throws Exception {
+  public void startIntegrationTest() throws Exception {
     Map<String, String> configs = Maps.newHashMap();
     configs.put(Configs.ENABLE_AUTHORIZATION.getKey(), String.valueOf(true));
     configs.put(Configs.SERVICE_ADMINS.getKey(), AuthConstants.ANONYMOUS_USER);
+    configs.put(
+        Configs.AUTHORIZATION_IMPL.getKey(),
+        "org.apache.gravitino.server.authorization.PassThroughAuthorizer");
     registerCustomConfigs(configs);
-    AbstractIT.startIntegrationTest();
+    super.startIntegrationTest();
 
     containerSuite.startHiveContainer();
     hmsUri =
@@ -84,7 +87,7 @@ public class OwnerIT extends AbstractIT {
   }
 
   @AfterAll
-  public static void tearDown() {
+  public void tearDown() {
     if (client != null) {
       client.close();
       client = null;
@@ -168,8 +171,8 @@ public class OwnerIT extends AbstractIT {
     // Clean up
     catalog.asFilesetCatalog().dropFileset(fileIdent);
     catalog.asSchemas().dropSchema("schema_owner", true);
-    metalake.dropCatalog(catalogNameA);
-    client.dropMetalake(metalakeNameA);
+    metalake.dropCatalog(catalogNameA, true);
+    client.dropMetalake(metalakeNameA, true);
   }
 
   @Test
@@ -219,8 +222,8 @@ public class OwnerIT extends AbstractIT {
 
     // Clean up
     catalogB.asTopicCatalog().dropTopic(topicIdent);
-    metalake.dropCatalog(catalogNameB);
-    client.dropMetalake(metalakeNameB);
+    metalake.dropCatalog(catalogNameB, true);
+    client.dropMetalake(metalakeNameB, true);
   }
 
   @Test
@@ -255,7 +258,7 @@ public class OwnerIT extends AbstractIT {
 
     // Clean up
     metalake.deleteRole("role_owner");
-    client.dropMetalake(metalakeNameC);
+    client.dropMetalake(metalakeNameC, true);
   }
 
   @Test
@@ -320,8 +323,64 @@ public class OwnerIT extends AbstractIT {
     // Clean up
     catalog.asTableCatalog().dropTable(tableIdent);
     catalog.asSchemas().dropSchema("schema_owner", true);
-    metalake.dropCatalog(catalogNameD);
-    client.dropMetalake(metalakeNameD);
+    metalake.dropCatalog(catalogNameD, true);
+    client.dropMetalake(metalakeNameD, true);
+  }
+
+  @Test
+  public void testCreateModel() {
+    String metalakeNameF = RandomNameUtils.genRandomName("metalakeF");
+    GravitinoMetalake metalake =
+        client.createMetalake(metalakeNameF, "metalake F comment", Collections.emptyMap());
+    String catalogNameF = RandomNameUtils.genRandomName("catalogF");
+    Map<String, String> properties = Maps.newHashMap();
+    Catalog catalog =
+        metalake.createCatalog(catalogNameF, Catalog.Type.MODEL, "catalog comment", properties);
+
+    NameIdentifier modelIdent = NameIdentifier.of("schema_owner", "model_owner");
+    catalog.asSchemas().createSchema("schema_owner", "comment", Collections.emptyMap());
+    catalog.asModelCatalog().registerModel(modelIdent, "comment", Collections.emptyMap());
+
+    MetadataObject metalakeObject =
+        MetadataObjects.of(null, metalakeNameF, MetadataObject.Type.METALAKE);
+    Owner owner = metalake.getOwner(metalakeObject).get();
+    Assertions.assertEquals(AuthConstants.ANONYMOUS_USER, owner.name());
+    Assertions.assertEquals(Owner.Type.USER, owner.type());
+
+    MetadataObject catalogObject =
+        MetadataObjects.of(Lists.newArrayList(catalogNameF), MetadataObject.Type.CATALOG);
+    owner = metalake.getOwner(catalogObject).get();
+    Assertions.assertEquals(AuthConstants.ANONYMOUS_USER, owner.name());
+    Assertions.assertEquals(Owner.Type.USER, owner.type());
+
+    MetadataObject schemaObject =
+        MetadataObjects.of(
+            Lists.newArrayList(catalogNameF, "schema_owner"), MetadataObject.Type.SCHEMA);
+    owner = metalake.getOwner(schemaObject).get();
+    Assertions.assertEquals(AuthConstants.ANONYMOUS_USER, owner.name());
+    Assertions.assertEquals(Owner.Type.USER, owner.type());
+
+    MetadataObject modelObject =
+        MetadataObjects.of(
+            Lists.newArrayList(catalogNameF, "schema_owner", "model_owner"),
+            MetadataObject.Type.MODEL);
+    owner = metalake.getOwner(modelObject).get();
+    Assertions.assertEquals(AuthConstants.ANONYMOUS_USER, owner.name());
+    Assertions.assertEquals(Owner.Type.USER, owner.type());
+
+    // Set another owner
+    String anotherUser = "another";
+    metalake.addUser(anotherUser);
+    metalake.setOwner(modelObject, anotherUser, Owner.Type.USER);
+    owner = metalake.getOwner(modelObject).get();
+    Assertions.assertEquals(anotherUser, owner.name());
+    Assertions.assertEquals(Owner.Type.USER, owner.type());
+
+    // Clean up
+    catalog.asModelCatalog().deleteModel(modelIdent);
+    catalog.asSchemas().dropSchema("schema_owner", true);
+    metalake.dropCatalog(catalogNameF, true);
+    client.dropMetalake(metalakeNameF, true);
   }
 
   @Test
@@ -352,6 +411,6 @@ public class OwnerIT extends AbstractIT {
         () -> metalake.setOwner(metalakeObject, "not-existed", Owner.Type.USER));
 
     // Cleanup
-    client.dropMetalake(metalakeNameE);
+    client.dropMetalake(metalakeNameE, true);
   }
 }

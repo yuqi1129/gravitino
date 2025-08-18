@@ -27,18 +27,23 @@ import org.apache.gravitino.MetadataObjects;
 import org.apache.gravitino.Namespace;
 import org.apache.gravitino.authorization.SupportsRoles;
 import org.apache.gravitino.dto.messaging.TopicDTO;
+import org.apache.gravitino.exceptions.NoSuchPolicyException;
 import org.apache.gravitino.exceptions.NoSuchTagException;
+import org.apache.gravitino.exceptions.PolicyAlreadyAssociatedException;
 import org.apache.gravitino.messaging.Topic;
+import org.apache.gravitino.policy.Policy;
+import org.apache.gravitino.policy.SupportsPolicies;
 import org.apache.gravitino.tag.SupportsTags;
 import org.apache.gravitino.tag.Tag;
 
 /** Represents a generic topic. */
-class GenericTopic implements Topic, SupportsTags, SupportsRoles {
+class GenericTopic implements Topic, SupportsTags, SupportsRoles, SupportsPolicies {
 
   private final TopicDTO topicDTO;
 
   private final MetadataObjectTagOperations objectTagOperations;
   private final MetadataObjectRoleOperations objectRoleOperations;
+  private final MetadataObjectPolicyOperations objectPolicyOperations;
 
   GenericTopic(TopicDTO topicDTO, RESTClient restClient, Namespace topicNs) {
     this.topicDTO = topicDTO;
@@ -49,11 +54,13 @@ class GenericTopic implements Topic, SupportsTags, SupportsRoles {
         new MetadataObjectTagOperations(topicNs.level(0), topicObject, restClient);
     this.objectRoleOperations =
         new MetadataObjectRoleOperations(topicNs.level(0), topicObject, restClient);
+    this.objectPolicyOperations =
+        new MetadataObjectPolicyOperations(topicNs.level(0), topicObject, restClient);
   }
 
   @Override
   public Audit auditInfo() {
-    return null;
+    return topicDTO.auditInfo();
   }
 
   @Override
@@ -73,6 +80,11 @@ class GenericTopic implements Topic, SupportsTags, SupportsRoles {
 
   @Override
   public SupportsTags supportsTags() {
+    return this;
+  }
+
+  @Override
+  public SupportsPolicies supportsPolicies() {
     return this;
   }
 
@@ -99,6 +111,27 @@ class GenericTopic implements Topic, SupportsTags, SupportsRoles {
   @Override
   public String[] associateTags(String[] tagsToAdd, String[] tagsToRemove) {
     return objectTagOperations.associateTags(tagsToAdd, tagsToRemove);
+  }
+
+  @Override
+  public String[] listPolicies() {
+    return objectPolicyOperations.listPolicies();
+  }
+
+  @Override
+  public Policy[] listPolicyInfos() {
+    return objectPolicyOperations.listPolicyInfos();
+  }
+
+  @Override
+  public Policy getPolicy(String name) throws NoSuchPolicyException {
+    return objectPolicyOperations.getPolicy(name);
+  }
+
+  @Override
+  public String[] associatePolicies(String[] policiesToAdd, String[] policiesToRemove)
+      throws PolicyAlreadyAssociatedException {
+    return objectPolicyOperations.associatePolicies(policiesToAdd, policiesToRemove);
   }
 
   @Override

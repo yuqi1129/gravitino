@@ -18,13 +18,15 @@
  */
 package org.apache.gravitino.hook;
 
+import java.util.List;
 import java.util.Map;
 import org.apache.gravitino.Entity;
 import org.apache.gravitino.GravitinoEnv;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Namespace;
+import org.apache.gravitino.authorization.AuthorizationUtils;
 import org.apache.gravitino.authorization.Owner;
-import org.apache.gravitino.authorization.OwnerManager;
+import org.apache.gravitino.authorization.OwnerDispatcher;
 import org.apache.gravitino.catalog.TableDispatcher;
 import org.apache.gravitino.exceptions.NoSuchSchemaException;
 import org.apache.gravitino.exceptions.NoSuchTableException;
@@ -72,12 +74,16 @@ public class TableHookDispatcher implements TableDispatcher {
       SortOrder[] sortOrders,
       Index[] indexes)
       throws NoSuchSchemaException, TableAlreadyExistsException {
+    // Check whether the current user exists or not
+    AuthorizationUtils.checkCurrentUser(
+        ident.namespace().level(0), PrincipalUtils.getCurrentUserName());
+
     Table table =
         dispatcher.createTable(
             ident, columns, comment, properties, partitions, distribution, sortOrders, indexes);
 
     // Set the creator as the owner of the table.
-    OwnerManager ownerManager = GravitinoEnv.getInstance().ownerManager();
+    OwnerDispatcher ownerManager = GravitinoEnv.getInstance().ownerDispatcher();
     if (ownerManager != null) {
       ownerManager.setOwner(
           ident.namespace().level(0),
@@ -91,17 +97,44 @@ public class TableHookDispatcher implements TableDispatcher {
   @Override
   public Table alterTable(NameIdentifier ident, TableChange... changes)
       throws NoSuchTableException, IllegalArgumentException {
-    return dispatcher.alterTable(ident, changes);
+    TableChange.RenameTable lastRenameChange = null;
+    List<String> locations = null;
+    for (TableChange change : changes) {
+      if (change instanceof TableChange.RenameTable) {
+        lastRenameChange = (TableChange.RenameTable) change;
+      }
+    }
+    if (lastRenameChange != null) {
+      locations = AuthorizationUtils.getMetadataObjectLocation(ident, Entity.EntityType.TABLE);
+    }
+    Table alteredTable = dispatcher.alterTable(ident, changes);
+
+    if (lastRenameChange != null) {
+      AuthorizationUtils.authorizationPluginRenamePrivileges(
+          ident, Entity.EntityType.TABLE, lastRenameChange.getNewName(), locations);
+    }
+
+    return alteredTable;
   }
 
   @Override
   public boolean dropTable(NameIdentifier ident) {
-    return dispatcher.dropTable(ident);
+    List<String> locations =
+        AuthorizationUtils.getMetadataObjectLocation(ident, Entity.EntityType.TABLE);
+    boolean dropped = dispatcher.dropTable(ident);
+    AuthorizationUtils.authorizationPluginRemovePrivileges(
+        ident, Entity.EntityType.TABLE, locations);
+    return dropped;
   }
 
   @Override
   public boolean purgeTable(NameIdentifier ident) throws UnsupportedOperationException {
-    return dispatcher.purgeTable(ident);
+    List<String> locations =
+        AuthorizationUtils.getMetadataObjectLocation(ident, Entity.EntityType.TABLE);
+    boolean purged = dispatcher.purgeTable(ident);
+    AuthorizationUtils.authorizationPluginRemovePrivileges(
+        ident, Entity.EntityType.TABLE, locations);
+    return purged;
   }
 
   @Override

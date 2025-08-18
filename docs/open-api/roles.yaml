@@ -75,15 +75,15 @@ paths:
                 RoleResponse:
                   $ref: "#/components/examples/RoleResponse"
 
-        "404":
-          description: Not Found - The specified securable object does not exist in the specified metalake
+        "400":
+          description: Parameter is invalid - The specified securable object is invalid the specified metalake
           content:
             application/vnd.gravitino.v1+json:
               schema:
                 $ref: "./openapi.yaml#/components/schemas/ErrorModel"
               examples:
                 NoSuchMetadataObjectException:
-                  $ref: "#/components/examples/NoSuchMetadataObjectException"
+                  $ref: "#/components/examples/IllegalMetadataObjectException"
 
         "409":
           description: Conflict - The target role already exists in the specified metalake
@@ -148,7 +148,7 @@ paths:
   /metalakes/{metalake}/objects/{metadataObjectType}/{metadataObjectFullName}/roles:
     parameters:
       - $ref: "./openapi.yaml#/components/parameters/metalake"
-      - $ref: "./openapi.yaml#/components/parameters/metadataObjectType"
+      - $ref: "#/components/parameters/metadataObjectTypeOfRole"
       - $ref: "./openapi.yaml#/components/parameters/metadataObjectFullName"
 
     get:
@@ -360,13 +360,24 @@ components:
         ]
       }
 
+    IllegalMetadataObjectException:
+      value: {
+        "code": 1001,
+        "type": "IllegalMetadataObjectException",
+        "message": "Metadata object does not exist",
+        "stack": [
+          "org.apache.gravitino.exceptions.IllegalMetadataObjectException: Metadata object does not exist",
+          "..."
+        ]
+      }
+
     NoSuchMetadataObjectException:
       value: {
         "code": 1003,
         "type": "NoSuchMetadataObjectException",
         "message": "Metadata object does not exist",
         "stack": [
-          "org.apache.gravitino.exceptions.NoSuchUserException: Metadata object does not exist",
+          "org.apache.gravitino.exceptions.NoSuchMetadataObjectException: Metadata object does not exist",
           "..."
         ]
       }
@@ -376,3 +387,18 @@ components:
         "code": 0,
         "names": [ "user1", "user2" ]
       }
+  parameters:
+    metadataObjectTypeOfRole:
+      name: metadataObjectType
+      in: path
+      description: The type of the metadata object
+      required: true
+      schema:
+        type: string
+        enum:
+          - "METALAKE"
+          - "CATALOG"
+          - "SCHEMA"
+          - "TABLE"
+          - "FILESET"
+          - "TOPIC"

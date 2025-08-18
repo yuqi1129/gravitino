@@ -20,9 +20,16 @@
 package org.apache.gravitino.listener;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
+import org.apache.gravitino.exceptions.ForbiddenException;
 import org.apache.gravitino.listener.api.EventListenerPlugin;
+import org.apache.gravitino.listener.api.event.BaseEvent;
 import org.apache.gravitino.listener.api.event.Event;
+import org.apache.gravitino.listener.api.event.PreEvent;
+import org.apache.gravitino.listener.api.event.SupportsChangingPreEvent;
 
 /**
  * The {@code EventBus} class serves as a mechanism to dispatch events to registered listeners. It
@@ -30,30 +37,55 @@ import org.apache.gravitino.listener.api.event.Event;
  * within its internal management.
  */
 public class EventBus {
-  // Holds instances of EventListenerPlugin. These instances can either be
-  // EventListenerPluginWrapper,
-  // which are meant for synchronous event listening, or AsyncQueueListener, designed for
-  // asynchronous event processing.
-  private final List<EventListenerPlugin> postEventListeners;
+  /**
+   * Holds all instances of {@link EventListenerPlugin}. These instances can either be {@link
+   * EventListenerPluginWrapper} which are used for synchronous event process, or {@link
+   * AsyncQueueListener} for asynchronous event processing.
+   */
+  private final List<EventListenerPlugin> eventListeners;
+
+  /**
+   * Holds instances of {@link AsyncQueueListener}, mainly used to check the status of async queue,
+   * like {@link #isHighWatermark()}.
+   */
+  private final List<AsyncQueueListener> asyncQueueListeners;
 
   /**
    * Constructs an EventBus with a predefined list of event listeners.
    *
-   * @param postEventListeners A list of {@link EventListenerPlugin} instances that are to be
-   *     registered with this EventBus for event dispatch.
+   * @param eventListeners A list of {@link EventListenerPlugin} instances that are to be registered
+   *     with this EventBus for event dispatch.
    */
-  public EventBus(List<EventListenerPlugin> postEventListeners) {
-    this.postEventListeners = postEventListeners;
+  public EventBus(List<EventListenerPlugin> eventListeners) {
+    this.eventListeners = eventListeners;
+    this.asyncQueueListeners =
+        eventListeners.stream()
+            .filter(AsyncQueueListener.class::isInstance)
+            .map(AsyncQueueListener.class::cast)
+            .collect(Collectors.toList());
   }
 
   /**
    * Dispatches an event to all registered listeners. Each listener processes the event based on its
    * implementation, which could be either synchronous or asynchronous.
    *
-   * @param event The event to be dispatched to all registered listeners.
+   * @param baseEvent The event to be dispatched to all registered listeners.
+   * @return an Optional containing the transformed pre-event if it implements {@link
+   *     SupportsChangingPreEvent}, otherwise {@link Optional#empty() empty}
    */
-  public void dispatchEvent(Event event) {
-    postEventListeners.forEach(postEventListener -> postEventListener.onPostEvent(event));
+  public Optional<BaseEvent> dispatchEvent(BaseEvent baseEvent) {
+    if (baseEvent instanceof PreEvent) {
+      return dispatchAndTransformPreEvent((PreEvent) baseEvent);
+    } else if (baseEvent instanceof Event) {
+      dispatchPostEvent((Event) baseEvent);
+      return Optional.empty();
+    } else {
+      throw new RuntimeException("Unknown event type:" + baseEvent.getClass().getSimpleName());
+    }
+  }
+
+  public boolean isHighWatermark() {
+    return asyncQueueListeners.stream().anyMatch(AsyncQueueListener::isHighWatermark);
   }
 
   /**
@@ -64,7 +96,42 @@ public class EventBus {
    *     EventBus.
    */
   @VisibleForTesting
-  List<EventListenerPlugin> getPostEventListeners() {
-    return postEventListeners;
+  public List<EventListenerPlugin> getEventListeners() {
+    return eventListeners;
+  }
+
+  private void dispatchPostEvent(Event postEvent) {
+    eventListeners.forEach(eventListener -> eventListener.onPostEvent(postEvent));
+  }
+
+  private Optional<BaseEvent> dispatchAndTransformPreEvent(PreEvent originalEvent)
+      throws ForbiddenException {
+    boolean supportsChangePreEvent = originalEvent instanceof SupportsChangingPreEvent;
+    PreEvent preEvent;
+    if (supportsChangePreEvent) {
+      preEvent = (PreEvent) transformPreEvent((SupportsChangingPreEvent) originalEvent);
+    } else {
+      preEvent = originalEvent;
+    }
+    eventListeners.forEach(eventListener -> eventListener.onPreEvent(preEvent));
+    return supportsChangePreEvent ? Optional.of(preEvent) : Optional.empty();
+  }
+
+  private SupportsChangingPreEvent transformPreEvent(SupportsChangingPreEvent preEvent) {
+    SupportsChangingPreEvent tmpPreEvent = preEvent;
+    for (EventListenerPlugin eventListener : eventListeners) {
+      tmpPreEvent = eventListener.transformPreEvent(tmpPreEvent);
+      Preconditions.checkNotNull(
+          tmpPreEvent,
+          String.format("%s transformPreEvent return null", getListenerName(eventListener)));
+    }
+    return tmpPreEvent;
+  }
+
+  private String getListenerName(EventListenerPlugin eventListener) {
+    if (eventListener instanceof EventListenerPluginWrapper) {
+      return ((EventListenerPluginWrapper) eventListener).listenerName();
+    }
+    return eventListener.getClass().getSimpleName();
   }
 }

@@ -20,7 +20,7 @@ package org.apache.gravitino.iceberg.integration.test;
 
 import java.util.HashMap;
 import java.util.Map;
-import org.apache.gravitino.iceberg.common.IcebergCatalogBackend;
+import org.apache.gravitino.catalog.lakehouse.iceberg.IcebergCatalogBackend;
 import org.apache.gravitino.iceberg.common.IcebergConfig;
 import org.apache.gravitino.integration.test.container.ContainerSuite;
 import org.apache.gravitino.integration.test.container.HiveContainer;
@@ -33,6 +33,11 @@ import org.junit.jupiter.api.TestInstance.Lifecycle;
 @TestInstance(Lifecycle.PER_CLASS)
 public class IcebergRESTHiveCatalogIT extends IcebergRESTServiceIT {
   protected static final ContainerSuite containerSuite = ContainerSuite.getInstance();
+
+  @Override
+  protected boolean supportsNestedNamespaces() {
+    return false;
+  }
 
   public IcebergRESTHiveCatalogIT() {
     catalogType = IcebergCatalogBackend.HIVE;

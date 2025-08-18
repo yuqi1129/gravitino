@@ -24,14 +24,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import lombok.Getter;
+import org.apache.gravitino.exceptions.ForbiddenException;
 import org.apache.gravitino.listener.api.EventListenerPlugin;
 import org.apache.gravitino.listener.api.event.Event;
+import org.apache.gravitino.listener.api.event.PreEvent;
+import org.apache.gravitino.listener.api.event.SupportsChangingPreEvent;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Assertions;
 
 public class DummyEventListener implements EventListenerPlugin {
   Map<String, String> properties;
-  @Getter LinkedList<Event> events = new LinkedList<>();
+  @Getter LinkedList<Event> postEvents = new LinkedList<>();
+  @Getter LinkedList<PreEvent> preEvents = new LinkedList<>();
 
   @Override
   public void init(Map<String, String> properties) {
@@ -46,7 +50,33 @@ public class DummyEventListener implements EventListenerPlugin {
 
   @Override
   public void onPostEvent(Event event) {
-    this.events.add(event);
+    postEvents.add(event);
+  }
+
+  public void clear() {
+    postEvents.clear();
+    preEvents.clear();
+  }
+
+  @Override
+  public SupportsChangingPreEvent transformPreEvent(
+      SupportsChangingPreEvent supportsChangingPreEvent) {
+    if (supportsChangingPreEvent instanceof CountingPreEvent) {
+      PreEvent preEvent = (PreEvent) supportsChangingPreEvent;
+      return new CountingPreEvent(
+          preEvent.user(), preEvent.identifier(), ((CountingPreEvent) preEvent).count() + 1);
+    }
+    return supportsChangingPreEvent;
+  }
+
+  @Override
+  public void onPreEvent(PreEvent preEvent) {
+    if (preEvent.equals(TestEventListenerManager.DUMMY_FORBIDDEN_PRE_EVENT_INSTANCE)) {
+      throw new ForbiddenException("");
+    } else if (preEvent.equals(TestEventListenerManager.DUMMY_EXCEPTION_PRE_EVENT_INSTANCE)) {
+      throw new RuntimeException("");
+    }
+    preEvents.add(preEvent);
   }
 
   @Override
@@ -54,18 +84,31 @@ public class DummyEventListener implements EventListenerPlugin {
     return Mode.SYNC;
   }
 
-  public Event popEvent() {
-    Assertions.assertTrue(events.size() > 0, "No events to pop");
-    return events.removeLast();
+  public Event popPostEvent() {
+    Assertions.assertTrue(postEvents.size() > 0, "No events to pop");
+    return postEvents.removeLast();
+  }
+
+  public PreEvent popPreEvent() {
+    Assertions.assertTrue(preEvents.size() > 0, "No events to pop");
+    return preEvents.removeLast();
   }
 
   public static class DummyAsyncEventListener extends DummyEventListener {
-    public List<Event> tryGetEvents() {
+    public List<Event> tryGetPostEvents() {
       Awaitility.await()
           .atMost(20, TimeUnit.SECONDS)
           .pollInterval(10, TimeUnit.MILLISECONDS)
-          .until(() -> getEvents().size() > 0);
-      return getEvents();
+          .until(() -> getPostEvents().size() > 0);
+      return getPostEvents();
+    }
+
+    public List<PreEvent> tryGetPreEvents() {
+      Awaitility.await()
+          .atMost(20, TimeUnit.SECONDS)
+          .pollInterval(10, TimeUnit.MILLISECONDS)
+          .until(() -> getPreEvents().size() > 0);
+      return getPreEvents();
     }
 
     @Override

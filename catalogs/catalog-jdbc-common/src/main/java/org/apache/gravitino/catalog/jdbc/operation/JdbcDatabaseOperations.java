@@ -107,6 +107,25 @@ public abstract class JdbcDatabaseOperations implements DatabaseOperation {
     }
   }
 
+  @Override
+  public boolean exist(String databaseName) {
+    try (final Connection connection = this.dataSource.getConnection()) {
+      String query = generateDatabaseExistSql(databaseName);
+      try (Statement statement = connection.createStatement()) {
+        try (ResultSet resultSet = statement.executeQuery(query)) {
+          return resultSet.next();
+        }
+      }
+    } catch (SQLException sqlException) {
+      throw this.exceptionMapper.toGravitinoException(sqlException);
+    }
+  }
+
+  protected String generateDatabaseExistSql(String databaseName) {
+    return String.format(
+        "SELECT * FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '%s'", databaseName);
+  }
+
   protected void dropDatabase(String databaseName, boolean cascade) {
     try (final Connection connection = getConnection()) {
       JdbcConnectorUtils.executeUpdate(connection, generateDropDatabaseSql(databaseName, cascade));
@@ -176,16 +195,11 @@ public abstract class JdbcDatabaseOperations implements DatabaseOperation {
    */
   @Override
   public JdbcSchema load(String databaseName) throws NoSuchSchemaException {
-    List<String> allDatabases = listDatabases();
-    String dbName =
-        allDatabases.stream()
-            .filter(db -> db.equals(databaseName))
-            .findFirst()
-            .orElseThrow(
-                () -> new NoSuchSchemaException("Database %s could not be found", databaseName));
-
+    if (!exist(databaseName)) {
+      throw new NoSuchSchemaException("Database %s could not be found", databaseName);
+    }
     return JdbcSchema.builder()
-        .withName(dbName)
+        .withName(databaseName)
         .withProperties(ImmutableMap.of())
         .withAuditInfo(AuditInfo.EMPTY)
         .build();
@@ -205,9 +219,17 @@ public abstract class JdbcDatabaseOperations implements DatabaseOperation {
     return createSysDatabaseNameSet().contains(dbName.toLowerCase(Locale.ROOT));
   }
 
-  /** Check whether support setting schema comment. */
+  /**
+   * Check whether support setting schema comment.
+   *
+   * @return true if schema comments are supported; false otherwise.
+   */
   protected abstract boolean supportSchemaComment();
 
-  /** Create a set of system database names. */
+  /**
+   * Create a set of system database names.
+   *
+   * @return a set of system database names in lowercase.
+   */
   protected abstract Set<String> createSysDatabaseNameSet();
 }

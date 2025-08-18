@@ -39,20 +39,46 @@ You can check the relevant data source configuration in
 [data source properties](https://commons.apache.org/proper/commons-dbcp/configuration.html) for
 more details.
 
-Besides the [common catalog properties](./gravitino-server-config.md#gravitino-catalog-properties-configuration), the Doris catalog has the following properties:
+Besides the [common catalog properties](./gravitino-server-config.md#apache-gravitino-catalog-properties-configuration), the Doris catalog has the following properties:
 
-| Configuration item   | Description                                                                                                                                                                                                                                                                                                                                                                                                      | Default value | Required | Since Version |
-|----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------|----------|---------------|
-| `jdbc-url`           | JDBC URL for connecting to the database. For example, `jdbc:mysql://localhost:9030`                                                                                                                                                                                                                                                                                                                              | (none)        | Yes      | 0.5.0         |
-| `jdbc-driver`        | The driver of the JDBC connection. For example, `com.mysql.jdbc.Driver`.                                                                                                                                                                                                                                                                                                                                         | (none)        | Yes      | 0.5.0         |
-| `jdbc-user`          | The JDBC user name.                                                                                                                                                                                                                                                                                                                                                                                              | (none)        | Yes      | 0.5.0         |
-| `jdbc-password`      | The JDBC password.                                                                                                                                                                                                                                                                                                                                                                                               | (none)        | Yes      | 0.5.0         |
-| `jdbc.pool.min-size` | The minimum number of connections in the pool. `2` by default.                                                                                                                                                                                                                                                                                                                                                   | `2`           | No       | 0.5.0         |
-| `jdbc.pool.max-size` | The maximum number of connections in the pool. `10` by default.                                                                                                                                                                                                                                                                                                                                                  | `10`          | No       | 0.5.0         |
-| `jdbc.pool.max-size` | The maximum number of connections in the pool. `10` by default.                                                                                                                                                                                                                                                                                                                                                  | `10`          | No       | 0.5.0         |
-| `replication_num`    | The number of replications for the table. If not specified and the number of backend servers less than 3, then the default value is 1; If not specified and the number of backend servers greater or equals to 3, the default value (3) in Doris server will be used. For more, please see the [doc](https://doris.apache.org/docs/1.2/sql-manual/sql-reference/Data-Definition-Statements/Create/CREATE-TABLE/) | `1` or `3`    | No       | 0.6.0         |
+| Configuration item   | Description                                                                                                                                                                                                                                                                                                                                                                                                      | Default value | Required | Since Version    |
+|----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------|----------|------------------|
+| `jdbc-url`           | JDBC URL for connecting to the database. For example, `jdbc:mysql://localhost:9030`                                                                                                                                                                                                                                                                                                                              | (none)        | Yes      | 0.5.0            |
+| `jdbc-driver`        | The driver of the JDBC connection. For example, `com.mysql.jdbc.Driver`.                                                                                                                                                                                                                                                                                                                                         | (none)        | Yes      | 0.5.0            |
+| `jdbc-user`          | The JDBC user name.                                                                                                                                                                                                                                                                                                                                                                                              | (none)        | Yes      | 0.5.0            |
+| `jdbc-password`      | The JDBC password.                                                                                                                                                                                                                                                                                                                                                                                               | (none)        | Yes      | 0.5.0            |
+| `jdbc.pool.min-size` | The minimum number of connections in the pool. `2` by default.                                                                                                                                                                                                                                                                                                                                                   | `2`           | No       | 0.5.0            |
+| `jdbc.pool.max-size` | The maximum number of connections in the pool. `10` by default.                                                                                                                                                                                                                                                                                                                                                  | `10`          | No       | 0.5.0            |
+| `jdbc.pool.max-size` | The maximum number of connections in the pool. `10` by default.                                                                                                                                                                                                                                                                                                                                                  | `10`          | No       | 0.5.0            |
+| `replication_num`    | The number of replications for the table. If not specified and the number of backend servers less than 3, then the default value is 1; If not specified and the number of backend servers greater or equals to 3, the default value (3) in Doris server will be used. For more, please see the [doc](https://doris.apache.org/docs/1.2/sql-manual/sql-reference/Data-Definition-Statements/Create/CREATE-TABLE/) | `1` or `3`    | No       | 0.6.0-incubating |
+
 Before using the Doris Catalog, you must download the corresponding JDBC driver to the `catalogs/jdbc-doris/libs` directory.
 Gravitino doesn't package the JDBC driver for Doris due to licensing issues.
+
+### Driver Version Compatibility
+
+The Doris catalog includes driver version compatibility checks for datetime precision calculation:
+
+- **MySQL Connector/J versions >= 8.0.16**: Full support for datetime precision calculation
+- **MySQL Connector/J versions < 8.0.16**: Limited support - datetime precision calculation returns `null` with a warning log
+
+This limitation affects the following datetime types:
+- `DATETIME(p)` - datetime precision
+
+When using an unsupported driver version, the system will:
+1. Continue to work normally with default precision (0)
+2. Log a warning message indicating the driver version limitation
+3. Return `null` for precision calculations to avoid incorrect results
+
+**Example warning log:**
+```
+WARN: MySQL driver version mysql-connector-java-8.0.11 is below 8.0.16, 
+columnSize may not be accurate for precision calculation. 
+Returning null for DATETIME type precision. Driver version: mysql-connector-java-8.0.11
+```
+
+**Recommended driver versions:**
+- `mysql-connector-java-8.0.16` or higher
 
 ### Catalog operations
 
@@ -85,28 +111,32 @@ Please refer to
 
 #### Table column types
 
-| Gravitino Type | Doris Type |
-|----------------|------------|
-| `Boolean`      | `Boolean`  |
-| `Byte`         | `TinyInt`  |
-| `Short`        | `SmallInt` |
-| `Integer`      | `Int`      |
-| `Long`         | `BigInt`   |
-| `Float`        | `Float`    |
-| `Double`       | `Double`   |
-| `Decimal`      | `Decimal`  |
-| `Date`         | `Date`     |
-| `Timestamp`    | `Datetime` |
-| `VarChar`      | `VarChar`  |
-| `FixedChar`    | `Char`     |
-| `String`       | `String`   |
+| Gravitino Type   | Doris Type      |
+|------------------|-----------------|
+| `Boolean`        | `Boolean`       |
+| `Byte`           | `TinyInt`       |
+| `Short`          | `SmallInt`      |
+| `Integer`        | `Int`           |
+| `Long`           | `BigInt`        |
+| `Float`          | `Float`         |
+| `Double`         | `Double`        |
+| `Decimal`        | `Decimal`       |
+| `Date`           | `Date`          |
+| `Timestamp[(p)]` | `Datetime[(p)]` |
+| `VarChar`        | `VarChar`       |
+| `FixedChar`      | `Char`          |
+| `String`         | `String`        |
 
-Doris doesn't support Gravitino `Fixed` `Struct` `List` `Map` `Timestamp_tz` `IntervalDay` `IntervalYear` `Union` `UUID` type.
-The data types other than those listed above are mapped to Gravitino's
-**[Unparsed Type](./manage-relational-metadata-using-gravitino.md#unparsed-type)** that
-represents an unresolvable data type since 0.5.0.
 
-#### Table column auto-increment
+Doris doesn't support Gravitino `Fixed` `Timestamp_tz` `IntervalDay` `IntervalYear` `Union` `UUID` type.
+The data types other than those listed above are mapped to Gravitino's **[Unparsed Type](./manage-relational-metadata-using-gravitino.md#unparsed-type)** that represents an unresolvable data type since 0.5.0.
+
+:::note
+Gravitino can not load Doris `array`, `map` and `struct` type correctly, because Doris doesn't support these types in JDBC.
+:::
+
+
+### Table column auto-increment
 
 Unsupported for now.
 
@@ -148,7 +178,7 @@ Unsupported for now.
     </TabItem>
     </Tabs>
 
-### Table partitions
+### Table partitioning
 
 The Doris catalog supports partitioned tables. 
 Users can create partitioned tables in the Doris catalog with specific partitioning attributes. It is also supported to pre-assign partitions when creating Doris tables. 
