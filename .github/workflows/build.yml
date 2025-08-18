@@ -23,39 +23,46 @@ jobs:
         with:
           filters: |
             source_changes:
-              included:
-                - '.github/**'
-                - 'catalogs/**'
-                - 'clients/**'
-                - 'conf/**'
-                - 'dev/**'
-                - 'docs/open-api/**'
-                - 'gradle/**'
-                - 'gradle.properties'
-                - 'meta/**'
-                - 'scripts/**'
-                - 'web/**'
-                - '**/*.java'
-                - '**/*.kts'
-                - '**/*.py'
-                - '**/*.rs'
-                - '**/resources/**'
-                - '**/src/**'
-              excluded:
-                - 'mcp-server/**'
-                - '**/*.md'
-                - '**/*.png'
-                - '**/*.svg'
+              - '.github/**'
+              - 'catalogs/**'
+              - 'clients/**'
+              - 'conf/**'
+              - 'dev/**'
+              - 'docs/open-api/**'
+              - 'gradle/**'
+              - 'gradle.properties'
+              - 'meta/**'
+              - 'scripts/**'
+              - 'web/**'
+              - '**/*.java'
+              - '**/*.kts'
+              - '**/*.py'
+              - '**/*.rs'
+              - '**/resources/**'
+              - '**/src/**'
+              - '!mcp-server/**'
+              - '!**/*.md'
+              - '!**/*.png'
+              - '!**/*.svg'
   
             spark_connector_changes:
               - spark-connector/**
             
             mcp_server_changes:
               - mcp-server/**
+
+    - name: Compute mcp_server_changes_with_source
+      id: compute
+      run: |
+        if [[ "${{ steps.filter.outputs.mcp_server_changes }}" == "true" && "${{ steps.filter.outputs.source_changes }}" == "false" ]]; then
+          echo "result=true" >> $GITHUB_OUTPUT
+        else
+          echo "result=false" >> $GITHUB_OUTPUT
+        fi
     outputs:
       source_changes: ${{ steps.filter.outputs.source_changes }}
       spark_connector_changes: ${{ steps.filter.outputs.spark_connector_changes }}
-      mcp_server_changes: ${{ steps.filter.outputs.mcp_server_changes }}
+      mcp_server_changes: ${{ steps.compute.outputs.result }}
 
   compile-check:
     runs-on: ubuntu-latest
