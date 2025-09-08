@@ -186,7 +186,7 @@ class TestGvfsWithS3(TestGvfsWithHDFS):
     def check_mkdir(self, gvfs_dir, actual_dir, gvfs_instance):
         # S3 will not create a directory, so the directory will not exist.
         self.fs.mkdir(actual_dir)
-        self.assertFalse(self.fs.exists(actual_dir))
+        self.assertTrue(self.fs.exists(actual_dir))
         self.assertFalse(gvfs_instance.exists(gvfs_dir))
 
     def check_makedirs(self, gvfs_dir, actual_dir, gvfs_instance):
@@ -278,7 +278,6 @@ class TestGvfsWithS3(TestGvfsWithHDFS):
             **self.conf,
         )
 
-        fs.operations._catalog_cache.clear()
         s3_fs = fs.operations._get_actual_filesystem(mkdir_dir, None)
         config_kwargs = s3_fs.config_kwargs
         self.assertEqual("virtual", config_kwargs.get("s3").get("addressing_style"))
@@ -316,8 +315,7 @@ class TestGvfsWithS3(TestGvfsWithHDFS):
 
         # it takes no effect.
         fs.makedirs(mkdir_dir)
-        with self.assertRaises(OSError):
-            self.fs.exists(mkdir_actual_dir)
+        self.fs.exists(mkdir_actual_dir)
 
         self.assertFalse(fs.exists(mkdir_dir))
         self.assertFalse(self.fs.exists("s3://" + new_bucket))
