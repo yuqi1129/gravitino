@@ -50,12 +50,6 @@ license: "This software is licensed under the Apache License version 2."
   For the Python client, the `./gradlew build` command builds the Python client with Python 3.9 by default. If you want to use Python 3.10, 3.11, or 3.12 to build, please modify the property `pythonVersion` to 3.10, 3.11, or 3.12 in the `gradle.properties` file, or specify the version with `-P` like:
 
    ```shell
-   ./gradlew build -PpythonVersion=3.9
-   ```
-
-  Or:
-
-   ```shell
    ./gradlew build -PpythonVersion=3.10
    ```
 
