@@ -47,7 +47,7 @@ jobs:
       - name: Package Gravitino
         if: ${{ inputs.test-mode == 'deploy' }}
         run: |
-          ./gradlew compileDistribution -x test 
+          ./gradlew compileDistribution -x test
 
       - name: Free up disk space
         run: |
@@ -56,7 +56,7 @@ jobs:
       - name: Spark Integration Test
         id: integrationTest
         run: |
-          if [ "${{ inputs.scala-version }}" == "2.12" ];then 
+          if [ "${{ inputs.scala-version }}" == "2.12" ];then
             ./gradlew -PskipTests -PtestMode=${{ inputs.test-mode }} -PscalaVersion=${{ inputs.scala-version }} -PskipDockerTests=false :spark-connector:spark-3.3:test --tests "org.apache.gravitino.spark.connector.integration.test.**"
           fi
           ./gradlew -PskipTests -PtestMode=${{ inputs.test-mode }} -PscalaVersion=${{ inputs.scala-version }} -PskipDockerTests=false :spark-connector:spark-3.4:test --tests "org.apache.gravitino.spark.connector.integration.test.**"

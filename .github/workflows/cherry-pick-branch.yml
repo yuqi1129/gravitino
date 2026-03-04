@@ -65,8 +65,14 @@ jobs:
           BRANCH_NAME="cherry-pick-${SHORT_SHA}-to-${{ inputs.target-branch }}"
           git checkout -b $BRANCH_NAME
           
+          # Merge commits need a mainline parent when cherry-picking.
+          CHERRY_PICK_OPTS=""
+          if [ "$(git rev-list --parents -n 1 ${{ inputs.commit-sha }} | wc -w)" -gt 2 ]; then
+            CHERRY_PICK_OPTS="-m 1"
+          fi
+          
           # Cherry-pick the commit
-          if git cherry-pick ${{ inputs.commit-sha }}; then
+          if git cherry-pick ${CHERRY_PICK_OPTS} ${{ inputs.commit-sha }}; then
             echo "Cherry-pick successful"
             echo "success=true" >> $GITHUB_OUTPUT
             echo "branch-name=$BRANCH_NAME" >> $GITHUB_OUTPUT
@@ -75,9 +81,11 @@ jobs:
             echo "success=false" >> $GITHUB_OUTPUT
             echo "branch-name=$BRANCH_NAME" >> $GITHUB_OUTPUT
             
-            # Add all files (including conflicts)
-            git add .
-            git commit --no-edit || git commit -m "Cherry-pick ${{ inputs.commit-sha }} to ${{ inputs.target-branch }} (with conflicts)"
+            # Commit only when conflicts/changes were produced.
+            if [ -n "$(git status --porcelain)" ]; then
+              git add .
+              git commit -m "Cherry-pick ${{ inputs.commit-sha }} to ${{ inputs.target-branch }} (with conflicts)"
+            fi
           fi
 
       - name: Push branch
