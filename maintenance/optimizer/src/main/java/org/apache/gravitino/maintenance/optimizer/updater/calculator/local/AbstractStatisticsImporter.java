@@ -38,12 +38,14 @@ import java.util.function.Consumer;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.json.JsonUtils;
+import org.apache.gravitino.maintenance.optimizer.api.common.MetricPoint;
 import org.apache.gravitino.maintenance.optimizer.api.common.PartitionEntry;
 import org.apache.gravitino.maintenance.optimizer.api.common.PartitionPath;
 import org.apache.gravitino.maintenance.optimizer.api.common.StatisticEntry;
 import org.apache.gravitino.maintenance.optimizer.api.common.TableAndPartitionStatistics;
 import org.apache.gravitino.maintenance.optimizer.common.PartitionEntryImpl;
 import org.apache.gravitino.maintenance.optimizer.common.StatisticEntryImpl;
+import org.apache.gravitino.maintenance.optimizer.common.util.IdentifierUtils;
 import org.apache.gravitino.stats.StatisticValue;
 import org.apache.gravitino.stats.StatisticValues;
 import org.slf4j.Logger;
@@ -101,6 +103,26 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
     return toIdentifierStatisticEntries(aggregateJobStatistics(null));
   }
 
+  @Override
+  public List<MetricPoint> readTableMetrics(NameIdentifier tableIdentifier) {
+    return aggregateTableMetrics(tableIdentifier);
+  }
+
+  @Override
+  public List<MetricPoint> bulkReadAllTableMetrics() {
+    return aggregateTableMetrics(null);
+  }
+
+  @Override
+  public List<MetricPoint> readJobMetrics(NameIdentifier jobIdentifier) {
+    return aggregateJobMetricsAsMetricPoints(jobIdentifier);
+  }
+
+  @Override
+  public List<MetricPoint> bulkReadAllJobMetrics() {
+    return aggregateJobMetricsAsMetricPoints(null);
+  }
+
   private List<StatisticEntry<?>> toStatisticEntries(Map<String, StatisticValue<?>> statsByName) {
     if (statsByName == null || statsByName.isEmpty()) {
       return ImmutableList.of();
@@ -135,30 +157,6 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
     return result;
   }
 
-  private Map<NameIdentifier, Map<String, StatisticValue<?>>> aggregateStatistics(
-      NameIdentifier targetIdentifier) {
-    Map<NameIdentifier, Map<String, StatisticValue<?>>> aggregated = new LinkedHashMap<>();
-    visitParsedRecords(
-        new StatisticsRecordVisitor() {
-          @Override
-          public void onTable(StatisticsRecord record) {
-            NameIdentifier identifier = parseTableIdentifier(record.identifier());
-            if (identifier == null) {
-              return;
-            }
-            if (targetIdentifier != null && !targetIdentifier.equals(identifier)) {
-              return;
-            }
-
-            Map<String, StatisticValue<?>> statisticsByName =
-                aggregated.computeIfAbsent(identifier, k -> new LinkedHashMap<>());
-            populateStatistics(record, statisticsByName);
-          }
-        });
-
-    return aggregated;
-  }
-
   private TableAndPartitionStatistics aggregateTableAndPartitionStatistics(
       NameIdentifier targetIdentifier) {
     if (targetIdentifier == null) {
@@ -171,16 +169,16 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
         new StatisticsRecordVisitor() {
           @Override
           public void onTable(StatisticsRecord record) {
-            NameIdentifier identifier = parseTableIdentifier(record.identifier());
-            if (targetIdentifier.equals(identifier)) {
+            Optional<NameIdentifier> identifier = parseTableIdentifier(record.identifier());
+            if (identifier.isPresent() && targetIdentifier.equals(identifier.get())) {
               populateStatistics(record, tableStatistics);
             }
           }
 
           @Override
           public void onPartition(StatisticsRecord record) {
-            NameIdentifier identifier = parseTableIdentifier(record.identifier());
-            if (!targetIdentifier.equals(identifier)) {
+            Optional<NameIdentifier> identifier = parseTableIdentifier(record.identifier());
+            if (identifier.isEmpty() || !targetIdentifier.equals(identifier.get())) {
               return;
             }
 
@@ -210,19 +208,20 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
         new StatisticsRecordVisitor() {
           @Override
           public void onTable(StatisticsRecord record) {
-            NameIdentifier identifier = parseTableIdentifier(record.identifier());
-            if (identifier == null) {
+            Optional<NameIdentifier> identifier = parseTableIdentifier(record.identifier());
+            if (identifier.isEmpty()) {
               return;
             }
             Map<String, StatisticValue<?>> tableStats =
-                tableStatisticsByIdentifier.computeIfAbsent(identifier, k -> new LinkedHashMap<>());
+                tableStatisticsByIdentifier.computeIfAbsent(
+                    identifier.get(), k -> new LinkedHashMap<>());
             populateStatistics(record, tableStats);
           }
 
           @Override
           public void onPartition(StatisticsRecord record) {
-            NameIdentifier identifier = parseTableIdentifier(record.identifier());
-            if (identifier == null) {
+            Optional<NameIdentifier> identifier = parseTableIdentifier(record.identifier());
+            if (identifier.isEmpty()) {
               return;
             }
 
@@ -233,7 +232,7 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
 
             Map<PartitionPath, Map<String, StatisticValue<?>>> partitionStatsByPath =
                 partitionStatisticsByIdentifier.computeIfAbsent(
-                    identifier, k -> new LinkedHashMap<>());
+                    identifier.get(), k -> new LinkedHashMap<>());
             Map<String, StatisticValue<?>> partitionStatsByName =
                 partitionStatsByPath.computeIfAbsent(
                     partitionPathOpt.get(), k -> new LinkedHashMap<>());
@@ -265,21 +264,109 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
         new StatisticsRecordVisitor() {
           @Override
           public void onJob(StatisticsRecord record) {
-            NameIdentifier identifier = parseJobIdentifier(record.identifier());
-            if (identifier == null) {
+            Optional<NameIdentifier> identifier = parseJobIdentifier(record.identifier());
+            if (identifier.isEmpty()) {
               return;
             }
-            if (targetIdentifier != null && !targetIdentifier.equals(identifier)) {
+            if (targetIdentifier != null && !targetIdentifier.equals(identifier.get())) {
               return;
             }
 
             Map<String, StatisticValue<?>> statisticsByName =
-                aggregated.computeIfAbsent(identifier, k -> new LinkedHashMap<>());
+                aggregated.computeIfAbsent(identifier.get(), k -> new LinkedHashMap<>());
             populateStatistics(record, statisticsByName);
           }
         });
 
     return aggregated;
+  }
+
+  private List<MetricPoint> aggregateTableMetrics(NameIdentifier targetIdentifier) {
+    List<MetricPoint> metrics = new ArrayList<>();
+    long defaultTimestampSeconds = System.currentTimeMillis() / 1000;
+
+    visitParsedRecords(
+        new StatisticsRecordVisitor() {
+          @Override
+          public void onTable(StatisticsRecord record) {
+            Optional<NameIdentifier> identifier = parseTableIdentifier(record.identifier());
+            if (identifier.isEmpty()) {
+              return;
+            }
+            if (targetIdentifier != null && !targetIdentifier.equals(identifier.get())) {
+              return;
+            }
+
+            long recordTimestampSeconds =
+                parseTimestampSeconds(record.timestamp(), "timestamp")
+                    .orElse(defaultTimestampSeconds);
+            populateTableMetrics(record, identifier.get(), recordTimestampSeconds, metrics);
+          }
+
+          @Override
+          public void onPartition(StatisticsRecord record) {
+            Optional<NameIdentifier> identifier = parseTableIdentifier(record.identifier());
+            if (identifier.isEmpty()) {
+              return;
+            }
+            if (targetIdentifier != null && !targetIdentifier.equals(identifier.get())) {
+              return;
+            }
+
+            Optional<PartitionPath> partitionPathOpt = parsePartitionPath(record.partitionPath());
+            if (partitionPathOpt.isEmpty()) {
+              return;
+            }
+
+            long recordTimestampSeconds =
+                parseTimestampSeconds(record.timestamp(), "timestamp")
+                    .orElse(defaultTimestampSeconds);
+            populatePartitionMetrics(
+                record, identifier.get(), partitionPathOpt.get(), recordTimestampSeconds, metrics);
+          }
+        });
+
+    return ImmutableList.copyOf(metrics);
+  }
+
+  private List<MetricPoint> aggregateJobMetricsAsMetricPoints(NameIdentifier targetIdentifier) {
+    List<MetricPoint> metrics = new ArrayList<>();
+    long defaultTimestampSeconds = System.currentTimeMillis() / 1000;
+
+    visitParsedRecords(
+        new StatisticsRecordVisitor() {
+          @Override
+          public void onJob(StatisticsRecord record) {
+            Optional<NameIdentifier> identifier = parseJobIdentifier(record.identifier());
+            if (identifier.isEmpty()) {
+              return;
+            }
+            if (targetIdentifier != null && !targetIdentifier.equals(identifier.get())) {
+              return;
+            }
+
+            long recordTimestampSeconds =
+                parseTimestampSeconds(record.timestamp(), "timestamp")
+                    .orElse(defaultTimestampSeconds);
+            record
+                .statisticsFields()
+                .forEach(
+                    (fieldName, node) -> {
+                      MetricValue metricValue =
+                          parseMetricValue(fieldName, node, recordTimestampSeconds);
+                      if (metricValue != null) {
+                        metrics.add(
+                            MetricPoint.forJob(
+                                identifier.get(),
+                                fieldName,
+                                metricValue.value,
+                                metricValue.timestampSeconds));
+                      }
+                    });
+          }
+        });
+
+    return ImmutableList.copyOf(metrics);
   }
 
   protected abstract BufferedReader openReader() throws IOException;
@@ -349,6 +436,47 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
             });
   }
 
+  private void populateTableMetrics(
+      StatisticsRecord record,
+      NameIdentifier identifier,
+      long recordTimestampSeconds,
+      List<MetricPoint> metrics) {
+    record
+        .statisticsFields()
+        .forEach(
+            (fieldName, node) -> {
+              MetricValue metricValue = parseMetricValue(fieldName, node, recordTimestampSeconds);
+              if (metricValue != null) {
+                metrics.add(
+                    MetricPoint.forTable(
+                        identifier, fieldName, metricValue.value, metricValue.timestampSeconds));
+              }
+            });
+  }
+
+  private void populatePartitionMetrics(
+      StatisticsRecord record,
+      NameIdentifier identifier,
+      PartitionPath partitionPath,
+      long recordTimestampSeconds,
+      List<MetricPoint> metrics) {
+    record
+        .statisticsFields()
+        .forEach(
+            (fieldName, node) -> {
+              MetricValue metricValue = parseMetricValue(fieldName, node, recordTimestampSeconds);
+              if (metricValue != null) {
+                metrics.add(
+                    MetricPoint.forPartition(
+                        identifier,
+                        partitionPath,
+                        fieldName,
+                        metricValue.value,
+                        metricValue.timestampSeconds));
+              }
+            });
+  }
+
   private interface StatisticsRecordVisitor {
     default void onTable(StatisticsRecord record) {}
 
@@ -360,7 +488,8 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
   private enum FieldName {
     STATISTICS_TYPE("stats-type"),
     IDENTIFIER("identifier"),
-    PARTITION_PATH("partition-path");
+    PARTITION_PATH("partition-path"),
+    TIMESTAMP("timestamp");
 
     private final String key;
 
@@ -368,12 +497,8 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
       this.key = key;
     }
 
-    private String key() {
-      return key;
-    }
-
     private static final Set<String> RESERVED_FIELDS =
-        Set.of(STATISTICS_TYPE.key, IDENTIFIER.key, PARTITION_PATH.key);
+        Set.of(STATISTICS_TYPE.key, IDENTIFIER.key, PARTITION_PATH.key, TIMESTAMP.key);
 
     private static boolean isReserved(String fieldName) {
       return RESERVED_FIELDS.contains(fieldName);
@@ -406,42 +531,24 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
     }
   }
 
-  private NameIdentifier parseTableIdentifier(String identifierText) {
+  private Optional<NameIdentifier> parseTableIdentifier(String identifierText) {
     if (StringUtils.isBlank(identifierText)) {
-      return null;
+      return Optional.empty();
     }
-    try {
-      NameIdentifier parsed = NameIdentifier.parse(identifierText);
-      int levels = parsed.namespace().levels().length;
-      if (levels == 0) {
-        return parsed;
-      } else if (levels == 1) {
-        if (StringUtils.isNotBlank(defaultCatalogName)) {
-          return NameIdentifier.of(
-              defaultCatalogName, parsed.namespace().levels()[0], parsed.name());
-        }
-        return parsed;
-      } else if (levels == 2) {
-        return parsed;
-      } else {
-        return null;
-      }
-    } catch (Exception e) {
+    Optional<NameIdentifier> parsed =
+        IdentifierUtils.parseTableIdentifier(identifierText, defaultCatalogName);
+    if (parsed.isEmpty()) {
       LOG.warn("Skip line with invalid identifier: {}", identifierText);
-      return null;
     }
+    return parsed;
   }
 
-  private NameIdentifier parseJobIdentifier(String identifierText) {
-    if (StringUtils.isBlank(identifierText)) {
-      return null;
-    }
-    try {
-      return NameIdentifier.parse(identifierText);
-    } catch (Exception e) {
+  private Optional<NameIdentifier> parseJobIdentifier(String identifierText) {
+    Optional<NameIdentifier> parsed = IdentifierUtils.parseJobIdentifier(identifierText);
+    if (parsed.isEmpty() && StringUtils.isNotBlank(identifierText)) {
       LOG.warn("Skip line with invalid identifier: {}", identifierText);
-      return null;
     }
+    return parsed;
   }
 
   private static final class StatisticsRecord {
@@ -453,6 +560,9 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
 
     @JsonProperty("partition-path")
     private JsonNode partitionPath;
+
+    @JsonProperty("timestamp")
+    private JsonNode timestamp;
 
     private final Map<String, JsonNode> statisticsFields = new LinkedHashMap<>();
 
@@ -473,6 +583,10 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
 
     JsonNode partitionPath() {
       return partitionPath;
+    }
+
+    JsonNode timestamp() {
+      return timestamp;
     }
 
     Map<String, JsonNode> statisticsFields() {
@@ -509,18 +623,23 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
    * <p>Non-numeric textual values are skipped and logged.
    */
   private StatisticValue<?> parseStatisticValue(String fieldName, JsonNode node) {
-    if (node == null || node.isNull()) {
+    JsonNode valueNode = node;
+    if (node != null && node.isObject() && node.has("value")) {
+      valueNode = node.get("value");
+    }
+
+    if (valueNode == null || valueNode.isNull()) {
       return null;
     }
 
-    if (node.isNumber()) {
-      return node.isIntegralNumber()
-          ? StatisticValues.longValue(node.longValue())
-          : StatisticValues.doubleValue(node.doubleValue());
+    if (valueNode.isNumber()) {
+      return valueNode.isIntegralNumber()
+          ? StatisticValues.longValue(valueNode.longValue())
+          : StatisticValues.doubleValue(valueNode.doubleValue());
     }
 
-    if (node.isTextual()) {
-      String text = node.asText();
+    if (valueNode.isTextual()) {
+      String text = valueNode.asText();
       if (StringUtils.isBlank(text)) {
         return null;
       }
@@ -542,5 +661,70 @@ abstract class AbstractStatisticsImporter implements StatisticsImporter {
     }
 
     return null;
+  }
+
+  private MetricValue parseMetricValue(
+      String fieldName, JsonNode node, long defaultTimestampSeconds) {
+    JsonNode valueNode = node;
+    long timestampSeconds = defaultTimestampSeconds;
+
+    if (node != null && node.isObject() && node.has("value")) {
+      valueNode = node.get("value");
+      if (node.has("timestamp")) {
+        Optional<Long> timestamp = parseTimestampSeconds(node.get("timestamp"), fieldName);
+        if (timestamp.isPresent()) {
+          timestampSeconds = timestamp.get();
+        }
+      }
+    }
+
+    StatisticValue<?> value = parseStatisticValue(fieldName, valueNode);
+    if (value == null) {
+      return null;
+    }
+    return new MetricValue(value, timestampSeconds);
+  }
+
+  private Optional<Long> parseTimestampSeconds(JsonNode timestampNode, String fieldName) {
+    if (timestampNode == null || timestampNode.isNull()) {
+      return Optional.empty();
+    }
+
+    long timestampSeconds;
+    if (timestampNode.isIntegralNumber()) {
+      timestampSeconds = timestampNode.longValue();
+    } else if (timestampNode.isTextual()) {
+      try {
+        timestampSeconds = Long.parseLong(timestampNode.asText());
+      } catch (NumberFormatException e) {
+        LOG.warn(
+            "Skip invalid timestamp for field '{}', expected epoch seconds: {}",
+            fieldName,
+            timestampNode.asText());
+        return Optional.empty();
+      }
+    } else {
+      LOG.warn(
+          "Skip invalid timestamp for field '{}', expected epoch seconds: {}",
+          fieldName,
+          timestampNode);
+      return Optional.empty();
+    }
+
+    if (timestampSeconds < 0) {
+      LOG.warn("Skip negative timestamp for field '{}': {}", fieldName, timestampSeconds);
+      return Optional.empty();
+    }
+    return Optional.of(timestampSeconds);
+  }
+
+  private static final class MetricValue {
+    private final StatisticValue<?> value;
+    private final long timestampSeconds;
+
+    private MetricValue(StatisticValue<?> value, long timestampSeconds) {
+      this.value = value;
+      this.timestampSeconds = timestampSeconds;
+    }
   }
 }

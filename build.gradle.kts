@@ -903,13 +903,18 @@ tasks {
   }
 
   val compileTrinoConnector by registering {
-    dependsOn("trino-connector:trino-connector-469-472:copyLibs")
+    dependsOn("trino-connector:trino-connector-473-478:copyLibs")
     group = "gravitino distribution"
   }
 
   val assembleDistribution by registering(Tar::class) {
     dependsOn(
+      ":trino-connector:trino-connector-435-439:assembleTrinoConnector",
+      ":trino-connector:trino-connector-440-445:assembleTrinoConnector",
+      ":trino-connector:trino-connector-446-451:assembleTrinoConnector",
+      ":trino-connector:trino-connector-452-468:assembleTrinoConnector",
       ":trino-connector:trino-connector-469-472:assembleTrinoConnector",
+      ":trino-connector:trino-connector-473-478:assembleTrinoConnector",
       "assembleIcebergRESTServer",
       "assembleLanceRESTServer"
     )
@@ -1119,6 +1124,7 @@ tasks {
       ":catalogs:hive-metastore2-libs:copyLibs",
       ":catalogs:hive-metastore3-libs:copyLibs",
       ":catalogs:catalog-lakehouse-generic:copyLibAndConfig",
+      ":catalogs-contrib:catalog-jdbc-hologres:copyLibAndConfig",
       ":catalogs-contrib:catalog-jdbc-oceanbase:copyLibAndConfig",
       ":catalogs-contrib:catalog-jdbc-clickhouse:copyLibAndConfig"
     )

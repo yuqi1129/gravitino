@@ -41,6 +41,7 @@ dependencies {
     exclude("*")
   }
   implementation(libs.bundles.log4j)
+  implementation(libs.commons.cli.new)
   implementation(libs.commons.lang3)
   implementation(libs.jackson.databind)
   implementation(libs.jackson.annotations)
@@ -84,6 +85,11 @@ dependencies {
     exclude(group = "org.slf4j", module = "slf4j-log4j12")
   }
   testImplementation(libs.testcontainers)
+  testImplementation(libs.testcontainers.junit.jupiter)
+  testImplementation(libs.testcontainers.mysql)
+  testImplementation(libs.testcontainers.postgresql)
+  testRuntimeOnly(libs.mysql.driver)
+  testRuntimeOnly(libs.postgresql.driver)
   testAnnotationProcessor(libs.lombok)
   testCompileOnly(libs.lombok)
 
