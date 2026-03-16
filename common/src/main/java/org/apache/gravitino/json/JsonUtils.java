@@ -50,6 +50,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -1507,7 +1508,7 @@ public class JsonUtils {
       node.get(INDEX_FIELD_NAMES)
           .forEach(field -> fieldNames.add(getStringArray((ArrayNode) field)));
       builder.withFieldNames(fieldNames.toArray(new String[0][0]));
-      Map<String, String> properties = Map.of();
+      Map<String, String> properties = Collections.emptyMap();
 
       if (node.has("properties") && node.get("properties").isObject()) {
 

@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.google.common.base.Preconditions;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
 import org.apache.gravitino.json.JsonUtils.IndexDeserializer;
@@ -57,7 +58,7 @@ public class IndexDTO implements Index {
     this.indexType = indexType;
     this.name = name;
     this.fieldNames = fieldNames;
-    this.properties = properties == null ? Map.of() : properties;
+    this.properties = properties == null ? Collections.emptyMap() : properties;
   }
 
   /**
