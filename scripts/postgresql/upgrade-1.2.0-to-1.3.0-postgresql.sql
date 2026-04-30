@@ -1,6 +1,6 @@
 --
 -- Licensed to the Apache Software Foundation (ASF) under one
--- or more contributor license agreements.  See the NOTICE file--
+-- or more contributor license agreements.  See the NOTICE file
 --  distributed with this work for additional information
 -- regarding copyright ownership.  The ASF licenses this file
 -- to you under the Apache License, Version 2.0 (the
@@ -16,6 +16,28 @@
 -- specific language governing permissions and limitations
 -- under the License.
 --
+
+ALTER TABLE role_meta  ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE user_meta  ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE group_meta ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE owner_meta ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;
+
+CREATE INDEX idx_user_meta_name_del_upd ON user_meta (metalake_id, user_name, deleted_at, updated_at);
+CREATE INDEX idx_group_meta_del_upd ON group_meta (group_id, deleted_at, updated_at);
+CREATE INDEX idx_role_meta_del_upd ON role_meta (role_id, deleted_at, updated_at);
+CREATE INDEX idx_owner_meta_obj_del_upd ON owner_meta (metadata_object_id, deleted_at, updated_at);
+CREATE INDEX idx_owner_meta_del_upd_obj ON owner_meta (deleted_at, updated_at, metadata_object_id);
+
+CREATE TABLE IF NOT EXISTS entity_change_log (
+    id BIGSERIAL PRIMARY KEY,
+    metalake_name VARCHAR(128) NOT NULL,
+    entity_type VARCHAR(32) NOT NULL,
+    full_name VARCHAR(512) NOT NULL,
+    -- Operate type code: 1=RENAME, 2=DROP, 3=INSERT. Codes are stable and never re-used.
+    operate_type SMALLINT NOT NULL,
+    created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ecl_created_at ON entity_change_log(created_at);
 
 ALTER TABLE view_meta
     ADD COLUMN IF NOT EXISTS audit_info TEXT NOT NULL DEFAULT '{}';
