@@ -182,4 +182,8 @@ public class GroupMetaBaseSQLProvider {
         + GROUP_TABLE_NAME
         + " WHERE deleted_at > 0 AND deleted_at < #{legacyTimeline} LIMIT #{limit}";
   }
+
+  public String modifyGroupUpdatedAt(@Param("groupId") long groupId, @Param("now") long now) {
+    return "UPDATE " + GROUP_TABLE_NAME + " SET updated_at = #{now} WHERE group_id = #{groupId}";
+  }
 }
