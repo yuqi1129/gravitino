@@ -221,7 +221,11 @@ public class ViewOperationDispatcher extends OperationDispatcher implements View
                   catalogIdent,
                   c ->
                       c.doWithViewOps(
-                          v -> v.alterView(ident, applyCapabilities(c.capabilities(), changes))),
+                          v ->
+                              v.alterView(
+                                  ident,
+                                  c.doWithCapabilityOps(
+                                      capability -> applyCapabilities(capability, changes)))),
                   NoSuchViewException.class,
                   IllegalArgumentException.class);
 

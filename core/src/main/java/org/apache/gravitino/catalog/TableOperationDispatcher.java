@@ -269,7 +269,11 @@ public class TableOperationDispatcher extends OperationDispatcher implements Tab
                   catalogIdent,
                   c ->
                       c.doWithTableOps(
-                          t -> t.alterTable(ident, applyCapabilities(c.capabilities(), changes))),
+                          t ->
+                              t.alterTable(
+                                  ident,
+                                  c.doWithCapabilityOps(
+                                      capability -> applyCapabilities(capability, changes)))),
                   NoSuchTableException.class,
                   IllegalArgumentException.class);
 

@@ -47,8 +47,46 @@ import org.apache.gravitino.rel.partitions.ListPartition;
 import org.apache.gravitino.rel.partitions.Partition;
 import org.apache.gravitino.rel.partitions.Partitions;
 import org.apache.gravitino.rel.partitions.RangePartition;
+import org.apache.gravitino.utils.ThrowableFunction;
 
 public class CapabilityHelpers {
+
+  /**
+   * Executes {@code fn} with the capability of the catalog identified by {@code ident}. Capability
+   * methods are invoked inside the owning {@link CatalogManager.CatalogWrapper} so plugin-loaded
+   * capability implementations do not escape the catalog classloader boundary.
+   *
+   * @param ident any identifier that belongs to the target catalog
+   * @param catalogManager the catalog manager used to load the catalog
+   * @param fn the function to execute with the catalog capability
+   * @param <R> return type
+   * @return the result of {@code fn}
+   */
+  public static <R> R withCapability(
+      NameIdentifier ident, CatalogManager catalogManager, ThrowableFunction<Capability, R> fn) {
+    NameIdentifier catalogIdent = getCatalogIdentifier(ident);
+    RuntimeException closedException = null;
+    for (int i = 0; i < 2; i++) {
+      CatalogManager.CatalogWrapper c = catalogManager.loadCatalogAndWrap(catalogIdent);
+      try {
+        return c.doWithCapabilityOps(fn);
+      } catch (IllegalStateException e) {
+        if (c.isClosed() && i == 0) {
+          closedException = e;
+          continue;
+        }
+        throw e;
+      } catch (RuntimeException e) {
+        throw e;
+      } catch (Exception e) {
+        throw new RuntimeException("Failed to apply capabilities for catalog: " + catalogIdent, e);
+      }
+    }
+
+    throw closedException == null
+        ? new IllegalStateException("CatalogWrapper is already closed")
+        : closedException;
+  }
 
   public static Capability getCapability(NameIdentifier ident, CatalogManager catalogManager) {
     NameIdentifier catalogIdent = getCatalogIdentifier(ident);
@@ -129,8 +167,7 @@ public class CapabilityHelpers {
    */
   public static NameIdentifier applyCapabilities(
       NameIdentifier ident, Capability.Scope scope, CatalogManager catalogManager) {
-    Capability capability = getCapability(ident, catalogManager);
-    return applyCapabilities(ident, scope, capability);
+    return withCapability(ident, catalogManager, cap -> applyCapabilities(ident, scope, cap));
   }
 
   public static NameIdentifier[] applyCaseSensitive(

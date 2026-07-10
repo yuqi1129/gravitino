@@ -38,6 +38,7 @@ import org.apache.gravitino.connector.capability.CapabilityResult;
 import org.apache.gravitino.function.Function;
 import org.apache.gravitino.function.FunctionDefinition;
 import org.apache.gravitino.function.FunctionType;
+import org.apache.gravitino.utils.ThrowableFunction;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -63,6 +64,11 @@ public class TestFunctionHookDispatcher {
     CatalogManager.CatalogWrapper catalogWrapper =
         Mockito.mock(CatalogManager.CatalogWrapper.class);
     Mockito.when(catalogWrapper.capabilities()).thenReturn(Capability.DEFAULT);
+    Mockito.when(catalogWrapper.doWithCapabilityOps(any()))
+        .thenAnswer(
+            invocation ->
+                ((ThrowableFunction<Capability, ?>) invocation.getArgument(0))
+                    .apply(Capability.DEFAULT));
     Mockito.when(catalogManager.loadCatalogAndWrap(any())).thenReturn(catalogWrapper);
 
     Mockito.when(
@@ -145,7 +151,13 @@ public class TestFunctionHookDispatcher {
 
     CatalogManager mockCatalogManager = Mockito.mock(CatalogManager.class);
     CatalogManager.CatalogWrapper mockWrapper = Mockito.mock(CatalogManager.CatalogWrapper.class);
-    Mockito.when(mockWrapper.capabilities()).thenReturn(new CaseInsensitiveCapability());
+    Capability caseInsensitiveCapability = new CaseInsensitiveCapability();
+    Mockito.when(mockWrapper.capabilities()).thenReturn(caseInsensitiveCapability);
+    Mockito.when(mockWrapper.doWithCapabilityOps(any()))
+        .thenAnswer(
+            invocation ->
+                ((ThrowableFunction<Capability, ?>) invocation.getArgument(0))
+                    .apply(caseInsensitiveCapability));
     Mockito.when(mockCatalogManager.loadCatalogAndWrap(any())).thenReturn(mockWrapper);
 
     OwnerDispatcher mockOwnerDispatcher = Mockito.mock(OwnerDispatcher.class);
@@ -199,6 +211,11 @@ public class TestFunctionHookDispatcher {
     CatalogManager.CatalogWrapper catalogWrapper =
         Mockito.mock(CatalogManager.CatalogWrapper.class);
     Mockito.when(catalogWrapper.capabilities()).thenReturn(Capability.DEFAULT);
+    Mockito.when(catalogWrapper.doWithCapabilityOps(any()))
+        .thenAnswer(
+            invocation ->
+                ((ThrowableFunction<Capability, ?>) invocation.getArgument(0))
+                    .apply(Capability.DEFAULT));
     Mockito.when(catalogManager.loadCatalogAndWrap(any())).thenReturn(catalogWrapper);
 
     FunctionDispatcher mockFunctionDispatcher = Mockito.mock(FunctionDispatcher.class);

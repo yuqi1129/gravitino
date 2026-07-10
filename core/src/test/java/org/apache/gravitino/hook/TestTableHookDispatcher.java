@@ -79,6 +79,7 @@ import org.apache.gravitino.rel.indexes.Indexes;
 import org.apache.gravitino.rel.partitions.Partitions;
 import org.apache.gravitino.rel.partitions.RangePartition;
 import org.apache.gravitino.rel.types.Types;
+import org.apache.gravitino.utils.ThrowableFunction;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -112,6 +113,11 @@ public class TestTableHookDispatcher extends TestOperationDispatcher {
         Mockito.mock(CatalogManager.CatalogWrapper.class);
     Mockito.when(catalogWrapper.catalog()).thenReturn(catalog);
     Mockito.when(catalogWrapper.capabilities()).thenReturn(Capability.DEFAULT);
+    Mockito.when(catalogWrapper.doWithCapabilityOps(any()))
+        .thenAnswer(
+            invocation ->
+                ((ThrowableFunction<Capability, ?>) invocation.getArgument(0))
+                    .apply(Capability.DEFAULT));
 
     Mockito.when(catalogManager.loadCatalog(any())).thenReturn(catalog);
     Mockito.when(catalogManager.loadCatalogAndWrap(any())).thenReturn(catalogWrapper);
@@ -204,7 +210,13 @@ public class TestTableHookDispatcher extends TestOperationDispatcher {
 
     CatalogManager mockCatalogManager = Mockito.mock(CatalogManager.class);
     CatalogManager.CatalogWrapper mockWrapper = Mockito.mock(CatalogManager.CatalogWrapper.class);
-    Mockito.when(mockWrapper.capabilities()).thenReturn(new CaseInsensitiveCapability());
+    Capability caseInsensitiveCapability = new CaseInsensitiveCapability();
+    Mockito.when(mockWrapper.capabilities()).thenReturn(caseInsensitiveCapability);
+    Mockito.when(mockWrapper.doWithCapabilityOps(any()))
+        .thenAnswer(
+            invocation ->
+                ((ThrowableFunction<Capability, ?>) invocation.getArgument(0))
+                    .apply(caseInsensitiveCapability));
     Mockito.when(mockCatalogManager.loadCatalogAndWrap(any())).thenReturn(mockWrapper);
 
     OwnerDispatcher mockOwnerDispatcher = Mockito.mock(OwnerDispatcher.class);

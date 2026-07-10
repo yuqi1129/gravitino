@@ -20,6 +20,8 @@ package org.apache.gravitino.catalog.glue;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.apache.gravitino.connector.capability.Capability;
@@ -71,5 +73,18 @@ class TestGlueCatalogCapability {
     // Column name case folding is not documented in Glue Column API — treated as supported.
     CapabilityResult result = capability.caseSensitiveOnName(Capability.Scope.COLUMN);
     assertTrue(result.supported());
+  }
+
+  @Test
+  void testCaseSensitiveOnNameRejectsNullScope() {
+    assertThrows(IllegalArgumentException.class, () -> capability.caseSensitiveOnName(null));
+  }
+
+  @Test
+  void testNoSwitchOnEnumSyntheticClass() {
+    String syntheticClassResource =
+        GlueCatalogCapability.class.getName().replace('.', '/') + "$1.class";
+
+    assertNull(GlueCatalogCapability.class.getClassLoader().getResource(syntheticClassResource));
   }
 }

@@ -37,6 +37,7 @@ import org.apache.gravitino.catalog.ModelDispatcher;
 import org.apache.gravitino.connector.capability.Capability;
 import org.apache.gravitino.connector.capability.CapabilityResult;
 import org.apache.gravitino.model.Model;
+import org.apache.gravitino.utils.ThrowableFunction;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,6 +64,13 @@ public class TestModelHookDispatcher {
     mockCatalogWrapper = mock(CatalogManager.CatalogWrapper.class);
     when(mockCatalogManager.loadCatalogAndWrap(any())).thenReturn(mockCatalogWrapper);
     when(mockCatalogWrapper.capabilities()).thenReturn(Capability.DEFAULT);
+    when(mockCatalogWrapper.doWithCapabilityOps(any()))
+        .thenAnswer(
+            invocation -> {
+              Capability capability = mockCatalogWrapper.capabilities();
+              return ((ThrowableFunction<Capability, ?>) invocation.getArgument(0))
+                  .apply(capability);
+            });
     savedOwnerDispatcher = GravitinoEnv.getInstance().ownerDispatcher();
     // Read the catalogManager field directly via reflection because the public accessor
     // Preconditions-checks for non-null, which would fail when GravitinoEnv has not been

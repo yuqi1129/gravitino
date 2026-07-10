@@ -72,6 +72,7 @@ import org.apache.gravitino.storage.relational.SupportsEntityChangeLog;
 import org.apache.gravitino.storage.relational.po.cache.EntityChangeRecord;
 import org.apache.gravitino.storage.relational.po.cache.OperateType;
 import org.apache.gravitino.utils.PrincipalUtils;
+import org.apache.gravitino.utils.ThrowableFunction;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
@@ -887,6 +888,7 @@ public class TestCatalogManager {
     Mockito.doReturn(wrapper).when(catalogManager).loadCatalogAndWrap(ident);
     Mockito.doReturn(catalog).when(wrapper).catalog();
     Mockito.doReturn(capability).when(wrapper).capabilities();
+    mockDoWithCapabilityOps(wrapper, capability);
     Mockito.doReturn(unsupportedResult).when(capability).managedStorage(any());
     Mockito.doReturn(
             new NameIdentifier[] {NameIdentifier.of("metalake", "test41", "imported_schema")})
@@ -966,6 +968,7 @@ public class TestCatalogManager {
     Mockito.doReturn(wrapper).when(catalogManager).loadCatalogAndWrap(ident);
     Mockito.doReturn(catalog).when(wrapper).catalog();
     Mockito.doReturn(capability).when(wrapper).capabilities();
+    mockDoWithCapabilityOps(wrapper, capability);
     Mockito.doReturn(unsupportedResult).when(capability).managedStorage(any());
     Mockito.doReturn(new NameIdentifier[] {NameIdentifier.of("metalake", "test41", "default")})
         .doThrow(new NoSuchSchemaException("Schema not found"))
@@ -1017,6 +1020,7 @@ public class TestCatalogManager {
     Mockito.doReturn(wrapper).when(catalogManager).loadCatalogAndWrap(ident);
     Mockito.doReturn(catalog).when(wrapper).catalog();
     Mockito.doReturn(capability).when(wrapper).capabilities();
+    mockDoWithCapabilityOps(wrapper, capability);
     Mockito.doReturn(unsupportedResult).when(capability).managedStorage(any());
     Mockito.doReturn(new NameIdentifier[] {NameIdentifier.of("metalake", "test41", "test_schema1")})
         .doThrow(new RuntimeException("Failed connect"))
@@ -1063,6 +1067,7 @@ public class TestCatalogManager {
     CapabilityResult unsupportedResult = CapabilityResult.unsupported("Not managed");
     Mockito.doReturn(catalogWrapper).when(catalogManager).loadCatalogAndWrap(ident);
     Mockito.doReturn(capability).when(catalogWrapper).capabilities();
+    mockDoWithCapabilityOps(catalogWrapper, capability);
     Mockito.doReturn(unsupportedResult).when(capability).managedStorage(any());
     Mockito.doReturn(catalog).when(catalogWrapper).catalog();
     Mockito.doThrow(new RuntimeException("Failed connect"))
@@ -1098,6 +1103,7 @@ public class TestCatalogManager {
     Mockito.doReturn(catalogWrapper).when(catalogManager).loadCatalogAndWrap(ident);
     Mockito.doReturn(catalog).when(catalogWrapper).catalog();
     Mockito.doReturn(capability).when(catalogWrapper).capabilities();
+    mockDoWithCapabilityOps(catalogWrapper, capability);
     Mockito.doReturn(unsupportedResult).when(capability).managedStorage(any());
 
     catalogManager.getCatalogCache().put(ident, catalogWrapper);
@@ -1251,6 +1257,15 @@ public class TestCatalogManager {
               Assertions.assertEquals(
                   1, removedCatalogs.size(), "Only one catalog should be removed");
             });
+  }
+
+  private void mockDoWithCapabilityOps(CatalogManager.CatalogWrapper wrapper, Capability capability)
+      throws Exception {
+    Mockito.doAnswer(
+            invocation ->
+                ((ThrowableFunction<Capability, ?>) invocation.getArgument(0)).apply(capability))
+        .when(wrapper)
+        .doWithCapabilityOps(any());
   }
 
   private void testProperties(Map<String, String> expectedProps, Map<String, String> testProps) {

@@ -127,7 +127,7 @@ public class CatalogManager implements CatalogDispatcher, Closeable {
   /** Wrapper class for a catalog instance and its class loader. */
   public static class CatalogWrapper {
 
-    private BaseCatalog catalog;
+    private volatile BaseCatalog catalog;
     private IsolatedClassLoader classLoader;
 
     public CatalogWrapper(BaseCatalog catalog, IsolatedClassLoader classLoader) {
@@ -238,25 +238,51 @@ public class CatalogManager implements CatalogDispatcher, Closeable {
       return classLoader.withClassLoader(cl -> fn.apply(catalog));
     }
 
-    public Capability capabilities() throws Exception {
-      return classLoader.withClassLoader(cl -> catalog.capability());
+    /**
+     * Executes a function with the catalog capability inside the catalog classloader boundary.
+     *
+     * @param fn the function to execute with the catalog capability
+     * @param <R> the function result type
+     * @return the function result
+     * @throws Exception if the function fails
+     */
+    public synchronized <R> R doWithCapabilityOps(ThrowableFunction<Capability, R> fn)
+        throws Exception {
+      if (catalog == null) {
+        throw new IllegalStateException("CatalogWrapper is already closed");
+      }
+
+      return classLoader.withClassLoader(cl -> fn.apply(catalog.capability()));
     }
 
-    public void close() {
+    public Capability capabilities() throws Exception {
+      return doWithCapabilityOps(capability -> capability);
+    }
+
+    public synchronized void close() {
+      if (catalog == null) {
+        classLoader.close();
+        return;
+      }
+
+      BaseCatalog catalogToClose = catalog;
       try {
         classLoader.withClassLoader(
             cl -> {
-              if (catalog != null) {
-                catalog.close();
-              }
-              catalog = null;
+              catalogToClose.close();
               return null;
             });
       } catch (Exception e) {
         LOG.warn("Failed to close catalog", e);
+      } finally {
+        catalog = null;
       }
 
       classLoader.close();
+    }
+
+    boolean isClosed() {
+      return catalog == null;
     }
 
     private SupportsSchemas asSchemas() {
@@ -1032,13 +1058,13 @@ public class CatalogManager implements CatalogDispatcher, Closeable {
 
   private boolean isManagedStorageCatalog(CatalogWrapper catalogWrapper) {
     try {
-      Capability capability = catalogWrapper.capabilities();
-      return capability.managedStorage(Capability.Scope.SCHEMA).supported()
-          && (capability.managedStorage(Capability.Scope.TABLE).supported()
-              || capability.managedStorage(Capability.Scope.FILESET).supported()
-              || capability.managedStorage(Capability.Scope.MODEL).supported());
+      return catalogWrapper.doWithCapabilityOps(
+          capability ->
+              capability.managedStorage(Capability.Scope.SCHEMA).supported()
+                  && (capability.managedStorage(Capability.Scope.TABLE).supported()
+                      || capability.managedStorage(Capability.Scope.FILESET).supported()
+                      || capability.managedStorage(Capability.Scope.MODEL).supported()));
     } catch (Exception e) {
-      // This should not be happened, because capabilities() will never throw an exception here.
       throw new RuntimeException(e);
     }
   }
