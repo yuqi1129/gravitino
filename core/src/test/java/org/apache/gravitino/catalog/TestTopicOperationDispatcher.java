@@ -22,6 +22,7 @@ import static org.apache.gravitino.Configs.TREE_LOCK_CLEAN_INTERVAL;
 import static org.apache.gravitino.Configs.TREE_LOCK_MAX_NODE_IN_MEMORY;
 import static org.apache.gravitino.Configs.TREE_LOCK_MIN_NODE_IN_MEMORY;
 import static org.apache.gravitino.Entity.EntityType.SCHEMA;
+import static org.apache.gravitino.Entity.EntityType.TOPIC;
 import static org.apache.gravitino.StringIdentifier.ID_KEY;
 import static org.apache.gravitino.TestBasePropertiesMetadata.COMMENT_KEY;
 import static org.apache.gravitino.TestCatalog.PROPERTY_KEY1;
@@ -50,6 +51,7 @@ import org.apache.gravitino.auth.AuthConstants;
 import org.apache.gravitino.connector.HiddenPropertyMaskUtils;
 import org.apache.gravitino.connector.TestCatalogOperations;
 import org.apache.gravitino.exceptions.NoSuchEntityException;
+import org.apache.gravitino.exceptions.OptimisticLockException;
 import org.apache.gravitino.lock.LockManager;
 import org.apache.gravitino.messaging.Topic;
 import org.apache.gravitino.messaging.TopicChange;
@@ -78,6 +80,26 @@ public class TestTopicOperationDispatcher extends TestOperationDispatcher {
     FieldUtils.writeField(GravitinoEnv.getInstance(), "lockManager", new LockManager(config), true);
     FieldUtils.writeField(
         GravitinoEnv.getInstance(), "internalSchemaDispatcher", schemaOperationDispatcher, true);
+  }
+
+  @Test
+  public void testDropTopicPropagatesOptimisticLockConflict() throws IOException {
+    reset(entityStore);
+    NameIdentifier schemaIdent = NameIdentifier.of(metalake, catalog, "schema_topic_drop_occ");
+    schemaOperationDispatcher.createSchema(schemaIdent, "comment", ImmutableMap.of("k1", "v1"));
+    NameIdentifier ident =
+        NameIdentifier.of(metalake, catalog, schemaIdent.name(), "topic_drop_occ");
+    topicOperationDispatcher.createTopic(ident, "comment", null, ImmutableMap.of("k1", "v1"));
+    OptimisticLockException conflict = new OptimisticLockException("Concurrent topic update");
+    doThrow(conflict).when(entityStore).delete(ident, TOPIC);
+    try {
+      Assertions.assertSame(
+          conflict,
+          Assertions.assertThrows(
+              OptimisticLockException.class, () -> topicOperationDispatcher.dropTopic(ident)));
+    } finally {
+      reset(entityStore);
+    }
   }
 
   @Test

@@ -57,6 +57,7 @@ import org.apache.gravitino.connector.TestCatalogOperations;
 import org.apache.gravitino.exceptions.GravitinoRuntimeException;
 import org.apache.gravitino.exceptions.NoSuchEntityException;
 import org.apache.gravitino.exceptions.NoSuchViewException;
+import org.apache.gravitino.exceptions.OptimisticLockException;
 import org.apache.gravitino.lock.LockManager;
 import org.apache.gravitino.meta.AuditInfo;
 import org.apache.gravitino.meta.SchemaEntity;
@@ -144,6 +145,30 @@ public class TestViewOperationDispatcher extends TestOperationDispatcher {
         return auditInfo;
       }
     };
+  }
+
+  @Test
+  public void testDropViewPropagatesOptimisticLockConflict() throws IOException {
+    reset(entityStore);
+    NameIdentifier schemaIdent = NameIdentifier.of(metalake, catalog, "schema_view_drop_occ");
+    schemaOperationDispatcher.createSchema(schemaIdent, "comment", ImmutableMap.of("k1", "v1"));
+    NameIdentifier ident =
+        NameIdentifier.of(metalake, catalog, schemaIdent.name(), "view_drop_occ");
+    Representation[] representations = {
+      SQLRepresentation.builder().withDialect("spark").withSql("SELECT 1").build()
+    };
+    viewOperationDispatcher.createView(
+        ident, null, new Column[0], representations, null, null, ImmutableMap.of("k1", "v1"));
+    OptimisticLockException conflict = new OptimisticLockException("Concurrent view update");
+    doThrow(conflict).when(entityStore).delete(ident, VIEW);
+    try {
+      Assertions.assertSame(
+          conflict,
+          Assertions.assertThrows(
+              OptimisticLockException.class, () -> viewOperationDispatcher.dropView(ident)));
+    } finally {
+      reset(entityStore);
+    }
   }
 
   @Test

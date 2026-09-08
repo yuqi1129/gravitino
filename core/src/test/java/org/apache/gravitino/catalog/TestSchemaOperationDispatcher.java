@@ -51,6 +51,7 @@ import org.apache.gravitino.auth.AuthConstants;
 import org.apache.gravitino.connector.HiddenPropertyMaskUtils;
 import org.apache.gravitino.connector.TestCatalogOperations;
 import org.apache.gravitino.exceptions.NoSuchEntityException;
+import org.apache.gravitino.exceptions.OptimisticLockException;
 import org.apache.gravitino.exceptions.SchemaAlreadyExistsException;
 import org.apache.gravitino.lock.LockManager;
 import org.apache.gravitino.meta.AuditInfo;
@@ -80,6 +81,23 @@ public class TestSchemaOperationDispatcher extends TestOperationDispatcher {
     doReturn(1000L).when(config).get(Configs.TREE_LOCK_MIN_NODE_IN_MEMORY);
     doReturn(36000L).when(config).get(Configs.TREE_LOCK_CLEAN_INTERVAL);
     FieldUtils.writeField(GravitinoEnv.getInstance(), "lockManager", new LockManager(config), true);
+  }
+
+  @Test
+  public void testDropSchemaPropagatesOptimisticLockConflict() throws IOException {
+    reset(entityStore);
+    NameIdentifier ident = NameIdentifier.of(metalake, catalog, "schema_drop_occ");
+    dispatcher.createSchema(ident, "comment", ImmutableMap.of("k1", "v1"));
+    OptimisticLockException conflict = new OptimisticLockException("Concurrent schema update");
+    doThrow(conflict).when(entityStore).delete(ident, SCHEMA, true);
+    try {
+      Assertions.assertSame(
+          conflict,
+          Assertions.assertThrows(
+              OptimisticLockException.class, () -> dispatcher.dropSchema(ident, false)));
+    } finally {
+      reset(entityStore);
+    }
   }
 
   @Test
