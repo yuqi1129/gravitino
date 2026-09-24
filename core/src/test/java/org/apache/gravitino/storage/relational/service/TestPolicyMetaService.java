@@ -582,6 +582,43 @@ public class TestPolicyMetaService extends TestJDBCBackend {
   }
 
   @TestTemplate
+  public void testStalePolicyDeleteAfterMetadataOnlyAlter() throws IOException {
+    createAndInsertMakeLake(METALAKE_NAME);
+    PolicyMetaService policyMetaService = PolicyMetaService.getInstance();
+    PolicyEntity policy =
+        createPolicy(
+            RandomIdGenerator.INSTANCE.nextId(),
+            NamespaceUtil.ofPolicy(METALAKE_NAME),
+            "policy_metadata_delete_last_version",
+            AUDIT_INFO);
+    policyMetaService.insertPolicy(policy, false);
+    PolicyPO stalePO = getPolicyPO(policy.nameIdentifier());
+    assertEquals(
+        policy.content(),
+        policyMetaService.getPolicyByIdentifier(policy.nameIdentifier()).content());
+
+    AuditInfo updatedAudit =
+        AuditInfo.builder().withCreator("updated-creator").withCreateTime(Instant.now()).build();
+    policyMetaService.updatePolicy(
+        policy.nameIdentifier(),
+        entity ->
+            copyPolicy(
+                (PolicyEntity) entity,
+                ((PolicyEntity) entity).name(),
+                ((PolicyEntity) entity).comment(),
+                updatedAudit));
+
+    PolicyPO afterAlter = getPolicyPO(policy.nameIdentifier());
+    assertEquals(stalePO.getCurrentVersion(), afterAlter.getCurrentVersion());
+    assertEquals(stalePO.getLastVersion() + 1, afterAlter.getLastVersion().longValue());
+    assertThrows(
+        OptimisticLockException.class,
+        () -> policyMetaService.deletePolicy(policy.nameIdentifier(), stalePO));
+    assertTrue(backend.exists(policy.nameIdentifier(), Entity.EntityType.POLICY));
+    assertEquals(1, listPolicyVersions(policy.id()).size());
+  }
+
+  @TestTemplate
   public void testPolicyCreateIsFencedByParentMetalake() {
     PolicyMetaService policyMetaService = PolicyMetaService.getInstance();
     PolicyEntity policy =
