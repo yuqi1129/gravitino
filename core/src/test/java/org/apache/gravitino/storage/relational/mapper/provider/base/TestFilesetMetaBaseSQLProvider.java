@@ -34,10 +34,9 @@ class TestFilesetMetaBaseSQLProvider {
 
     // The overwrite advances the OCC token only. The history version is the join key into
     // fileset_version_info and this statement writes no snapshot to move it to.
-    Assertions.assertTrue(updateClause.contains("occ_version = occ_version + 1"));
+    Assertions.assertTrue(updateClause.contains("last_version = last_version + 1"));
     Assertions.assertFalse(updateClause.contains("current_version ="));
-    Assertions.assertFalse(updateClause.contains("last_version ="));
-    Assertions.assertFalse(updateClause.contains("occ_version = #{filesetMeta.occVersion}"));
+    Assertions.assertFalse(updateClause.contains("last_version = #{filesetMeta.lastVersion}"));
   }
 
   @Test
@@ -47,7 +46,7 @@ class TestFilesetMetaBaseSQLProvider {
 
     Assertions.assertEquals(
         " WHERE fileset_id = #{oldFilesetMeta.filesetId}"
-            + " AND occ_version = #{oldFilesetMeta.occVersion}"
+            + " AND last_version = #{oldFilesetMeta.lastVersion}"
             + " AND deleted_at = 0"
             + " AND NOT EXISTS (SELECT 1 FROM fileset_version_info fv"
             + " WHERE fv.fileset_id = #{oldFilesetMeta.filesetId}"
@@ -72,7 +71,7 @@ class TestFilesetMetaBaseSQLProvider {
     Assertions.assertTrue(
         sql.endsWith(
             " WHERE fileset_id = #{oldFilesetMeta.filesetId}"
-                + " AND occ_version = #{oldFilesetMeta.occVersion}"
+                + " AND last_version = #{oldFilesetMeta.lastVersion}"
                 + " AND deleted_at = 0"));
   }
 
@@ -80,7 +79,7 @@ class TestFilesetMetaBaseSQLProvider {
   void testDirectDeleteUsesVersionCas() {
     String sql = PROVIDER.softDeleteFilesetMetasByFilesetId(null, null);
 
-    Assertions.assertTrue(sql.contains("AND occ_version = #{occVersion}"));
+    Assertions.assertTrue(sql.contains("AND last_version = #{lastVersion}"));
     Assertions.assertTrue(sql.endsWith("AND deleted_at = 0"));
   }
 

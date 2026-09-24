@@ -458,7 +458,7 @@ public class FilesetMetaService {
                 FilesetMetaMapper.class,
                 mapper ->
                     mapper.softDeleteFilesetMetasByFilesetId(
-                        observedFilesetPO.getFilesetId(), observedFilesetPO.getOccVersion())),
+                        observedFilesetPO.getFilesetId(), observedFilesetPO.getLastVersion())),
         () -> filesetWriteFailure(identifier, observedFilesetPO));
   }
 

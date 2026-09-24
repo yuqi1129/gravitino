@@ -845,7 +845,6 @@ public class TestPOConverters {
     assertEquals(updatedFileset.storageLocations(), storageLocations);
     assertEquals(2, updatePO1.getCurrentVersion());
     assertEquals(2, updatePO1.getLastVersion());
-    assertEquals(2, updatePO1.getOccVersion());
     assertEquals(2, updatePO1.getFilesetVersionPOs().get(0).getVersion());
     Map<String, String> updatedProperties =
         JsonUtils.anyFieldMapper()
@@ -857,17 +856,15 @@ public class TestPOConverters {
     // metadata row still pointing at the snapshot reads join through current_version.
     FilesetPO updatePO2 = POConverters.updateFilesetPOWithVersion(initPO, updatedFileset1, null);
     assertEquals("test1", updatePO2.getFilesetName());
-    assertEquals(2, updatePO2.getOccVersion());
+    assertEquals(2, updatePO2.getLastVersion());
     assertEquals(1, updatePO2.getCurrentVersion());
-    assertEquals(1, updatePO2.getLastVersion());
     assertTrue(updatePO2.getFilesetVersionPOs().isEmpty());
 
     // A snapshot stored above the version the metadata row records must not be rebuilt: the next
     // version starts above every snapshot the fileset still owns.
     FilesetPO updatePO3 = POConverters.updateFilesetPOWithVersion(initPO, updatedFileset, 7L);
     assertEquals(8, updatePO3.getCurrentVersion());
-    assertEquals(8, updatePO3.getLastVersion());
-    assertEquals(2, updatePO3.getOccVersion());
+    assertEquals(2, updatePO3.getLastVersion());
     assertEquals(8, updatePO3.getFilesetVersionPOs().get(0).getVersion());
   }
 
@@ -1769,7 +1766,6 @@ public class TestPOConverters {
         .withAuditInfo(JsonUtils.anyFieldMapper().writeValueAsString(auditInfo))
         .withCurrentVersion(1L)
         .withLastVersion(1L)
-        .withOccVersion(1L)
         .withDeletedAt(0L)
         .withFilesetVersionPOs(ImmutableList.of(filesetVersionPO))
         .build();
@@ -1835,7 +1831,6 @@ public class TestPOConverters {
         .withAuditInfo(JsonUtils.anyFieldMapper().writeValueAsString(auditInfo))
         .withCurrentVersion(1L)
         .withLastVersion(1L)
-        .withOccVersion(1L)
         .withDeletedAt(0L)
         .withPolicyVersionPO(policyVersionPO)
         .build();

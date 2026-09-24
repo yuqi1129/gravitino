@@ -35,7 +35,7 @@ public class FilesetMetaBaseSQLProvider {
 
   public String listFilesetPOsBySchemaId(@Param("schemaId") Long schemaId) {
     return "SELECT fm.fileset_id, fm.fileset_name, fm.metalake_id, fm.catalog_id, fm.schema_id,"
-        + " fm.type, fm.audit_info, fm.current_version, fm.last_version, fm.occ_version,"
+        + " fm.type, fm.audit_info, fm.current_version, fm.last_version,"
         + " fm.deleted_at,"
         + " vi.id, vi.metalake_id as version_metalake_id, vi.catalog_id as version_catalog_id,"
         + " vi.schema_id as version_schema_id, vi.fileset_id as version_fileset_id,"
@@ -64,7 +64,6 @@ public class FilesetMetaBaseSQLProvider {
             fm.audit_info,
             fm.current_version,
             fm.last_version,
-            fm.occ_version,
             fm.deleted_at,
             vi.id,
             vi.metalake_id as version_metalake_id,
@@ -117,7 +116,7 @@ public class FilesetMetaBaseSQLProvider {
   public String listFilesetPOsByFilesetIds(@Param("filesetIds") List<Long> filesetIds) {
     return "<script>"
         + "SELECT fm.fileset_id, fm.fileset_name, fm.metalake_id, fm.catalog_id, fm.schema_id,"
-        + " fm.type, fm.audit_info, fm.current_version, fm.last_version, fm.occ_version,"
+        + " fm.type, fm.audit_info, fm.current_version, fm.last_version,"
         + " fm.deleted_at,"
         + " vi.id, vi.metalake_id as version_metalake_id, vi.catalog_id as version_catalog_id,"
         + " vi.schema_id as version_schema_id, vi.fileset_id as version_fileset_id,"
@@ -140,7 +139,7 @@ public class FilesetMetaBaseSQLProvider {
   public String selectFilesetMetaBySchemaIdAndName(
       @Param("schemaId") Long schemaId, @Param("filesetName") String name) {
     return "SELECT fm.fileset_id, fm.fileset_name, fm.metalake_id, fm.catalog_id, fm.schema_id,"
-        + " fm.type, fm.audit_info, fm.current_version, fm.last_version, fm.occ_version,"
+        + " fm.type, fm.audit_info, fm.current_version, fm.last_version,"
         + " fm.deleted_at,"
         + " vi.id, vi.metalake_id as version_metalake_id, vi.catalog_id as version_catalog_id,"
         + " vi.schema_id as version_schema_id, vi.fileset_id as version_fileset_id,"
@@ -171,7 +170,6 @@ public class FilesetMetaBaseSQLProvider {
             fm.audit_info,
             fm.current_version,
             fm.last_version,
-            fm.occ_version,
             fm.deleted_at,
             vi.id,
             vi.metalake_id as version_metalake_id,
@@ -216,7 +214,7 @@ public class FilesetMetaBaseSQLProvider {
 
   public String selectFilesetMetaById(@Param("filesetId") Long filesetId) {
     return "SELECT fm.fileset_id, fm.fileset_name, fm.metalake_id, fm.catalog_id, fm.schema_id,"
-        + " fm.type, fm.audit_info, fm.current_version, fm.last_version, fm.occ_version,"
+        + " fm.type, fm.audit_info, fm.current_version, fm.last_version,"
         + " fm.deleted_at,"
         + " vi.id, vi.metalake_id as version_metalake_id, vi.catalog_id as version_catalog_id,"
         + " vi.schema_id as version_schema_id, vi.fileset_id as version_fileset_id,"
@@ -247,7 +245,7 @@ public class FilesetMetaBaseSQLProvider {
         + " metalake_id as metalakeId, catalog_id as catalogId, schema_id as schemaId,"
         + " type as type, audit_info as auditInfo,"
         + " current_version as currentVersion, last_version as lastVersion,"
-        + " occ_version as occVersion, deleted_at as deletedAt"
+        + " deleted_at as deletedAt"
         + " FROM "
         + META_TABLE_NAME
         + " WHERE schema_id = #{schemaId} AND fileset_name = #{filesetName}"
@@ -259,7 +257,7 @@ public class FilesetMetaBaseSQLProvider {
         + META_TABLE_NAME
         + " (fileset_id, fileset_name, metalake_id,"
         + " catalog_id, schema_id, type, audit_info,"
-        + " current_version, last_version, occ_version, deleted_at)"
+        + " current_version, last_version, deleted_at)"
         + " VALUES ("
         + " #{filesetMeta.filesetId},"
         + " #{filesetMeta.filesetName},"
@@ -270,7 +268,6 @@ public class FilesetMetaBaseSQLProvider {
         + " #{filesetMeta.auditInfo},"
         + " #{filesetMeta.currentVersion},"
         + " #{filesetMeta.lastVersion},"
-        + " #{filesetMeta.occVersion},"
         + " #{filesetMeta.deletedAt}"
         + " )";
   }
@@ -280,7 +277,7 @@ public class FilesetMetaBaseSQLProvider {
         + META_TABLE_NAME
         + " (fileset_id, fileset_name, metalake_id,"
         + " catalog_id, schema_id, type, audit_info,"
-        + " current_version, last_version, occ_version, deleted_at)"
+        + " current_version, last_version, deleted_at)"
         + " VALUES ("
         + " #{filesetMeta.filesetId},"
         + " #{filesetMeta.filesetName},"
@@ -291,7 +288,6 @@ public class FilesetMetaBaseSQLProvider {
         + " #{filesetMeta.auditInfo},"
         + " #{filesetMeta.currentVersion},"
         + " #{filesetMeta.lastVersion},"
-        + " #{filesetMeta.occVersion},"
         + " #{filesetMeta.deletedAt}"
         + " )"
         + " ON DUPLICATE KEY UPDATE"
@@ -305,7 +301,7 @@ public class FilesetMetaBaseSQLProvider {
         // value instead of resetting the row to the initial version carried by the incoming
         // create request. The history version is left alone: it is the join key into
         // fileset_version_info, and this statement writes no snapshot to move it to.
-        + " occ_version = occ_version + 1,"
+        + " last_version = last_version + 1,"
         + " deleted_at = #{filesetMeta.deletedAt}";
   }
 
@@ -313,7 +309,7 @@ public class FilesetMetaBaseSQLProvider {
    * Returns SQL that updates a fileset only while its OCC version is unchanged, and, when the alter
    * allocates a new snapshot, only while that snapshot version is free.
    *
-   * <p>{@code occ_version} is the concurrency token, so payload, name, and audit columns are
+   * <p>{@code last_version} is the concurrency token, so payload, name, and audit columns are
    * deliberately excluded from the predicate. This also detects change-then-change-back races that
    * a full-row comparison would miss.
    *
@@ -341,10 +337,9 @@ public class FilesetMetaBaseSQLProvider {
             + " audit_info = #{newFilesetMeta.auditInfo},"
             + " current_version = #{newFilesetMeta.currentVersion},"
             + " last_version = #{newFilesetMeta.lastVersion},"
-            + " occ_version = #{newFilesetMeta.occVersion},"
             + " deleted_at = #{newFilesetMeta.deletedAt}"
             + " WHERE fileset_id = #{oldFilesetMeta.filesetId}"
-            + " AND occ_version = #{oldFilesetMeta.occVersion}"
+            + " AND last_version = #{oldFilesetMeta.lastVersion}"
             + " AND deleted_at = 0";
     // Null POs only reach this method from SQL-text probes. Keep the stricter guard then,
     // rather than emit a statement that skips a check the caller may have needed.
@@ -398,17 +393,17 @@ public class FilesetMetaBaseSQLProvider {
    * observed.
    *
    * @param filesetId the fileset ID
-   * @param occVersion the OCC version observed by the caller
+   * @param lastVersion the OCC version observed by the caller
    * @return the version-checked delete SQL
    */
   public String softDeleteFilesetMetasByFilesetId(
-      @Param("filesetId") Long filesetId, @Param("occVersion") Long occVersion) {
+      @Param("filesetId") Long filesetId, @Param("lastVersion") Long lastVersion) {
     return "UPDATE "
         + META_TABLE_NAME
         + " SET deleted_at = "
         + DatabaseTimeSQL.MYSQL
         + " WHERE fileset_id = #{filesetId}"
-        + " AND occ_version = #{occVersion} AND deleted_at = 0";
+        + " AND last_version = #{lastVersion} AND deleted_at = 0";
   }
 
   public String deleteFilesetMetasByLegacyTimeline(
@@ -425,7 +420,7 @@ public class FilesetMetaBaseSQLProvider {
       @Param("filesetNames") List<String> filesetNames) {
     return "<script>"
         + "SELECT fm.fileset_id, fm.fileset_name, fm.metalake_id, fm.catalog_id, fm.schema_id,"
-        + " fm.type, fm.audit_info, fm.current_version, fm.last_version, fm.occ_version,"
+        + " fm.type, fm.audit_info, fm.current_version, fm.last_version,"
         + " fm.deleted_at,"
         + " vi.id, vi.metalake_id as version_metalake_id, vi.catalog_id as version_catalog_id,"
         + " vi.schema_id as version_schema_id, vi.fileset_id as version_fileset_id,"

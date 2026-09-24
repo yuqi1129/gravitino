@@ -26,12 +26,12 @@ import org.apache.gravitino.storage.relational.mapper.provider.base.PolicyMetaBa
 public class PolicyMetaPostgreSQLProvider extends PolicyMetaBaseSQLProvider {
 
   @Override
-  public String softDeletePolicyByIdAndVersion(Long policyId, Long occVersion) {
+  public String softDeletePolicyByIdAndVersion(Long policyId, Long lastVersion) {
     return "UPDATE "
         + POLICY_META_TABLE_NAME
         + " SET deleted_at = "
         + DatabaseTimeSQL.POSTGRESQL
-        + " WHERE policy_id = #{policyId} AND occ_version = #{occVersion}"
+        + " WHERE policy_id = #{policyId} AND last_version = #{lastVersion}"
         + " AND deleted_at = 0";
   }
 

@@ -445,14 +445,37 @@ public class TestFilesetMetaService extends TestJDBCBackend {
 
     FilesetPO afterRename = getFilesetPO(fileset.id());
     assertEquals(renamed, afterRename.getFilesetName());
-    assertEquals(initialPO.getOccVersion() + 1, afterRename.getOccVersion().longValue());
+    assertEquals(initialPO.getLastVersion() + 1, afterRename.getLastVersion().longValue());
     assertEquals(initialPO.getCurrentVersion(), afterRename.getCurrentVersion());
-    assertEquals(initialPO.getLastVersion(), afterRename.getLastVersion());
     assertEquals(1, listFilesetVersions(fileset.id()).size());
     assertEquals(2, countFilesetVersionRows(fileset.id()));
 
+    // A second metadata-only update makes last_version diverge from current_version.
+    String renamedAgain = renamed + "_again";
+    FilesetMetaService.getInstance()
+        .updateFileset(
+            NameIdentifier.of(metalakeName, catalogName, schemaName, renamed),
+            entity -> {
+              FilesetEntity current = (FilesetEntity) entity;
+              return FilesetEntity.builder()
+                  .withId(current.id())
+                  .withName(renamedAgain)
+                  .withNamespace(current.namespace())
+                  .withFilesetType(current.filesetType())
+                  .withStorageLocations(current.storageLocations())
+                  .withComment(current.comment())
+                  .withProperties(current.properties())
+                  .withAuditInfo(current.auditInfo())
+                  .build();
+            });
+    FilesetPO afterSecondRename = getFilesetPO(fileset.id());
+    assertEquals(afterRename.getLastVersion() + 1, afterSecondRename.getLastVersion().longValue());
+    assertEquals(afterRename.getCurrentVersion(), afterSecondRename.getCurrentVersion());
+    assertEquals(1, listFilesetVersions(fileset.id()).size());
+
     // Changing the comment does change stored content, so it allocates a snapshot per location.
-    NameIdentifier renamedIdent = NameIdentifier.of(metalakeName, catalogName, schemaName, renamed);
+    NameIdentifier renamedIdent =
+        NameIdentifier.of(metalakeName, catalogName, schemaName, renamedAgain);
     FilesetMetaService.getInstance()
         .updateFileset(
             renamedIdent,
@@ -471,9 +494,9 @@ public class TestFilesetMetaService extends TestJDBCBackend {
             });
 
     FilesetPO afterComment = getFilesetPO(fileset.id());
-    assertEquals(afterRename.getOccVersion() + 1, afterComment.getOccVersion().longValue());
-    assertEquals(afterRename.getCurrentVersion() + 1, afterComment.getCurrentVersion().longValue());
-    assertEquals(afterComment.getCurrentVersion(), afterComment.getLastVersion());
+    assertEquals(afterSecondRename.getLastVersion() + 1, afterComment.getLastVersion().longValue());
+    assertEquals(
+        afterSecondRename.getCurrentVersion() + 1, afterComment.getCurrentVersion().longValue());
     assertEquals(2, listFilesetVersions(fileset.id()).size());
     assertEquals(4, countFilesetVersionRows(fileset.id()));
 
@@ -528,7 +551,7 @@ public class TestFilesetMetaService extends TestJDBCBackend {
                     filesetIdent,
                     e -> {
                       // Commit another alter after the outer call has read its snapshot. The
-                      // outer write must then lose the occ_version comparison.
+                      // outer write must then lose the last_version comparison.
                       updateFilesetUnchecked(
                           filesetIdent,
                           entity ->
@@ -551,9 +574,9 @@ public class TestFilesetMetaService extends TestJDBCBackend {
     FilesetPO currentPO = getFilesetPO(filesetEntity.id());
     // The alter that won changed only the audit info, which fileset_version_info does not store,
     // so it advanced the OCC token alone and the row still points at its original snapshot.
-    Assertions.assertEquals(initialPO.getOccVersion() + 1, currentPO.getOccVersion().longValue());
+    Assertions.assertEquals(initialPO.getLastVersion() + 1, currentPO.getLastVersion().longValue());
     Assertions.assertEquals(initialPO.getCurrentVersion(), currentPO.getCurrentVersion());
-    Assertions.assertEquals(currentPO.getCurrentVersion(), currentPO.getLastVersion());
+    Assertions.assertEquals(initialPO.getLastVersion() + 1, currentPO.getLastVersion().longValue());
     Assertions.assertEquals(1, listFilesetVersions(filesetEntity.id()).size());
   }
 
@@ -751,7 +774,7 @@ public class TestFilesetMetaService extends TestJDBCBackend {
     FilesetMetaService.getInstance().insertFileset(fileset, false);
     FilesetPO stalePO = getFilesetPO(fileset.id());
 
-    // An audit-only alter advances occ_version and deliberately leaves current_version alone. A
+    // An audit-only alter advances last_version and deliberately leaves current_version alone. A
     // drop still guarded by current_version would not notice it and would delete a fileset the
     // caller never observed in its current state.
     AuditInfo laterAudit =
@@ -764,7 +787,7 @@ public class TestFilesetMetaService extends TestJDBCBackend {
 
     FilesetPO afterAlter = getFilesetPO(fileset.id());
     Assertions.assertEquals(stalePO.getCurrentVersion(), afterAlter.getCurrentVersion());
-    Assertions.assertEquals(stalePO.getOccVersion() + 1, afterAlter.getOccVersion().longValue());
+    Assertions.assertEquals(stalePO.getLastVersion() + 1, afterAlter.getLastVersion().longValue());
 
     Assertions.assertThrows(
         OptimisticLockException.class,

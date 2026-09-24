@@ -133,12 +133,12 @@ public class FilesetMetaSQLProviderFactory {
    * Returns SQL that soft-deletes a fileset by ID and expected version.
    *
    * @param filesetId the fileset ID
-   * @param occVersion the OCC version observed by the caller
+   * @param lastVersion the row revision observed by the caller
    * @return the version-checked delete SQL
    */
   public static String softDeleteFilesetMetasByFilesetId(
-      @Param("filesetId") Long filesetId, @Param("occVersion") Long occVersion) {
-    return getProvider().softDeleteFilesetMetasByFilesetId(filesetId, occVersion);
+      @Param("filesetId") Long filesetId, @Param("lastVersion") Long lastVersion) {
+    return getProvider().softDeleteFilesetMetasByFilesetId(filesetId, lastVersion);
   }
 
   public String deleteFilesetMetasByLegacyTimeline(

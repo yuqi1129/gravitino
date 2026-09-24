@@ -61,13 +61,13 @@ public class FilesetMetaPostgreSQLProvider extends FilesetMetaBaseSQLProvider {
   }
 
   @Override
-  public String softDeleteFilesetMetasByFilesetId(Long filesetId, Long occVersion) {
+  public String softDeleteFilesetMetasByFilesetId(Long filesetId, Long lastVersion) {
     return "UPDATE "
         + META_TABLE_NAME
         + " SET deleted_at = "
         + DatabaseTimeSQL.POSTGRESQL
         + " WHERE fileset_id = #{filesetId}"
-        + " AND occ_version = #{occVersion} AND deleted_at = 0";
+        + " AND last_version = #{lastVersion} AND deleted_at = 0";
   }
 
   @Override
@@ -86,7 +86,7 @@ public class FilesetMetaPostgreSQLProvider extends FilesetMetaBaseSQLProvider {
         + META_TABLE_NAME
         + " (fileset_id, fileset_name, metalake_id,"
         + " catalog_id, schema_id, type, audit_info,"
-        + " current_version, last_version, occ_version, deleted_at)"
+        + " current_version, last_version, deleted_at)"
         + " VALUES ("
         + " #{filesetMeta.filesetId},"
         + " #{filesetMeta.filesetName},"
@@ -97,7 +97,6 @@ public class FilesetMetaPostgreSQLProvider extends FilesetMetaBaseSQLProvider {
         + " #{filesetMeta.auditInfo},"
         + " #{filesetMeta.currentVersion},"
         + " #{filesetMeta.lastVersion},"
-        + " #{filesetMeta.occVersion},"
         + " #{filesetMeta.deletedAt}"
         + " )"
         // Overwrite is selected by name, and a create request normally carries a newly generated
@@ -116,9 +115,9 @@ public class FilesetMetaPostgreSQLProvider extends FilesetMetaBaseSQLProvider {
         // this statement writes no snapshot to move it to.
         //
         // PostgreSQL requires the stored row to be qualified on the update side of ON CONFLICT.
-        + " occ_version = "
+        + " last_version = "
         + META_TABLE_NAME
-        + ".occ_version + 1,"
+        + ".last_version + 1,"
         + " deleted_at = #{filesetMeta.deletedAt}";
   }
 }

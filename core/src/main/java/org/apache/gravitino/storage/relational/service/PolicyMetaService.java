@@ -471,7 +471,7 @@ public class PolicyMetaService {
                 PolicyMetaMapper.class,
                 mapper ->
                     mapper.softDeletePolicyByIdAndVersion(
-                        observedPolicyPO.getPolicyId(), observedPolicyPO.getOccVersion())),
+                        observedPolicyPO.getPolicyId(), observedPolicyPO.getLastVersion())),
         () -> policyWriteFailure(identifier, observedPolicyPO));
   }
 

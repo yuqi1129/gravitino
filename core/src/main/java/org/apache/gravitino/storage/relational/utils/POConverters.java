@@ -687,7 +687,6 @@ public class POConverters {
           .withAuditInfo(JsonUtils.anyFieldMapper().writeValueAsString(filesetEntity.auditInfo()))
           .withCurrentVersion(INIT_VERSION)
           .withLastVersion(INIT_VERSION)
-          .withOccVersion(INIT_VERSION)
           .withDeletedAt(DEFAULT_DELETED_AT)
           .withFilesetVersionPOs(filesetVersionPOs)
           .build();
@@ -709,8 +708,8 @@ public class POConverters {
   public static FilesetPO updateFilesetPOWithVersion(
       FilesetPO oldFilesetPO, FilesetEntity newFileset, @Nullable Long maxStoredVersion) {
     try {
-      // Every successful fileset alter advances the OCC token, which is the value the CAS compares.
-      Long occVersion = oldFilesetPO.getOccVersion() + 1;
+      // last_version is the row revision and advances even when no content snapshot is written.
+      Long rowRevision = oldFilesetPO.getLastVersion() + 1;
       String props = JsonUtils.anyFieldMapper().writeValueAsString(newFileset.properties());
 
       // The current version is a different thing: it is the join key reads use to find the fileset
@@ -720,8 +719,7 @@ public class POConverters {
       if (filesetSnapshotUnchanged(oldFilesetPO, newFileset, props)) {
         return newFilesetPOBuilder(oldFilesetPO, newFileset)
             .withCurrentVersion(oldFilesetPO.getCurrentVersion())
-            .withLastVersion(oldFilesetPO.getLastVersion())
-            .withOccVersion(occVersion)
+            .withLastVersion(rowRevision)
             .withFilesetVersionPOs(Collections.emptyList())
             .build();
       }
@@ -730,8 +728,7 @@ public class POConverters {
       // version reset was fixed can carry snapshots newer than the version its metadata row
       // records. Starting from the metadata row alone would rebuild a version that already exists
       // and collide with the unique key over (fileset_id, version, storage_location_name).
-      long previousVersion =
-          Math.max(oldFilesetPO.getLastVersion(), oldFilesetPO.getCurrentVersion());
+      long previousVersion = oldFilesetPO.getCurrentVersion();
       if (maxStoredVersion != null) {
         previousVersion = Math.max(previousVersion, maxStoredVersion);
       }
@@ -755,8 +752,7 @@ public class POConverters {
               .collect(Collectors.toList());
       return newFilesetPOBuilder(oldFilesetPO, newFileset)
           .withCurrentVersion(currentVersion)
-          .withLastVersion(currentVersion)
-          .withOccVersion(occVersion)
+          .withLastVersion(rowRevision)
           .withFilesetVersionPOs(newFilesetVersionPOs)
           .build();
     } catch (JsonProcessingException e) {
@@ -1584,7 +1580,6 @@ public class POConverters {
           .withAuditInfo(JsonUtils.anyFieldMapper().writeValueAsString(policyEntity.auditInfo()))
           .withCurrentVersion(INIT_VERSION)
           .withLastVersion(INIT_VERSION)
-          .withOccVersion(INIT_VERSION)
           .withDeletedAt(DEFAULT_DELETED_AT)
           .withPolicyVersionPO(policyVersionPO)
           .build();
@@ -1850,8 +1845,8 @@ public class POConverters {
       String policyComment,
       boolean enabled,
       String content) {
-    // Every successful policy alter advances the OCC token, which is the value the CAS compares.
-    Long occVersion = oldPolicyPO.getOccVersion() + 1;
+    // last_version is the row revision and advances even when no content snapshot is written.
+    Long rowRevision = oldPolicyPO.getLastVersion() + 1;
 
     // The current version is the join key reads use to find the policy content, so it may only
     // point at a version that has a stored snapshot. An alter that leaves comment, enabled and
@@ -1869,14 +1864,13 @@ public class POConverters {
           .withMetalakeId(oldPolicyPO.getMetalakeId())
           .withAuditInfo(auditInfo)
           .withCurrentVersion(oldPolicyPO.getCurrentVersion())
-          .withLastVersion(oldPolicyPO.getLastVersion())
-          .withOccVersion(occVersion)
+          .withLastVersion(rowRevision)
           .withDeletedAt(DEFAULT_DELETED_AT)
           .withPolicyVersionPO(storedVersionPO)
           .build();
     }
 
-    Long nextVersion = Math.max(oldPolicyPO.getCurrentVersion(), oldPolicyPO.getLastVersion()) + 1;
+    Long nextVersion = oldPolicyPO.getCurrentVersion() + 1;
     PolicyVersionPO newPolicyVersionPO =
         PolicyVersionPO.builder()
             .withMetalakeId(oldPolicyPO.getMetalakeId())
@@ -1894,8 +1888,7 @@ public class POConverters {
         .withMetalakeId(oldPolicyPO.getMetalakeId())
         .withAuditInfo(auditInfo)
         .withCurrentVersion(nextVersion)
-        .withLastVersion(nextVersion)
-        .withOccVersion(occVersion)
+        .withLastVersion(rowRevision)
         .withDeletedAt(DEFAULT_DELETED_AT)
         .withPolicyVersionPO(newPolicyVersionPO)
         .build();
