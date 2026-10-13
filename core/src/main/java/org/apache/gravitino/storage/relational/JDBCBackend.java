@@ -72,6 +72,7 @@ import org.apache.gravitino.meta.UserEntity;
 import org.apache.gravitino.meta.ViewEntity;
 import org.apache.gravitino.storage.relational.converters.SQLExceptionConverterFactory;
 import org.apache.gravitino.storage.relational.database.H2Database;
+import org.apache.gravitino.storage.relational.mapper.MetalakeMetaMapper;
 import org.apache.gravitino.storage.relational.po.cache.OperateType;
 import org.apache.gravitino.storage.relational.service.CatalogMetaService;
 import org.apache.gravitino.storage.relational.service.FilesetMetaService;
@@ -409,6 +410,37 @@ public class JDBCBackend implements RelationalBackend, SupportsOrphanedRelationC
         SessionUtils.rollbackTransaction();
       }
     }
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public <E extends Entity & HasIdentifier> boolean deleteIfUnused(
+      E observed, List<? extends Entity> permittedChildren) {
+    if (observed.type() != Entity.EntityType.CATALOG
+        && observed.type() != Entity.EntityType.METALAKE) {
+      throw new IllegalArgumentException("Lifecycle deletion supports only catalogs and metalakes");
+    }
+    return SessionUtils.doWithCommitAndFetchResult(
+        MetalakeMetaMapper.class,
+        ignored -> {
+          boolean deleted;
+          if (observed.type() == Entity.EntityType.CATALOG) {
+            deleted =
+                CatalogMetaService.getInstance()
+                    .deleteCatalogIfUnused((CatalogEntity) observed, permittedChildren);
+          } else {
+            if (!permittedChildren.isEmpty()) {
+              throw new IllegalArgumentException("A metalake cannot permit child catalogs");
+            }
+            deleted =
+                MetalakeMetaService.getInstance().deleteMetalakeIfUnused((BaseMetalake) observed);
+          }
+          if (deleted) {
+            EntityChangeLogWriter.append(
+                observed.nameIdentifier(), observed.type(), OperateType.DROP);
+          }
+          return deleted;
+        });
   }
 
   @Override

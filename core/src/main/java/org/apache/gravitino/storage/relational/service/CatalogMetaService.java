@@ -23,17 +23,23 @@ import static org.apache.gravitino.metrics.source.MetricsSource.GRAVITINO_RELATI
 import com.google.common.base.Preconditions;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.apache.gravitino.Catalog;
 import org.apache.gravitino.Entity;
 import org.apache.gravitino.HasIdentifier;
 import org.apache.gravitino.MetadataObject;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Namespace;
+import org.apache.gravitino.exceptions.CatalogInUseException;
+import org.apache.gravitino.exceptions.MetalakeNotInUseException;
 import org.apache.gravitino.exceptions.NoSuchEntityException;
 import org.apache.gravitino.exceptions.NonEmptyEntityException;
+import org.apache.gravitino.exceptions.OptimisticLockException;
 import org.apache.gravitino.meta.CatalogEntity;
+import org.apache.gravitino.meta.SchemaEntity;
 import org.apache.gravitino.metrics.Monitored;
 import org.apache.gravitino.storage.relational.helper.CatalogIds;
 import org.apache.gravitino.storage.relational.mapper.CatalogMetaMapper;
@@ -268,6 +274,91 @@ public class CatalogMetaService {
     return newEntity;
   }
 
+  /**
+   * Deletes a disabled catalog only when its observed state and permitted schemas still match.
+   *
+   * @param observed the catalog observed before any external checks
+   * @param permittedChildren schema snapshots approved for registration cleanup
+   * @return true when deleted
+   */
+  public boolean deleteCatalogIfUnused(
+      CatalogEntity observed, List<? extends Entity> permittedChildren) {
+    for (Entity child : permittedChildren) {
+      Preconditions.checkArgument(
+          child instanceof SchemaEntity,
+          "Only schema snapshots may be permitted for catalog deletion");
+    }
+    return SessionUtils.doWithCommitAndFetchResult(
+        MetalakeMetaMapper.class,
+        metalakeMapper -> {
+          CatalogPO candidate = getCatalogPOByName(observed.namespace().level(0), observed.name());
+          MetalakePO metalake =
+              metalakeMapper.selectMetalakeMetaByIdForShare(candidate.getMetalakeId());
+          if (metalake == null) {
+            throw new NoSuchEntityException(
+                "Metalake %s no longer exists", observed.namespace().level(0));
+          }
+          if (!metalake.getMetalakeName().equals(observed.namespace().level(0))) {
+            throw new OptimisticLockException("Metalake changed before catalog deletion");
+          }
+          Map<String, String> metalakeProperties =
+              POConverters.fromMetalakePO(metalake).properties();
+          if (metalakeProperties != null
+              && !Boolean.parseBoolean(
+                  metalakeProperties.getOrDefault(Catalog.PROPERTY_IN_USE, "true"))) {
+            throw new MetalakeNotInUseException(
+                "Metalake %s is not in use", observed.namespace().level(0));
+          }
+          CatalogPO current =
+              SessionUtils.getWithoutCommit(
+                  CatalogMetaMapper.class,
+                  mapper -> mapper.selectCatalogMetaByIdForUpdate(candidate.getCatalogId()));
+          if (current == null) {
+            throw new OptimisticLockException(
+                "Catalog %s changed before deletion", observed.nameIdentifier());
+          }
+          CatalogEntity entity = POConverters.fromCatalogPO(current, observed.namespace());
+          if (entity.getProperties() == null
+              || Boolean.parseBoolean(
+                  entity.getProperties().getOrDefault(Catalog.PROPERTY_IN_USE, "true"))) {
+            throw new CatalogInUseException(
+                "Catalog %s is in use, please disable it first", observed.nameIdentifier());
+          }
+          if (!entity.fields().equals(observed.fields())
+              || !Objects.equals(current.getMetalakeId(), metalake.getMetalakeId())) {
+            throw new OptimisticLockException(
+                "Catalog %s changed before deletion", observed.nameIdentifier());
+          }
+          Namespace schemaNamespace = Namespace.of(observed.namespace().level(0), observed.name());
+          List<SchemaPO> schemas =
+              SessionUtils.getWithoutCommit(
+                  SchemaMetaMapper.class,
+                  mapper -> mapper.listSchemaPOsByCatalogIdForUpdate(current.getCatalogId()));
+          for (SchemaPO schema : schemas) {
+            Entity permitted =
+                permittedChildren.stream()
+                    .filter(
+                        child ->
+                            child.type() == Entity.EntityType.SCHEMA
+                                && Objects.equals(
+                                    ((HasIdentifier) child).id(), schema.getSchemaId()))
+                    .findFirst()
+                    .orElse(null);
+            if (permitted == null) {
+              throw new NonEmptyEntityException(
+                  "Catalog %s has an unapproved schema", observed.nameIdentifier());
+            }
+            if (!POConverters.fromSchemaPO(schema, schemaNamespace)
+                .fields()
+                .equals(permitted.fields())) {
+              throw new OptimisticLockException(
+                  "Schema %s changed before catalog deletion", schema.getSchemaName());
+            }
+          }
+          return deleteCatalog(observed.nameIdentifier(), true, current);
+        });
+  }
+
   @Monitored(
       metricsSource = GRAVITINO_RELATIONAL_STORE_METRIC_NAME,
       baseMetricName = "deleteCatalog")
@@ -277,6 +368,10 @@ public class CatalogMetaService {
     String catalogName = identifier.name();
     // Read the whole row, not just the ID, because the delete below needs the version we saw.
     CatalogPO catalogPO = getCatalogPOByName(identifier.namespace().level(0), catalogName);
+    return deleteCatalog(identifier, cascade, catalogPO);
+  }
+
+  private boolean deleteCatalog(NameIdentifier identifier, boolean cascade, CatalogPO catalogPO) {
     long catalogId = catalogPO.getCatalogId();
 
     if (cascade) {
@@ -376,7 +471,8 @@ public class CatalogMetaService {
             deleteCatalogWithVersion(identifier, catalogPO);
             List<SchemaPO> schemaPOs =
                 SessionUtils.getWithoutCommit(
-                    SchemaMetaMapper.class, mapper -> mapper.listSchemaPOsByCatalogId(catalogId));
+                    SchemaMetaMapper.class,
+                    mapper -> mapper.listSchemaPOsByCatalogIdForUpdate(catalogId));
             if (!schemaPOs.isEmpty()) {
               throw new NonEmptyEntityException(
                   "Entity %s has sub-entities, you should remove sub-entities first", identifier);
@@ -523,6 +619,6 @@ public class CatalogMetaService {
    */
   List<SchemaPO> listSchemaPOsForCascade(Long catalogId) {
     return SessionUtils.getWithoutCommit(
-        SchemaMetaMapper.class, mapper -> mapper.listSchemaPOsByCatalogId(catalogId));
+        SchemaMetaMapper.class, mapper -> mapper.listSchemaPOsByCatalogIdForUpdate(catalogId));
   }
 }

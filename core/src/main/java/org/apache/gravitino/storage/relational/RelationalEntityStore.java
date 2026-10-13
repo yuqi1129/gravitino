@@ -313,6 +313,19 @@ public class RelationalEntityStore
     }
   }
 
+  /** {@inheritDoc} */
+  @Override
+  public <E extends Entity & HasIdentifier> boolean deleteIfUnused(
+      E observed, List<? extends Entity> permittedChildren) throws IOException {
+    try {
+      return backend.deleteIfUnused(observed, permittedChildren);
+    } catch (NoSuchEntityException e) {
+      return false;
+    } finally {
+      invalidateCache(observed.nameIdentifier(), observed.type());
+    }
+  }
+
   @Override
   public <E extends Entity & HasIdentifier> Optional<E> deleteAndGet(
       NameIdentifier ident,

@@ -27,11 +27,14 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.apache.gravitino.Catalog;
 import org.apache.gravitino.Entity;
 import org.apache.gravitino.HasIdentifier;
 import org.apache.gravitino.NameIdentifier;
+import org.apache.gravitino.exceptions.MetalakeInUseException;
 import org.apache.gravitino.exceptions.NoSuchEntityException;
 import org.apache.gravitino.exceptions.NonEmptyEntityException;
+import org.apache.gravitino.exceptions.OptimisticLockException;
 import org.apache.gravitino.meta.BaseMetalake;
 import org.apache.gravitino.metrics.Monitored;
 import org.apache.gravitino.storage.relational.mapper.CatalogMetaMapper;
@@ -202,6 +205,48 @@ public class MetalakeMetaService {
     return newMetalakeEntity;
   }
 
+  /**
+   * Deletes an unchanged disabled metalake after checking current children in the same transaction.
+   *
+   * @param observed the observed metalake snapshot
+   * @return true when deleted
+   */
+  public boolean deleteMetalakeIfUnused(BaseMetalake observed) {
+    return SessionUtils.doWithCommitAndFetchResult(
+        MetalakeMetaMapper.class,
+        mapper -> {
+          MetalakePO candidate = mapper.selectMetalakeMetaByName(observed.name());
+          if (candidate == null) {
+            throw new NoSuchEntityException("Metalake %s no longer exists", observed.name());
+          }
+          MetalakePO current = mapper.selectMetalakeMetaByIdForUpdate(candidate.getMetalakeId());
+          if (current == null) {
+            throw new OptimisticLockException(
+                "Metalake %s changed before deletion", observed.name());
+          }
+          BaseMetalake entity = POConverters.fromMetalakePO(current);
+          if (entity.properties() == null
+              || Boolean.parseBoolean(
+                  entity.properties().getOrDefault(Catalog.PROPERTY_IN_USE, "true"))) {
+            throw new MetalakeInUseException(
+                "Metalake %s is in use, please disable it first", observed.name());
+          }
+          if (!entity.fields().equals(observed.fields())) {
+            throw new OptimisticLockException(
+                "Metalake %s changed before deletion", observed.name());
+          }
+          List<CatalogPO> catalogs =
+              SessionUtils.getWithoutCommit(
+                  CatalogMetaMapper.class,
+                  catalogMapper ->
+                      catalogMapper.listCatalogPOsByMetalakeIdForUpdate(current.getMetalakeId()));
+          if (!catalogs.isEmpty()) {
+            throw new NonEmptyEntityException("Metalake %s has catalogs", observed.name());
+          }
+          return deleteMetalake(observed.nameIdentifier(), false, current);
+        });
+  }
+
   @Monitored(
       metricsSource = GRAVITINO_RELATIONAL_STORE_METRIC_NAME,
       baseMetricName = "deleteMetalake")
@@ -216,6 +261,10 @@ public class MetalakeMetaService {
           Entity.EntityType.METALAKE.name().toLowerCase(),
           ident.toString());
     }
+    return deleteMetalake(ident, cascade, metalakePO);
+  }
+
+  private boolean deleteMetalake(NameIdentifier ident, boolean cascade, MetalakePO metalakePO) {
     Long metalakeId = metalakePO.getMetalakeId();
     Long currentVersion = metalakePO.getCurrentVersion();
     if (metalakeId != null) {

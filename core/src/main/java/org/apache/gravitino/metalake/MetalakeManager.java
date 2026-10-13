@@ -26,6 +26,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -372,7 +373,12 @@ public class MetalakeManager implements MetalakeDispatcher, Closeable {
           LockType.WRITE,
           () -> {
             try {
-              boolean inUse = metalakeInUse(store, ident);
+              BaseMetalake observed = store.get(ident, EntityType.METALAKE, BaseMetalake.class);
+              boolean inUse =
+                  (boolean)
+                      observed
+                          .propertiesMetadata()
+                          .getOrDefault(observed.properties(), PROPERTY_IN_USE);
               if (inUse && !force) {
                 throw new MetalakeInUseException(
                     "Metalake %s is in use, please disable it first or use force option", ident);
@@ -385,7 +391,15 @@ public class MetalakeManager implements MetalakeDispatcher, Closeable {
                     "Metalake %s has catalogs, please drop them first or use force option", ident);
               }
 
-              return store.delete(ident, EntityType.METALAKE, true);
+              if (force) {
+                return store.delete(ident, EntityType.METALAKE, true);
+              }
+              try {
+                return store.deleteIfUnused(observed, Collections.emptyList());
+              } catch (NonEmptyEntityException e) {
+                throw new NonEmptyMetalakeException(
+                    "Metalake %s has catalogs, please drop them first or use force option", ident);
+              }
             } catch (NoSuchMetalakeException | NoSuchEntityException e) {
               // Another server may have completed the drop after the initial existence check.
               // Dropping an already-removed metalake remains an idempotent false result.

@@ -46,6 +46,16 @@ public class SchemaMetaBaseSQLProvider {
         + " WHERE catalog_id = #{catalogId} AND deleted_at = 0";
   }
 
+  /**
+   * Returns SQL that locks current schemas in a stable order.
+   *
+   * @param catalogId the catalog ID
+   * @return locking query
+   */
+  public String listSchemaPOsByCatalogIdForUpdate(@Param("catalogId") Long catalogId) {
+    return listSchemaPOsByCatalogId(catalogId) + " ORDER BY schema_id FOR UPDATE";
+  }
+
   /** Returns SQL that lists all active schemas in a metalake. */
   public String listSchemaPOsByMetalakeId(@Param("metalakeId") Long metalakeId) {
     return "SELECT schema_id as schemaId, schema_name as schemaName,"

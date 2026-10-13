@@ -39,6 +39,17 @@ import org.apache.ibatis.annotations.UpdateProvider;
 public interface SchemaMetaMapper {
   String TABLE_NAME = "schema_meta";
 
+  /**
+   * Locks and reads current active schemas after the catalog row has been locked.
+   *
+   * @param catalogId the parent catalog ID
+   * @return current schemas ordered by ID
+   */
+  @SelectProvider(
+      type = SchemaMetaSQLProviderFactory.class,
+      method = "listSchemaPOsByCatalogIdForUpdate")
+  List<SchemaPO> listSchemaPOsByCatalogIdForUpdate(@Param("catalogId") Long catalogId);
+
   @SelectProvider(type = SchemaMetaSQLProviderFactory.class, method = "listSchemaPOsByCatalogId")
   List<SchemaPO> listSchemaPOsByCatalogId(@Param("catalogId") Long catalogId);
 

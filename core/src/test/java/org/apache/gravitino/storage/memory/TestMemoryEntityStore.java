@@ -27,11 +27,13 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.gravitino.Catalog;
 import org.apache.gravitino.Config;
 import org.apache.gravitino.Entity;
 import org.apache.gravitino.Entity.EntityType;
@@ -45,7 +47,12 @@ import org.apache.gravitino.TestCatalog;
 import org.apache.gravitino.authorization.AuthorizationUtils;
 import org.apache.gravitino.authorization.Privileges;
 import org.apache.gravitino.authorization.SecurableObjects;
+import org.apache.gravitino.exceptions.CatalogInUseException;
+import org.apache.gravitino.exceptions.MetalakeInUseException;
+import org.apache.gravitino.exceptions.MetalakeNotInUseException;
 import org.apache.gravitino.exceptions.NoSuchEntityException;
+import org.apache.gravitino.exceptions.NonEmptyEntityException;
+import org.apache.gravitino.exceptions.OptimisticLockException;
 import org.apache.gravitino.file.Fileset;
 import org.apache.gravitino.meta.AuditInfo;
 import org.apache.gravitino.meta.BaseMetalake;
@@ -172,6 +179,80 @@ public class TestMemoryEntityStore {
                         && key.name().startsWith(descendantPrefix));
       }
       return prev != null;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public <E extends Entity & HasIdentifier> boolean deleteIfUnused(
+        E observed, List<? extends Entity> permittedChildren) throws IOException {
+      return executeInTransaction(
+          () -> {
+            Entity current = entityMap.get(observed.nameIdentifier());
+            if (current == null) {
+              return false;
+            }
+            Map<String, String> props =
+                current instanceof CatalogEntity
+                    ? ((CatalogEntity) current).getProperties()
+                    : ((BaseMetalake) current).properties();
+            if (props == null
+                || Boolean.parseBoolean(props.getOrDefault(Catalog.PROPERTY_IN_USE, "true"))) {
+              if (current instanceof CatalogEntity) {
+                throw new CatalogInUseException("Catalog is in use");
+              }
+              throw new MetalakeInUseException("Metalake is in use");
+            }
+            if (!current.fields().equals(observed.fields())) {
+              throw new OptimisticLockException("Entity changed before deletion");
+            }
+            if (current instanceof CatalogEntity) {
+              BaseMetalake metalake =
+                  (BaseMetalake) entityMap.get(NameIdentifier.of(observed.namespace().level(0)));
+              if (metalake.properties() != null
+                  && !Boolean.parseBoolean(
+                      metalake.properties().getOrDefault(Catalog.PROPERTY_IN_USE, "true"))) {
+                throw new MetalakeNotInUseException("Metalake is not in use");
+              }
+            }
+            for (Entity child : entityMap.values()) {
+              if (!((HasIdentifier) child)
+                  .namespace()
+                  .toString()
+                  .equals(observed.nameIdentifier().toString())) {
+                continue;
+              }
+              if (current instanceof BaseMetalake && child.type() != EntityType.CATALOG
+                  || current instanceof CatalogEntity && child.type() != EntityType.SCHEMA) {
+                continue;
+              }
+              Entity permitted =
+                  permittedChildren.stream()
+                      .filter(
+                          e ->
+                              Objects.equals(
+                                  ((HasIdentifier) e).id(), ((HasIdentifier) child).id()))
+                      .findFirst()
+                      .orElse(null);
+              if (permitted == null) {
+                throw new NonEmptyEntityException("Entity has an unapproved child");
+              }
+              if (!permitted.fields().equals(child.fields())) {
+                throw new OptimisticLockException("Child changed before deletion");
+              }
+            }
+            entityMap
+                .keySet()
+                .removeIf(
+                    key ->
+                        key.equals(observed.nameIdentifier())
+                            || key.namespace()
+                                .toString()
+                                .equals(observed.nameIdentifier().toString())
+                            || key.namespace()
+                                .toString()
+                                .startsWith(observed.nameIdentifier().toString() + "."));
+            return true;
+          });
     }
 
     @Override

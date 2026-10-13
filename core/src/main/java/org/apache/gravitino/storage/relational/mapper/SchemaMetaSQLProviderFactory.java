@@ -59,6 +59,16 @@ public class SchemaMetaSQLProviderFactory {
     }
   }
 
+  /**
+   * Returns a current locking read of the catalog's schemas.
+   *
+   * @param catalogId the catalog ID
+   * @return locking query
+   */
+  public static String listSchemaPOsByCatalogIdForUpdate(@Param("catalogId") Long catalogId) {
+    return getProvider().listSchemaPOsByCatalogIdForUpdate(catalogId);
+  }
+
   public static String listSchemaPOsByFullQualifiedName(
       @Param("metalakeName") String metalakeName, @Param("catalogName") String catalogName) {
     return getProvider().listSchemaPOsByFullQualifiedName(metalakeName, catalogName);

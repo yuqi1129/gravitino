@@ -29,6 +29,8 @@ import java.util.function.Function;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.gravitino.Entity.EntityType;
 import org.apache.gravitino.exceptions.NoSuchEntityException;
+import org.apache.gravitino.exceptions.NonEmptyEntityException;
+import org.apache.gravitino.exceptions.OptimisticLockException;
 import org.apache.gravitino.utils.Executable;
 
 public interface EntityStore extends Closeable {
@@ -222,6 +224,32 @@ public interface EntityStore extends Closeable {
    * @throws IOException if the delete operation fails
    */
   boolean delete(NameIdentifier ident, EntityType entityType, boolean cascade) throws IOException;
+
+  /**
+   * Deletes an unchanged, disabled catalog or metalake with only explicitly permitted children.
+   *
+   * <p>The store must check the observed entity's identity and metadata, its current in-use state,
+   * and its current children atomically with deletion. Permitted children are unchanged snapshots
+   * of schema registrations approved for cleanup by the caller; metalakes permit no catalogs. A
+   * catalog's metalake must still be enabled. No external calls are made by this operation.
+   *
+   * <p>Implementations that cannot enforce these conditions must reject the operation rather than
+   * fall back to a check followed by an unconditional cascade.
+   *
+   * @param observed the entity snapshot on which the caller based its decision
+   * @param permittedChildren the child snapshots approved for cleanup
+   * @param <E> the entity type
+   * @return true if deleted, false if the named entity no longer exists
+   * @throws IOException if deletion fails
+   * @throws OptimisticLockException if an observed entity changed
+   * @throws NonEmptyEntityException if an unapproved child exists
+   * @throws UnsupportedOperationException if the store cannot enforce the conditions
+   */
+  default <E extends Entity & HasIdentifier> boolean deleteIfUnused(
+      E observed, List<? extends Entity> permittedChildren) throws IOException {
+    throw new UnsupportedOperationException(
+        "This store cannot enforce lifecycle delete conditions");
+  }
 
   /**
    * The only post-delete action an implementation that cannot run it before commit accepts.

@@ -99,6 +99,7 @@ import org.apache.gravitino.exceptions.NoSuchMetalakeException;
 import org.apache.gravitino.exceptions.NoSuchSchemaException;
 import org.apache.gravitino.exceptions.NonEmptyCatalogException;
 import org.apache.gravitino.exceptions.NonEmptyEntityException;
+import org.apache.gravitino.exceptions.OptimisticLockException;
 import org.apache.gravitino.file.FilesetCatalog;
 import org.apache.gravitino.lock.LockType;
 import org.apache.gravitino.lock.TreeLockUtils;
@@ -1369,6 +1370,15 @@ public class CatalogManager implements CatalogDispatcher, Closeable {
         () -> {
           try (CatalogLease lease = acquireCatalogLease(ident)) {
             CatalogWrapper catalogWrapper = lease.wrapper();
+            @Nullable
+            CatalogEntity observedCatalog =
+                force ? null : store.get(ident, EntityType.CATALOG, CatalogEntity.class);
+            if (observedCatalog != null
+                && !convertFilesetCatalogEntity(observedCatalog)
+                    .fields()
+                    .equals(catalogWrapper.catalog().entity().fields())) {
+              throw new OptimisticLockException("Catalog %s changed before deletion", ident);
+            }
             catalogWrapper.catalog().checkMetalakeInUse();
 
             boolean catalogInUse = catalogWrapper.catalog().catalogInUse();
@@ -1418,7 +1428,16 @@ public class CatalogManager implements CatalogDispatcher, Closeable {
             // the cache with stale data between invalidate and delete.
             Map<String, String> catalogProperties =
                 copyProperties(catalogWrapper.catalog().entity().getProperties());
-            boolean deleted = store.delete(ident, EntityType.CATALOG, true);
+            boolean deleted;
+            try {
+              deleted =
+                  force
+                      ? store.delete(ident, EntityType.CATALOG, true)
+                      : store.deleteIfUnused(observedCatalog, schemaEntities);
+            } catch (NonEmptyEntityException e) {
+              throw new NonEmptyCatalogException(
+                  "Catalog %s has schemas, please drop them first or use force option", ident);
+            }
             if (deleted) {
               markLocalMutation(ident);
               try {
