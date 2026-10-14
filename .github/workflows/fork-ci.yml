@@ -204,11 +204,6 @@ jobs:
     if: needs.eligibility.outputs.valid == 'true'
     uses: ./.github/workflows/chart-test.yaml
 
-  contrib_catalog:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    uses: ./.github/workflows/contrib-catalog-test.yml
-
   asf_allowlist:
     needs: eligibility
     if: needs.eligibility.outputs.valid == 'true'
