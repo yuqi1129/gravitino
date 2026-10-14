@@ -20,7 +20,7 @@ name: Update Fork CI Status
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '3-59/5 * * * *'
 
 permissions:
   actions: read
@@ -37,13 +37,14 @@ jobs:
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          retries: 3
           script: |
             const prs = await github.paginate(
               'GET /repos/{owner}/{repo}/pulls',
               { owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100 });
 
-            for (const pr of prs) {
-              if (!pr.head.repo) continue;
+            const syncPr = async pr => {
+              if (!pr.head.repo) return;
               const owner = pr.head.repo.owner.login;
               const repo = pr.head.repo.name;
               let runs;
@@ -53,7 +54,7 @@ jobs:
                   { owner, repo, workflow_id: 'fork-ci.yml', branch: pr.head.ref, per_page: 100 });
               } catch (error) {
                 core.warning(`Unable to read ${owner}/${repo}: ${error.message}`);
-                continue;
+                return;
               }
 
               const run = runs.find(candidate => candidate.head_sha === pr.head.sha);
@@ -109,4 +110,18 @@ jobs:
                 await github.rest.checks.update(params);
               }
 
+            };
+
+            // Keep one pull request's failure from stopping the rest of the sweep.
+            const failed = [];
+            for (const pr of prs) {
+              try {
+                await syncPr(pr);
+              } catch (error) {
+                failed.push(pr.number);
+                core.warning(`Unable to update Fork CI for #${pr.number}: ${error.message}`);
+              }
+            }
+            if (failed.length) {
+              core.setFailed(`Fork CI checks were not updated for: ${failed.map(n => `#${n}`).join(', ')}`);
             }
