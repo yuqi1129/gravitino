@@ -101,6 +101,13 @@ jobs:
             sleep 15
           done
 
+          if [[ "${match_count}" == "0" && "${HEAD_REPOSITORY}" == "timelyflow/gravitino" ]]; then
+            # Branches in the upstream repository only run for pull requests.
+            echo "No open pull request for ${HEAD_BRANCH}; Fork CI is dormant."
+            echo "applicable=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
           if [[ "${match_count}" == "0" ]]; then
             # No pull request yet: test against the upstream default branch so the
             # run is still useful and is mirrored once the pull request is opened.
