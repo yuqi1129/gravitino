@@ -18,6 +18,7 @@
 name: Update Fork CI Status
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: '*/15 * * * *'
 
