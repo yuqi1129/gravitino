@@ -48,7 +48,7 @@ runs:
       run: |
         set -euo pipefail
 
-        if [[ "${GITHUB_REPOSITORY}" == "apache/gravitino" && \
+        if [[ "${GITHUB_REPOSITORY}" == "timelyflow/gravitino" && \
           ("${GITHUB_REF}" == "refs/heads/main" || "${GITHUB_REF}" == refs/heads/branch-*) ]]; then
           echo "base_ref=${GITHUB_REF_NAME}" >> "${GITHUB_OUTPUT}"
           echo "should_sync=false" >> "${GITHUB_OUTPUT}"
@@ -80,7 +80,7 @@ runs:
             --data-urlencode "state=open" \
             --data-urlencode "head=${HEAD_OWNER}:${HEAD_BRANCH}" \
             --data-urlencode "per_page=10" \
-            "https://api.github.com/repos/apache/gravitino/pulls")"
+            "https://api.github.com/repos/timelyflow/gravitino/pulls")"
           match_count="$(jq -r \
             --arg head_sha "${HEAD_SHA}" \
             --arg head_repository "${HEAD_REPOSITORY}" \
@@ -96,7 +96,7 @@ runs:
         done
 
         if [[ "${match_count}" != "1" ]]; then
-          echo "::error::Expected one open apache/gravitino pull request for ${HEAD_REPOSITORY}:${HEAD_BRANCH} at ${HEAD_SHA}, found ${match_count}."
+          echo "::error::Expected one open timelyflow/gravitino pull request for ${HEAD_REPOSITORY}:${HEAD_BRANCH} at ${HEAD_SHA}, found ${match_count}."
           exit 1
         fi
 
@@ -116,7 +116,7 @@ runs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        repository: apache/gravitino
+        repository: timelyflow/gravitino
         ref: ${{ steps.base.outputs.base_ref }}
 
     - name: Resolve upstream base commit
