@@ -122,6 +122,7 @@ import org.slf4j.LoggerFactory;
 /*
  * This class manages the Apache Gravitino environment.
  */
+// Fork CI sandbox: contributor change from timelyflow.
 public class GravitinoEnv {
 
   private static final Logger LOG = LoggerFactory.getLogger(GravitinoEnv.class);
