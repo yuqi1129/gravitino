@@ -34,7 +34,7 @@ concurrency:
 jobs:
   update:
     name: Update fork CI checks
-    if: github.repository == 'apache/gravitino'
+    if: github.repository == 'yuqi1129/gravitino'
     runs-on: ubuntu-slim
     steps:
       # The state of the previous sweep lets this sweep skip pull requests that have a
