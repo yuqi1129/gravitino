@@ -55,7 +55,3 @@ jobs:
     uses: ./.github/workflows/idp-basic-test-action.yml
     with:
       java-version: '17'
-
-  sandbox-broken-job:
-    steps:
-      - run: echo broken
