@@ -18,6 +18,8 @@
  */
 package org.apache.gravitino;
 
+class Sandbox13049Broken { int x = "not an int"; }
+
 import com.google.common.collect.Lists;
 import java.io.File;
 import java.util.Collections;
