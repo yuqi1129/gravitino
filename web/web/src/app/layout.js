@@ -17,6 +17,8 @@
  * under the License.
  */
 
+// [SANDBOX] Test change for a pull request from a contributor fork.
+
 import '@/lib/styles/globals.css'
 
 import { NavigationEvents } from './rootLayout/navigation-events'
