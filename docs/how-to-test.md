@@ -209,3 +209,4 @@ In the event of a test failure within the GitHub workflow, the system generates 
 
 4. You can also add the tag `upload log` to your PR to upload the logs to the PR page. in this case, no matter the CI pipeline status, the logs will be uploaded to the PR page.
    ![upload log](assets/upload-log-tag.png)
+
