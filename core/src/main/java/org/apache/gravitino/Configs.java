@@ -18,6 +18,8 @@
  */
 package org.apache.gravitino;
 
+// Sandbox change for fork CI verification (#13049).
+
 import com.google.common.collect.Lists;
 import java.io.File;
 import java.util.Collections;
