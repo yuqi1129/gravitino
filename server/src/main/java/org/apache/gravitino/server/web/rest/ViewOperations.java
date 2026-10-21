@@ -169,7 +169,7 @@ public class ViewOperations {
           String metalake,
       @PathParam("catalog") @AuthorizationMetadata(type = Entity.EntityType.CATALOG) String catalog,
       @PathParam("schema") @AuthorizationMetadata(type = Entity.EntityType.SCHEMA) String schema,
-      @PathParam("view") @AuthorizationMetadata(type = Entity.EntityType.VIEW) String view) {
+      @PathParam("view") @AuthorizationMetadata(type = Entity.EntityType.VIEW) String viewName) {
     LOG.info("Received load view request for view: {}.{}.{}.{}", metalake, catalog, schema, view);
     try {
       return Utils.doAs(
