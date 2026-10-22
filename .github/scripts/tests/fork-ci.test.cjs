@@ -104,7 +104,7 @@ test('standalone repositories run their own commit without Apache sync', async (
 test('fork pushes resolve the PR base once', async () => {
   const output = {};
   await resolve({ context: context('fork/repo', true), core: coreFor(output), github: {
-    rest: { pulls: { list() {} }, repos: { get: async () => ({ data: { fork: true, source: { full_name: 'apache/gravitino' } } }),
+    rest: { pulls: { list() {} }, repos: { get: async () => ({ data: { fork: true, source: { full_name: 'timelyflow/gravitino' } } }),
       getBranch: async () => ({ data: { commit: { sha: B } } }) } }, paginate: async () => [pr()] } });
   assert.equal(output['base-sha'], B); assert.equal(output['base-ref'], 'main'); assert.equal(output.sync, 'true');
 });
@@ -113,7 +113,7 @@ test('pre-PR base discovery paginates branches, including later release branches
   const listBranches = () => {};
   await resolve({ context: context('fork/repo', true), core: coreFor(output), github: {
     rest: { pulls: { list() {} }, repos: { listBranches,
-      get: async args => ({ data: args.owner === 'fork' ? { fork: true, source: { full_name: 'apache/gravitino' } } : { default_branch: 'main' } }),
+      get: async args => ({ data: args.owner === 'fork' ? { fork: true, source: { full_name: 'timelyflow/gravitino' } } : { default_branch: 'main' } }),
       compareCommitsWithBasehead: async args => ({ data: { ahead_by: args.basehead.startsWith('branch-9.9...') ? 1 : 99 } }),
       getBranch: async () => ({ data: { commit: { sha: B } } }) } },
     paginate: async endpoint => { if (endpoint === listBranches) { paginated = true; return [{ name: 'branch-9.9' }]; } return []; }
@@ -122,8 +122,8 @@ test('pre-PR base discovery paginates branches, including later release branches
 });
 test('trusted dispatch rejects an arbitrary ref or a non-upstream repository', async () => {
   const ctx = context('fork/repo');ctx.eventName = 'workflow_dispatch';ctx.payload.inputs = { 'pull-request': '7' };
-  await assert.rejects(resolve({ context: ctx, core: coreFor({}), github: {} }), /apache/);
-  const upstream = context('apache/gravitino');upstream.eventName = 'workflow_dispatch';upstream.payload.inputs = { 'pull-request': '7' };
+  await assert.rejects(resolve({ context: ctx, core: coreFor({}), github: {} }), /timelyflow/);
+  const upstream = context('timelyflow/gravitino');upstream.eventName = 'workflow_dispatch';upstream.payload.inputs = { 'pull-request': '7' };
   await assert.rejects(resolve({ context: upstream, core: coreFor({}), github: { rest: { pulls: { get: async () => ({ data: pr() }) } } } }), /current default branch/);
 });
 
@@ -139,7 +139,7 @@ test('allowlist downloads only immutable YAML data outside the trusted checkout'
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fork-ci-allowlist-test-'));
   const output = {};
   try {
-    const ctx = context('apache/gravitino');ctx.eventName = 'workflow_dispatch';ctx.payload.inputs = { 'pull-request': '7' };
+    const ctx = context('timelyflow/gravitino');ctx.eventName = 'workflow_dispatch';ctx.payload.inputs = { 'pull-request': '7' };
     await prepare({ context: ctx, core: coreFor(output), directory,
       github: { rest: { pulls: { get: async () => ({ data: pr() }) }, git: { getTree: async args => ({ data: { tree: args.tree_sha === A
         ? [{ path: '.github', type: 'tree', sha: 'github' }]
@@ -238,7 +238,7 @@ function publisherMock({ current = pr(), latest, rerun = run(), failTrees = fals
 async function withPublisher(fn) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fork-ci-publisher-test-'));
   const stateFile = path.join(directory, 'state.json');
-  const ctx = context('apache/gravitino');ctx.eventName = 'workflow_dispatch';ctx.payload.inputs = { 'pull-request': '7' };
+  const ctx = context('timelyflow/gravitino');ctx.eventName = 'workflow_dispatch';ctx.payload.inputs = { 'pull-request': '7' };
   const failures = [];
   const core = { info() {}, warning() {}, setFailed: message => failures.push(message) };
   try { await fn({ ctx, stateFile, core, failures }); }
