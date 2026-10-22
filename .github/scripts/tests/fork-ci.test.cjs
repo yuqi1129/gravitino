@@ -359,7 +359,7 @@ test('a run against a newer commit of the PR base branch is accepted', async () 
   }
 });
 
-test('scheduled sweeps probe recently updated PRs first and refresh only unsettled checks', async () => withPublisher(async ({ ctx, stateFile, core }) => {
+test('scheduled sweeps probe recently updated PRs first and refresh only running or rerun checks', async () => withPublisher(async ({ ctx, stateFile, core }) => {
   ctx.eventName = 'schedule'; delete ctx.payload.inputs;
   const { github, writes } = publisherMock();
   const recent = new Date().toISOString();
@@ -371,10 +371,11 @@ test('scheduled sweeps probe recently updated PRs first and refresh only unsettl
   const listPulls = github.rest.pulls.list;
   const listForRef = github.rest.checks.listForRef;
   const paginate = github.paginate;
-  const check = conclusion => ({ id: 1, app: { slug: 'github-actions' }, status: 'completed', conclusion,
-    output: { text: JSON.stringify({ run_id: 1, run_attempt: 1 }) } });
+  // Any completed result, not only success, is final until the fork run id or attempt changes.
+  const check = completed => ({ id: 1, app: { slug: 'github-actions' }, status: completed ? 'completed' : 'in_progress',
+    conclusion: completed ? 'cancelled' : null, output: { text: JSON.stringify({ run_id: 1, run_attempt: 1 }) } });
   github.paginate = async (endpoint, args) => endpoint === listPulls ? all
-    : endpoint === listForRef ? [check(args.ref === settled.head.sha ? 'success' : 'failure')] : paginate(endpoint, args);
+    : endpoint === listForRef ? [check(args.ref === settled.head.sha)] : paginate(endpoint, args);
   github.rest.pulls.get = async ({ pull_number }) => ({ data: all.find(p => p.number === pull_number) });
   const runsFor = [];
   const list = github.rest.actions.listWorkflowRuns;

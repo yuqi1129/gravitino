@@ -16,8 +16,6 @@
 const { createService } = require('./fork-ci-status.cjs');
 
 const RECENT_MS = 6 * 60 * 60 * 1000;
-// Results that change only with a new push or a trusted run, both of which signal a refresh.
-const SETTLED = ['success', 'action_required'];
 
 async function update({ github, context, core }) {
   const signal = context.eventName === 'workflow_run' && context.payload.workflow_run.name === 'Fork CI PR Signal';
@@ -109,7 +107,8 @@ async function update({ github, context, core }) {
   let processed = 0;
   const visited = new Set();
   // Fork runs, including reruns, finish without an upstream event. Such PRs were updated recently,
-  // so probe those first. A settled check is refreshed only when the fork run id or attempt changed.
+  // so probe those first. A completed result changes only with a push or a trusted run, which both
+  // signal a refresh, or with a fork rerun, so refresh it only when the fork run id or attempt changed.
   const recent = manual ? [] : prs.filter(pr => now - Date.parse(pr.updated_at) < RECENT_MS)
     .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
   // Probes take two calls, so rotate them too and keep a third of the budget for older PRs.
@@ -122,7 +121,8 @@ async function update({ github, context, core }) {
     probed++;
     await visit(pr, async () => {
       const latest = await latestCheck(pr);
-      if (latest?.status === 'completed' && SETTLED.includes(latest.conclusion)) {
+      if (latest?.status === 'completed') {
+        if (!pr.head.repo) return;
         const record = recordOf(latest);
         const fork = (await service.findRun(pr, false))?.run;
         if (!fork || (fork.id === (record.fork_run_id ?? record.run_id) &&
