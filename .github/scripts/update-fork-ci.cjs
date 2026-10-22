@@ -36,16 +36,19 @@ async function update({ github, context, core }) {
   // Bound work even while settled successes are watched. Rotate the starting PR to avoid starving
   // older PRs, and leave quota for signal workflows and other repository automation.
   const budget = manual ? Math.max(0, rate.remaining - 100) : Math.min(60, Math.max(0, rate.remaining - 100));
-  // Fork runs finish without an upstream event. Refresh PRs whose checks are still pending first;
-  // search has its own rate limit and returns them in one call.
+  // Fork runs and fork reruns finish without an upstream event. Refresh PRs whose checks are
+  // pending first, then failed ones that may have been rerun; search has its own rate limit.
   const pending = new Set();
+  const failed = new Set();
   if (!manual) {
-    try {
-      const { data } = await github.rest.search.issuesAndPullRequests({
-        q: `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open status:pending`, per_page: 100 });
-      for (const item of data.items) pending.add(item.number);
-    } catch (error) {
-      core.warning(`Could not search pending PRs: ${error.message}`);
+    for (const [status, numbers] of [['pending', pending], ['failure', failed]]) {
+      try {
+        const { data } = await github.rest.search.issuesAndPullRequests({
+          q: `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open status:${status}`, per_page: 100 });
+        for (const item of data.items) numbers.add(item.number);
+      } catch (error) {
+        core.warning(`Could not search ${status} PRs: ${error.message}`);
+      }
     }
   }
   let calls = 0;
@@ -57,7 +60,8 @@ async function update({ github, context, core }) {
   const step = Math.max(1, Math.floor(budget / 20));
   const start = manual || !prs.length ? 0 : (Math.floor(now / 300000) * step) % prs.length;
   const rotated = prs.map((_, offset) => prs[(start + offset) % prs.length]);
-  const ordered = [...rotated.filter(pr => pending.has(pr.number)), ...rotated.filter(pr => !pending.has(pr.number))];
+  const tier = pr => pending.has(pr.number) ? 0 : failed.has(pr.number) ? 1 : 2;
+  const ordered = [0, 1, 2].flatMap(level => rotated.filter(pr => tier(pr) === level));
   let processed = 0;
   for (const pr of ordered) {
     if (calls + 15 > budget) break; // One PR may need trees, runs, paginated jobs and a check write.
@@ -110,7 +114,8 @@ async function update({ github, context, core }) {
       core.warning(`Could not refresh #${pr.number}: ${error.message}`);
     }
   }
-  core.info(`Visited ${processed}/${prs.length} PRs (${pending.size} pending first); ${calls}/${budget} API calls; starting index ${start}.`);
+  core.info(`Visited ${processed}/${prs.length} PRs (${pending.size} pending, ${failed.size} failed first); ` +
+    `${calls}/${budget} API calls; starting index ${start}.`);
   if (manual && processed < prs.length) core.setFailed('API budget exhausted; dispatch again for a specific PR after the quota resets.');
   if (failures.length) core.setFailed(`Unable to refresh: ${failures.map(n => `#${n}`).join(', ')}`);
 }

@@ -352,7 +352,7 @@ test('a run against a newer commit of the PR base branch is accepted', async () 
   }
 });
 
-test('scheduled sweeps refresh pending PRs first and link the fork run', async () => withPublisher(async ({ ctx, stateFile, core }) => {
+test('scheduled sweeps refresh pending, then failed PRs first and link the fork run', async () => withPublisher(async ({ ctx, stateFile, core }) => {
   ctx.eventName = 'schedule'; delete ctx.payload.inputs;
   const { github, writes } = publisherMock();
   const others = Array.from({ length: 20 }, (_, i) => ({ ...pr(), number: 100 + i,
@@ -363,12 +363,13 @@ test('scheduled sweeps refresh pending PRs first and link the fork run', async (
   github.rest.pulls.get = async ({ pull_number }) => ({ data: pull_number === 7 ? pr() : others[pull_number - 100] });
   github.rest.rateLimit.get = async () => ({ data: { resources: { core: { remaining: 900 } } } });
   github.rest.search = { issuesAndPullRequests: async ({ q }) => {
-    assert.ok(q.includes('status:pending'));
-    return { data: { items: [{ number: 7 }] } };
+    assert.match(q, /status:(pending|failure)/);
+    return { data: { items: q.includes('status:pending') ? [{ number: 7 }] : [{ number: 119 }] } };
   } };
   await update({ github, context: ctx, core, stateFile });
   assert.ok(writes.length > 0);
   assert.equal(writes[0].create.head_sha, A);
+  assert.equal(writes[1].create.head_sha, others[19].head.sha);
   assert.match(writes[0].create.output.summary, /^\[See fork CI results\]\(https:\/\/github\.com\/fork\/repo\/actions\/runs\/1\)/);
 }));
 
