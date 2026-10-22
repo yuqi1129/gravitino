@@ -257,15 +257,16 @@ jobs:
   sandbox_slow:
     needs: eligibility
     if: needs.eligibility.outputs.valid == 'true'
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-latest
     steps:
-      - run: sleep 900
+      - run: sleep 1080
 
   fail_fast:
     name: Stop on first failure
     needs: eligibility
     if: needs.eligibility.outputs.valid == 'true'
-    runs-on: ubuntu-slim
+    # Not ubuntu-slim: it limits jobs to 15 minutes, and this job lasts as long as the slowest suite.
+    runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
       contents: read
