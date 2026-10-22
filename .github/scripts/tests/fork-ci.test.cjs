@@ -122,7 +122,7 @@ test('pre-PR base discovery paginates branches, including later release branches
 });
 test('trusted dispatch rejects an arbitrary ref or a non-upstream repository', async () => {
   const ctx = context('fork/repo');ctx.eventName = 'workflow_dispatch';ctx.payload.inputs = { 'pull-request': '7' };
-  await assert.rejects(resolve({ context: ctx, core: coreFor({}), github: {} }), /apache/);
+  await assert.rejects(resolve({ context: ctx, core: coreFor({}), github: {} }), /timelyflow/);
   const upstream = context('timelyflow/gravitino');upstream.eventName = 'workflow_dispatch';upstream.payload.inputs = { 'pull-request': '7' };
   await assert.rejects(resolve({ context: upstream, core: coreFor({}), github: { rest: { pulls: { get: async () => ({ data: pr() }) } } } }), /current default branch/);
 });
