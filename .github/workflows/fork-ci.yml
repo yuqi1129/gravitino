@@ -253,6 +253,33 @@ jobs:
       sync: ${{ needs.eligibility.outputs.sync }}
     uses: ./.github/workflows/asf-allowlist-check.yml
 
+  # SANDBOX: a long job that stands in for slow suites.
+  sandbox_slow:
+    needs: eligibility
+    if: needs.eligibility.outputs.valid == 'true'
+    runs-on: ubuntu-slim
+    steps:
+      - run: sleep 900
+
+  fail_fast:
+    name: Stop on first failure
+    needs: eligibility
+    if: needs.eligibility.outputs.valid == 'true'
+    runs-on: ubuntu-slim
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/github-script@v7
+        with:
+          retries: 3
+          script: |
+            await require('./.github/scripts/fail-fast.cjs').watch({ github, context, core, self: 'Stop on first failure' });
+
   required_ci:
     name: Required CI / ${{ needs.eligibility.outputs.base-ref }} / ${{ needs.eligibility.outputs.base-sha }} / ${{ needs.eligibility.outputs.head-sha }}
     # !cancelled() rather than always(), so a cancelled run does not wait for a runner here.
