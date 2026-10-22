@@ -241,3 +241,4 @@ Gravitino MCP server provides the ability to manage Gravitino metadata for AI to
 * [How to upgrade Gravitino](./how-to-upgrade.md): a guide to upgrading the schema of Gravitino storage backend from one release version to another.
 
 <img src="https://analytics.apache.org/matomo.php?idsite=62&rec=1&bots=1&action_name=Overview" alt="" />
+<!-- T7 -->
