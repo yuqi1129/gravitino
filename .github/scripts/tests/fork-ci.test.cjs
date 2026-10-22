@@ -371,3 +371,15 @@ test('scheduled sweeps refresh pending PRs first and link the fork run', async (
   assert.equal(writes[0].create.head_sha, A);
   assert.match(writes[0].create.output.summary, /^\[See fork CI results\]\(https:\/\/github\.com\/fork\/repo\/actions\/runs\/1\)/);
 }));
+
+test('a failed fork run is not summarized as verified', async () => withPublisher(async ({ ctx, stateFile, core }) => {
+  const { github, writes } = publisherMock({ rerun: { ...run(), conclusion: 'failure' } });
+  await update({ github, context: ctx, core, stateFile });
+  assert.equal(writes[0].create.conclusion, 'failure');
+  assert.doesNotMatch(writes[0].create.output.summary, /Verified/);
+}));
+
+test('PR signals do not share a concurrency group', async () => {
+  const workflow = await readFile(path.join(__dirname, '../../workflows/fork-ci-status-update.yml'), 'utf8');
+  assert.match(workflow, /github\.event\.workflow_run\.head_sha \|\| 'sweep'/);
+});

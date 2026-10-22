@@ -79,6 +79,8 @@ async function update({ github, context, core }) {
         ...context.repo, ref: pr.head.sha, check_name: 'Fork CI', per_page: 100, filter: 'all'
       });
       const latest = checks.filter(check => check.app?.slug === 'github-actions').sort((a, b) => b.id - a.id)[0];
+      const note = result.note || (result.status !== 'completed' ? 'Waiting for the fork run.'
+        : result.conclusion === 'success' ? 'Verified all caller suites.' : 'Open the run to see which jobs did not succeed.');
       const testedBase = mirror.base && mirror.base !== pr.base.sha ? `\nTested base: ${mirror.base}` : '';
       const record = { owner: mirror.owner, repo: mirror.repo, run_id: run?.id,
         run_attempt: run?.run_attempt, base_ref: pr.base.ref, base_sha: pr.base.sha, trusted: mirror.trusted || false };
@@ -86,7 +88,7 @@ async function update({ github, context, core }) {
       const output = { title: result.title,
         // GitHub ignores details_url for checks created with GITHUB_TOKEN, so link the run here.
         summary: (run ? `[See fork CI results](${details})\n\n` : '') +
-          `${result.note || (result.status === 'completed' ? 'Verified all caller suites.' : 'Waiting for the fork run.')}` +
+          note +
           `\n\nBase: ${pr.base.ref} @ ${pr.base.sha}${testedBase}`,
         text: JSON.stringify(record) };
       // Re-read before publishing so a push or retarget during the API calls cannot get a stale success.
