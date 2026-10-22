@@ -161,7 +161,7 @@ jobs:
             --head "${{ steps.cherry-pick.outputs.branch-name }}"
             "${LABEL_ARGS[@]}"
           )
-          # Reviewer is only valid on apache/gravitino.
+          # Keep Apache reviewer requests disabled in this isolated sandbox.
           if [ "${{ github.repository }}" = "apache/gravitino" ]; then
             CREATE_ARGS+=(--reviewer jerryshao)
           fi

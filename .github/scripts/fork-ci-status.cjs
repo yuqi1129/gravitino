@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 'use strict';
-const UPSTREAM = { owner: 'apache', repo: 'gravitino' };
+const UPSTREAM = { owner: 'timelyflow', repo: 'gravitino' };
 const SUITES = ['build', 'backend', 'spark', 'flink', 'trino', 'iceberg_rest_trino', 'python',
   'frontend', 'access_control', 'idp_basic', 'mcp', 'maintenance', 'web_ui', 'charts',
   'contrib_catalog', 'asf_allowlist'];
