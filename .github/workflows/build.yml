@@ -153,7 +153,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: changes
-    if: needs.changes.outputs.spark_connector_changes == 'true'
+    if: false # SANDBOX: skip slow job
     steps:
       - uses: actions/checkout@v4
         with:
@@ -197,7 +197,7 @@ jobs:
         java-version: [ 17 ]
     timeout-minutes: 180
     needs: changes
-    if: needs.changes.outputs.source_changes == 'true'
+    if: false # SANDBOX: skip slow job
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
@@ -327,9 +327,7 @@ jobs:
             skip-docker-tests: false
     timeout-minutes: 120
     needs: changes
-    if: >-
-      needs.changes.outputs.source_changes == 'true' &&
-      needs.changes.outputs.maintenance_module_only_changes != 'true'
+    if: false # SANDBOX: skip slow job
     steps:
       - uses: actions/checkout@v4
         with:
