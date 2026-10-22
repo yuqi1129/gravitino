@@ -259,7 +259,7 @@ jobs:
     if: needs.eligibility.outputs.valid == 'true'
     runs-on: ubuntu-latest
     steps:
-      - run: sleep 1080
+      - run: sleep 180
 
   fail_fast:
     name: Stop on first failure

@@ -26,14 +26,19 @@ async function watch({ github, context, core, self, interval = 60000, sleep = ms
       ...context.repo, run_id: context.runId, attempt_number: attempt, per_page: 100
     })).filter(job => job.name !== self);
     const failed = jobs.filter(job => STOPPED.includes(job.conclusion)).map(job => job.name);
+    const running = jobs.filter(job => job.status !== 'completed').map(job => job.name);
+    core.info(`${jobs.length - running.length}/${jobs.length} jobs completed, ` +
+      `${failed.length} failed` + (running.length ? `; waiting for ${running.slice(0, 5).join(', ')}` +
+      (running.length > 5 ? ` and ${running.length - 5} more` : '') : ''));
     if (failed.length) {
       core.error(`Cancelling the run because these jobs failed: ${failed.join(', ')}. Re-run failed jobs once it is cancelled.`);
       await github.rest.actions.cancelWorkflowRun({ ...context.repo, run_id: context.runId });
       return failed;
     }
-    idle = jobs.every(job => job.status === 'completed') ? idle + 1 : 0;
+    idle = running.length ? 0 : idle + 1;
     if (idle < 2) await sleep(interval);
   }
+  core.info('All jobs completed without a failure.');
   return [];
 }
 module.exports = { watch };
