@@ -352,24 +352,29 @@ test('a run against a newer commit of the PR base branch is accepted', async () 
   }
 });
 
-test('scheduled sweeps refresh pending, then failed PRs first and link the fork run', async () => withPublisher(async ({ ctx, stateFile, core }) => {
+test('scheduled sweeps probe recently updated PRs first and refresh only unsettled checks', async () => withPublisher(async ({ ctx, stateFile, core }) => {
   ctx.eventName = 'schedule'; delete ctx.payload.inputs;
   const { github, writes } = publisherMock();
-  const others = Array.from({ length: 20 }, (_, i) => ({ ...pr(), number: 100 + i,
+  const recent = new Date().toISOString();
+  const old = Array.from({ length: 20 }, (_, i) => ({ ...pr(), number: 100 + i,
     head: { ...pr().head, sha: (100 + i).toString(16).padStart(40, 'd') } }));
+  const settled = { ...pr(), number: 8, updated_at: recent, head: { ...pr().head, sha: 'e'.repeat(40) } };
+  const failed = { ...pr(), updated_at: recent };
+  const all = [...old, settled, failed];
   const listPulls = github.rest.pulls.list;
+  const listForRef = github.rest.checks.listForRef;
   const paginate = github.paginate;
-  github.paginate = async (endpoint, args) => endpoint === listPulls ? [...others, pr()] : paginate(endpoint, args);
-  github.rest.pulls.get = async ({ pull_number }) => ({ data: pull_number === 7 ? pr() : others[pull_number - 100] });
-  github.rest.rateLimit.get = async () => ({ data: { resources: { core: { remaining: 900 } } } });
-  github.rest.search = { issuesAndPullRequests: async ({ q }) => {
-    assert.match(q, /status:(pending|failure)/);
-    return { data: { items: q.includes('status:pending') ? [{ number: 7 }] : [{ number: 119 }] } };
-  } };
+  const check = conclusion => ({ id: 1, app: { slug: 'github-actions' }, status: 'completed', conclusion, output: { text: '{}' } });
+  github.paginate = async (endpoint, args) => endpoint === listPulls ? all
+    : endpoint === listForRef ? [check(args.ref === settled.head.sha ? 'success' : 'failure')] : paginate(endpoint, args);
+  github.rest.pulls.get = async ({ pull_number }) => ({ data: all.find(p => p.number === pull_number) });
+  const runsFor = [];
+  const list = github.rest.actions.listWorkflowRuns;
+  github.rest.actions.listWorkflowRuns = async args => { runsFor.push(args.head_sha); return list(args); };
   await update({ github, context: ctx, core, stateFile });
-  assert.ok(writes.length > 0);
   assert.equal(writes[0].create.head_sha, A);
-  assert.equal(writes[1].create.head_sha, others[19].head.sha);
+  assert.equal(writes[0].create.conclusion, 'success');
+  assert.ok(!runsFor.includes(settled.head.sha));
   assert.match(writes[0].create.output.summary, /^\[See fork CI results\]\(https:\/\/github\.com\/fork\/repo\/actions\/runs\/1\)/);
 }));
 
