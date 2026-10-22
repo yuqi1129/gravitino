@@ -40,7 +40,7 @@ async function resolve({ github, context, core }) {
     // Post-merge CI tests the pushed upstream commit itself.
   } else {
     const { data: repo } = await github.rest.repos.get(context.repo);
-    if (repo.fork) {
+    if (repo.fork && repository !== UPSTREAM) {
       const prs = await github.paginate(github.rest.pulls.list, {
         owner: 'timelyflow', repo: 'gravitino', state: 'open',
         head: `${context.repo.owner}:${baseRef}`, per_page: 100
