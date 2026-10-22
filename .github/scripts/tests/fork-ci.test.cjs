@@ -109,7 +109,7 @@ test('standalone repositories run their own commit without Apache sync', async (
 test('fork pushes resolve the PR base once', async () => {
   const output = {};
   await resolve({ context: context('fork/repo', true), core: coreFor(output), github: {
-    rest: { pulls: { list() {} }, repos: { get: async () => ({ data: { fork: true, source: { full_name: 'timelyflow/gravitino' } } }),
+    rest: { pulls: { list() {} }, repos: { get: async () => ({ data: { fork: true, source: { full_name: 'apache/gravitino' } } }),
       getBranch: async () => ({ data: { commit: { sha: B } } }) } }, paginate: async () => [pr()] } });
   assert.equal(output['base-sha'], B); assert.equal(output['base-ref'], 'main'); assert.equal(output.sync, 'true');
 });
@@ -118,7 +118,7 @@ test('pre-PR base discovery paginates branches, including later release branches
   const listBranches = () => {};
   await resolve({ context: context('fork/repo', true), core: coreFor(output), github: {
     rest: { pulls: { list() {} }, repos: { listBranches,
-      get: async args => ({ data: args.owner === 'fork' ? { fork: true, source: { full_name: 'timelyflow/gravitino' } } : { default_branch: 'main' } }),
+      get: async args => ({ data: args.owner === 'fork' ? { fork: true, source: { full_name: 'apache/gravitino' } } : { default_branch: 'main' } }),
       compareCommitsWithBasehead: async args => ({ data: { ahead_by: args.basehead.startsWith('branch-9.9...') ? 1 : 99 } }),
       getBranch: async () => ({ data: { commit: { sha: B } } }) } },
     paginate: async endpoint => { if (endpoint === listBranches) { paginated = true; return [{ name: 'branch-9.9' }]; } return []; }
@@ -127,8 +127,8 @@ test('pre-PR base discovery paginates branches, including later release branches
 });
 test('trusted dispatch rejects an arbitrary ref or a non-upstream repository', async () => {
   const ctx = context('fork/repo');ctx.eventName = 'workflow_dispatch';ctx.payload.inputs = { 'pull-request': '7' };
-  await assert.rejects(resolve({ context: ctx, core: coreFor({}), github: {} }), /timelyflow/);
-  const upstream = context('timelyflow/gravitino');upstream.eventName = 'workflow_dispatch';upstream.payload.inputs = { 'pull-request': '7' };
+  await assert.rejects(resolve({ context: ctx, core: coreFor({}), github: {} }), /apache/);
+  const upstream = context('apache/gravitino');upstream.eventName = 'workflow_dispatch';upstream.payload.inputs = { 'pull-request': '7' };
   await assert.rejects(resolve({ context: upstream, core: coreFor({}), github: { rest: { pulls: { get: async () => ({ data: pr() }) } } } }), /current default branch/);
 });
 
@@ -144,7 +144,7 @@ test('allowlist downloads only immutable YAML data outside the trusted checkout'
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fork-ci-allowlist-test-'));
   const output = {};
   try {
-    const ctx = context('timelyflow/gravitino');ctx.eventName = 'workflow_dispatch';ctx.payload.inputs = { 'pull-request': '7' };
+    const ctx = context('apache/gravitino');ctx.eventName = 'workflow_dispatch';ctx.payload.inputs = { 'pull-request': '7' };
     await prepare({ context: ctx, core: coreFor(output), directory,
       github: { rest: { pulls: { get: async () => ({ data: pr() }) }, git: { getTree: async args => ({ data: { tree: args.tree_sha === A
         ? [{ path: '.github', type: 'tree', sha: 'github' }]
@@ -243,7 +243,7 @@ function publisherMock({ current = pr(), latest, rerun = run(), failTrees = fals
 async function withPublisher(fn) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fork-ci-publisher-test-'));
   const stateFile = path.join(directory, 'state.json');
-  const ctx = context('timelyflow/gravitino');ctx.eventName = 'workflow_dispatch';ctx.payload.inputs = { 'pull-request': '7' };
+  const ctx = context('apache/gravitino');ctx.eventName = 'workflow_dispatch';ctx.payload.inputs = { 'pull-request': '7' };
   const failures = [];
   const core = { info() {}, warning() {}, setFailed: message => failures.push(message) };
   try { await fn({ ctx, stateFile, core, failures }); }
@@ -330,7 +330,7 @@ test('allowlist signals find fork PRs by head branch', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fork-ci-allowlist-test-'));
   const output = {};
   try {
-    const ctx = context('timelyflow/gravitino');ctx.eventName = 'workflow_run';
+    const ctx = context('apache/gravitino');ctx.eventName = 'workflow_run';
     ctx.payload.workflow_run = { head_sha: A, head_branch: 'topic', head_repository: { owner: { login: 'fork' } } };
     const list = () => {};
     let head;
@@ -460,7 +460,7 @@ function watcherMock(polls) {
   paginate: async (endpoint, args) => { calls.attempt = args.attempt_number; return polls[Math.min(calls.polls++, polls.length - 1)]; } };
   const errors = [];
   return { github, calls, errors, context: { repo: { owner: 'fork', repo: 'repo' }, runId: 42 },
-    core: { error: message => errors.push(message) }, self: 'Stop on first failure', sleep: async () => {} };
+    core: { error: message => errors.push(message), info: message => errors.push(message) }, self: 'Stop on first failure', sleep: async () => {} };
 }
 const job = (name, status, conclusion = null) => ({ name, status, conclusion });
 
@@ -471,7 +471,9 @@ test('the first failed job cancels the rest of the fork run', async () => {
       job('backend / BackendIT (h2)', 'completed', 'failure')]]);
   assert.deepEqual(await watch(mock), ['backend / BackendIT (h2)']);
   assert.equal(mock.calls.cancel, 1); assert.equal(mock.calls.run_id, 42);
-  assert.match(mock.errors[0], /BackendIT/);
+  // Every poll reports progress, so the watcher is never a black box.
+  assert.match(mock.errors[0], /0\/1 jobs completed, 0 failed; waiting for build \/ build$/);
+  assert.match(mock.errors.at(-1), /Cancelling the run because these jobs failed: backend \/ BackendIT \(h2\)/);
 });
 
 test('the watcher ignores itself and exits without cancelling once all jobs pass', async () => {
@@ -482,6 +484,7 @@ test('the watcher ignores itself and exits without cancelling once all jobs pass
     const mock = watcherMock([[job('build / build', 'in_progress')], done, done]);
     assert.deepEqual(await watch(mock), []);
     assert.equal(mock.calls.cancel, 0); assert.equal(mock.calls.polls, 3); assert.equal(mock.calls.attempt, 2);
+    assert.equal(mock.errors.at(-1), 'All jobs completed without a failure.');
   } finally { delete process.env.GITHUB_RUN_ATTEMPT; }
 });
 
@@ -498,4 +501,49 @@ test('only the fail-fast job can cancel the run', async () => {
   assert.equal(workflow.match(/actions: write/g).length, 1);
   assert.match(workflow, /fail_fast:\n(?:.*\n)*?\s+permissions:\n\s+contents: read\n\s+actions: write\n/);
   assert.match(workflow, /^permissions:\n\s+contents: read\n\s+actions: read\n/m);
+  // ubuntu-slim cancels jobs after 15 minutes; the watcher must outlive the slowest suite.
+  assert.match(workflow, /fail_fast:\n(?:.*\n)*?\s+runs-on: ubuntu-latest\n/);
 });
+
+test('scheduled sweeps scale their budget with the hourly quota', async () => withPublisher(async ({ ctx, stateFile, core }) => {
+  ctx.eventName = 'schedule'; delete ctx.payload.inputs;
+  const probed = async limit => {
+    const { github } = publisherMock();
+    const recent = Array.from({ length: 60 }, (_, i) => ({ ...pr(), number: 200 + i, updated_at: new Date().toISOString(),
+      head: { ...pr().head, sha: (200 + i).toString(16).padStart(40, 'f') } }));
+    const listPulls = github.rest.pulls.list, listForRef = github.rest.checks.listForRef, paginate = github.paginate;
+    // Count paginated requests, which is what each probe makes.
+    let count = () => {};
+    github.hook = { before(_, hook) { count = hook; } };
+    github.rest.rateLimit.get = async () => ({ data: { resources: { core: { remaining: limit, limit } } } });
+    const seen = new Set();
+    github.paginate = async (endpoint, args) => {
+      count();
+      if (endpoint === listPulls) return recent;
+      if (endpoint === listForRef) { seen.add(args.ref); return [{ id: 1, app: { slug: 'github-actions' }, status: 'completed',
+        conclusion: 'success', output: { text: JSON.stringify({ run_id: 1, run_attempt: 1 }) } }]; }
+      return paginate(endpoint, args);
+    };
+    await update({ github, context: ctx, core, stateFile });
+    return seen.size;
+  };
+  assert.ok(await probed(1000) < 60);
+  assert.equal(await probed(15000), 60);
+}));
+
+test('a missing fork run waits instead of asking the author to act', async () => {
+  const github = serviceMock();
+  github.rest.actions.listWorkflowRuns = async () => ({ data: { workflow_runs: [] } });
+  const { result } = await createService(github).mirror(pr());
+  assert.equal(result.status, 'queued'); assert.equal(result.conclusion, undefined);
+  assert.match(result.note, /enable Actions in your fork/);
+});
+
+test('an incomplete run listing does not replace a recorded run', async () => withPublisher(async ({ ctx, stateFile, core }) => {
+  const green = { id: 55, app: { slug: 'github-actions' }, status: 'completed', conclusion: 'success',
+    output: { text: JSON.stringify({ owner: 'fork', repo: 'repo', run_id: 1, run_attempt: 1 }) } };
+  const { github, writes } = publisherMock({ latest: green });
+  github.rest.actions.listWorkflowRuns = async () => ({ data: { workflow_runs: [] } });
+  await update({ github, context: ctx, core, stateFile });
+  assert.equal(writes.length, 0);
+}));
