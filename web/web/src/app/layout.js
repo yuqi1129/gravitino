@@ -17,6 +17,8 @@
  * under the License.
  */
 
+// [SANDBOX] Test change for the gated direct triggers.
+
 import '@/lib/styles/globals.css'
 
 import { NavigationEvents } from './rootLayout/navigation-events'
