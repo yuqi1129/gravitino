@@ -73,7 +73,7 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/merge-check"
           cd "${RUNNER_TEMP}/merge-check"
           git init --quiet
-          git fetch --quiet --no-tags https://github.com/apache/gravitino.git "${BASE_SHA}"
+          git fetch --quiet --no-tags https://github.com/timelyflow/gravitino.git "${BASE_SHA}"
           git fetch --quiet --no-tags "https://github.com/${HEAD_REPOSITORY}.git" "${HEAD_SHA}"
           git merge-tree --write-tree --name-only "${BASE_SHA}" "${HEAD_SHA}"
 

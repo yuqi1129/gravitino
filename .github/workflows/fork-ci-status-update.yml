@@ -35,7 +35,7 @@ concurrency:
 jobs:
   update:
     if: >-
-      github.repository == 'apache/gravitino' &&
+      github.repository == 'timelyflow/gravitino' &&
       (github.event_name != 'workflow_run' ||
        github.event.workflow_run.event == 'pull_request' ||
        github.event.workflow_run.event == 'workflow_dispatch' ||
