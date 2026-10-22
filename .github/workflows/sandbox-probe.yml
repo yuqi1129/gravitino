@@ -1,0 +1,7 @@
+name: Sandbox probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: someone-unknown/not-allowlisted-action@v1
