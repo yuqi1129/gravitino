@@ -1,8 +1,12 @@
 name: Contrib Catalog Test
 
 on:
-  workflow_call:
+  push:
+    branches: [ "main", "branch-*" ]
+  pull_request:
+    branches: [ "main", "branch-*" ]
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: fork-ci-contrib-catalog-${{ github.ref }}
@@ -11,6 +15,12 @@ concurrency:
 jobs:
   changes:
     runs-on: ubuntu-22.04
+    # Direct push and pull_request runs are for copies of the repository that are not
+    # forks; apache/gravitino and its forks run this workflow through Fork CI.
+    if: >-
+      (github.repository != 'apache/gravitino' && !github.event.repository.fork) ||
+      !contains(github.workflow_ref, '/.github/workflows/contrib-catalog-test.yml@') ||
+      !contains(fromJSON('["push", "pull_request"]'), github.event_name)
     steps:
       - uses: actions/checkout@v4
         with:

@@ -19,6 +19,10 @@
 name: mcp-integration-test
 
 on:
+  push:
+    branches: [ "main", "branch-*" ]
+  pull_request:
+    branches: [ "main", "branch-*" ]
   workflow_call:
 
 concurrency:
@@ -28,6 +32,12 @@ concurrency:
 jobs:
   changes:
     runs-on: ubuntu-latest
+    # Direct push and pull_request runs are for copies of the repository that are not
+    # forks; apache/gravitino and its forks run this workflow through Fork CI.
+    if: >-
+      (github.repository != 'apache/gravitino' && !github.event.repository.fork) ||
+      !contains(github.workflow_ref, '/.github/workflows/mcp-integration-test.yml@') ||
+      !contains(fromJSON('["push", "pull_request"]'), github.event_name)
     outputs:
       mcp_or_authz_changes: ${{ steps.filter.outputs.mcp_or_authz_changes }}
     steps:

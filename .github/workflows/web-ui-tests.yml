@@ -1,6 +1,16 @@
 name: Web UI Tests
 
 on:
+  push:
+    branches: [ "main", "branch-*" ]
+    paths:
+      - 'web/web/**'
+      - '.github/workflows/web-ui-tests.yml'
+  pull_request:
+    branches: [ "main", "branch-*" ]
+    paths:
+      - 'web/web/**'
+      - '.github/workflows/web-ui-tests.yml'
   workflow_call:
 
 concurrency:
@@ -10,6 +20,12 @@ concurrency:
 jobs:
   changes:
     runs-on: ubuntu-latest
+    # Direct push and pull_request runs are for copies of the repository that are not
+    # forks; apache/gravitino and its forks run this workflow through Fork CI.
+    if: >-
+      (github.repository != 'apache/gravitino' && !github.event.repository.fork) ||
+      !contains(github.workflow_ref, '/.github/workflows/web-ui-tests.yml@') ||
+      !contains(fromJSON('["push", "pull_request"]'), github.event_name)
     outputs:
       source_changes: ${{ steps.filter.outputs.source_changes }}
     steps:

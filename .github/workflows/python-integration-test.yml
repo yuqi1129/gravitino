@@ -2,6 +2,10 @@ name: Python Client Integration Test
 
 # Controls when the workflow will run
 on:
+  push:
+    branches: [ "main", "branch-*" ]
+  pull_request:
+    branches: [ "main", "branch-*" ]
   workflow_call:
 
 concurrency:
@@ -11,6 +15,12 @@ concurrency:
 jobs:
   changes:
     runs-on: ubuntu-latest
+    # Direct push and pull_request runs are for copies of the repository that are not
+    # forks; apache/gravitino and its forks run this workflow through Fork CI.
+    if: >-
+      (github.repository != 'apache/gravitino' && !github.event.repository.fork) ||
+      !contains(github.workflow_ref, '/.github/workflows/python-integration-test.yml@') ||
+      !contains(fromJSON('["push", "pull_request"]'), github.event_name)
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/checkout-and-sync

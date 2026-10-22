@@ -2,6 +2,17 @@ name: build
 
 # Controls when the workflow will run
 on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main", "branch-*" ]
+    paths-ignore:
+      - 'docs/assets/**'
+      - 'web-v2/**'
+  pull_request:
+    branches: [ "main", "branch-*" ]
+    paths-ignore:
+      - 'docs/assets/**'
+      - 'web-v2/**'
   workflow_call:
 
 concurrency:
@@ -12,6 +23,12 @@ concurrency:
 jobs:
   changes:
     runs-on: ubuntu-latest
+    # Direct push and pull_request runs are for copies of the repository that are not
+    # forks; apache/gravitino and its forks run this workflow through Fork CI.
+    if: >-
+      (github.repository != 'apache/gravitino' && !github.event.repository.fork) ||
+      !contains(github.workflow_ref, '/.github/workflows/build.yml@') ||
+      !contains(fromJSON('["push", "pull_request"]'), github.event_name)
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/checkout-and-sync
