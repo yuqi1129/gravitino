@@ -48,8 +48,7 @@ jobs:
       - name: Test source license-reference checker
         run: bash dev/release/test-check-license.sh
       - name: Test Fork CI contracts
-        # SANDBOX: sandbox-only renames and budget make some script tests fail here.
-        run: echo 'Script tests are skipped in the sandbox.'
+        run: node --test .github/scripts/tests/*.test.cjs
       - name: Disable Git automatic maintenance
         run: git config --local maintenance.auto false
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d
@@ -154,7 +153,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: changes
-    if: false # SANDBOX: skip slow job
+    if: needs.changes.outputs.spark_connector_changes == 'true'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -198,7 +197,7 @@ jobs:
         java-version: [ 17 ]
     timeout-minutes: 180
     needs: changes
-    if: false # SANDBOX: skip slow job
+    if: needs.changes.outputs.source_changes == 'true'
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
@@ -328,7 +327,9 @@ jobs:
             skip-docker-tests: false
     timeout-minutes: 120
     needs: changes
-    if: false # SANDBOX: skip slow job
+    if: >-
+      needs.changes.outputs.source_changes == 'true' &&
+      needs.changes.outputs.maintenance_module_only_changes != 'true'
     steps:
       - uses: actions/checkout@v4
         with:

@@ -51,9 +51,6 @@ jobs:
   asf-allowlist-check:
     runs-on: ubuntu-latest
     steps:
-      - name: SANDBOX failure switch
-        if: vars.SANDBOX_FAIL == 'true'
-        run: exit 1
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
