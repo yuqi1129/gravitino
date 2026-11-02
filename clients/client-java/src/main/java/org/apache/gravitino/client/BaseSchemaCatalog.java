@@ -293,7 +293,8 @@ abstract class BaseSchemaCatalog extends CatalogDTO
    * @param schemaName The name identifier of the schema.
    * @param cascade Whether to drop all the tables under the schema.
    * @return true if the schema is dropped successfully, false otherwise.
-   * @throws NonEmptySchemaException if the schema is not empty and cascade is false.
+   * @throws NonEmptySchemaException if the schema is not empty and cascade is false, or external
+   *     dependencies prevent a cascading drop confined to the schema.
    */
   @Override
   public boolean dropSchema(String schemaName, boolean cascade) throws NonEmptySchemaException {

@@ -169,7 +169,8 @@ public interface SupportsSchemas {
    * @param cascade If true, recursively drop all objects within the schema.
    * @return True if the schema exists and is dropped successfully, false if the schema doesn't
    *     exist.
-   * @throws NonEmptySchemaException If the schema is not empty and cascade is false.
+   * @throws NonEmptySchemaException If the schema is not empty and cascade is false, or the
+   *     implementation refuses a cascading drop because objects outside the schema depend on it.
    */
   boolean dropSchema(String schemaName, boolean cascade) throws NonEmptySchemaException;
 }

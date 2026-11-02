@@ -27,6 +27,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -40,6 +41,7 @@ import org.apache.gravitino.catalog.jdbc.JdbcSchema;
 import org.apache.gravitino.catalog.jdbc.config.JdbcConfig;
 import org.apache.gravitino.catalog.jdbc.converter.JdbcExceptionConverter;
 import org.apache.gravitino.catalog.jdbc.operation.JdbcDatabaseOperations;
+import org.apache.gravitino.catalog.jdbc.utils.DataSourceUtils;
 import org.apache.gravitino.catalog.jdbc.utils.JdbcConnectorUtils;
 import org.apache.gravitino.exceptions.NoSuchSchemaException;
 import org.apache.gravitino.exceptions.NonEmptySchemaException;
@@ -62,7 +64,15 @@ public class PostgreSqlSchemaOperations extends JdbcDatabaseOperations {
           + "    UNION "
           + "    SELECT d.refclassid, d.refobjid, d.refobjsubid FROM pg_catalog.pg_depend d "
           + "    WHERE d.classid = current_object.classid AND d.objid = current_object.objid "
-          + "      AND d.objsubid = current_object.objsubid AND d.deptype = 'i' "
+          + "      AND d.objsubid = current_object.objsubid "
+          // Internal and extension members drop their owner. Schema-less automatic subobjects, such
+          // as
+          // column defaults, instead need their owner only to identify the affected schema.
+          // Do not follow automatic owners of schema-qualified objects (e.g. partitions), since
+          // dropping a child does not drop its parent.
+          + "      AND (d.deptype IN ('i', 'e') OR (d.deptype = 'a' AND "
+          + "        (pg_catalog.pg_identify_object(current_object.classid, current_object.objid, "
+          + "          current_object.objsubid)).schema IS NULL)) "
           + "  ) next_object "
           + ") "
           + "SELECT DISTINCT pg_catalog.pg_describe_object(d.classid, d.objid, d.objsubid) AS dependent "
@@ -71,7 +81,9 @@ public class PostgreSqlSchemaOperations extends JdbcDatabaseOperations {
           // TOAST tables and their indexes/types are PostgreSQL-managed storage for the tables
           // being dropped, not user objects in another schema. Keep traversing them, but do not
           // report the internal pg_toast namespace as an external dependent.
-          + "WHERE info.schema IS NOT NULL AND info.schema <> ? AND info.schema <> 'pg_toast'; ";
+          // pg_identify_object returns a quoted SQL identifier, not the raw namespace name.
+          + "WHERE info.schema IS NOT NULL AND info.schema <> pg_catalog.quote_ident(?) "
+          + "AND info.schema <> 'pg_toast'; ";
 
   private String database;
 
@@ -163,8 +175,7 @@ public class PostgreSqlSchemaOperations extends JdbcDatabaseOperations {
 
   @Override
   public String generateDropDatabaseSql(String schema, boolean cascade) {
-    StringBuilder sqlBuilder =
-        new StringBuilder(String.format("DROP SCHEMA %s%s%s", PG_QUOTE, schema, PG_QUOTE));
+    StringBuilder sqlBuilder = new StringBuilder("DROP SCHEMA " + quoteName(schema));
     if (cascade) {
       sqlBuilder.append(" CASCADE");
     }
@@ -177,43 +188,51 @@ public class PostgreSqlSchemaOperations extends JdbcDatabaseOperations {
       super.dropDatabase(schema, false);
       return;
     }
-    try (Connection connection = getConnection()) {
+    try (Connection connection = getConnection();
+        ReadCommittedScope isolation = new ReadCommittedScope(connection)) {
       connection.setAutoCommit(false);
       try {
-        // Keep existing relations stable while checking dependencies and executing the drop.
-        try (PreparedStatement relations =
-            connection.prepareStatement(
-                "SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n "
-                    + "ON c.relnamespace = n.oid WHERE n.nspname = ? AND c.relkind IN ('r', 'p') ORDER BY c.oid")) {
-          relations.setString(1, schema);
-          try (ResultSet result = relations.executeQuery()) {
-            while (result.next()) {
-              JdbcConnectorUtils.executeUpdate(
-                  connection,
-                  "LOCK TABLE ONLY "
-                      + quoteName(schema)
-                      + "."
-                      + quoteName(result.getString(1))
-                      + " IN ACCESS EXCLUSIVE MODE");
+        // Native DROP locks every affected object without requiring explicit LOCK TABLE privileges.
+        // Do not commit yet: another transaction still sees the pre-drop catalog rows through
+        // MVCC, including dependencies committed while DROP was acquiring its locks. Validating
+        // a fresh snapshot exported after DROP avoids a check-then-drop race for views, new objects
+        // and other object kinds. Importing it also fails safely if a multi-host JDBC URL routes
+        // the
+        // validation connection to a different server. The native locks prevent new references
+        // until we commit or roll back.
+        // Open the independent connection before DDL, and outside the pool, so a one-slot pool or
+        // concurrent drops cannot deadlock waiting for another pooled connection while holding DDL
+        // locks. Driver authentication, timeouts and connection-init SQL remain the same.
+        try (Connection validation = DataSourceUtils.createIndependentConnection(dataSource)) {
+          validation.setAutoCommit(true);
+          validation.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+          validation.setAutoCommit(false);
+          JdbcConnectorUtils.executeUpdate(connection, generateDropDatabaseSql(schema, true));
+          try (Statement exporter = connection.createStatement();
+              ResultSet snapshot =
+                  exporter.executeQuery("SELECT pg_catalog.pg_export_snapshot()")) {
+            snapshot.next();
+            JdbcConnectorUtils.executeUpdate(
+                validation,
+                "SET TRANSACTION SNAPSHOT '" + escapeSqlLiteral(snapshot.getString(1), '\'') + "'");
+          }
+          try (PreparedStatement statement = validation.prepareStatement(EXTERNAL_DEPENDENTS_SQL)) {
+            statement.setString(1, schema);
+            statement.setString(2, schema);
+            try (ResultSet result = statement.executeQuery()) {
+              List<String> external = new ArrayList<>();
+              while (result.next()) {
+                external.add(result.getString(1));
+              }
+              if (!external.isEmpty()) {
+                throw new NonEmptySchemaException(
+                    "Cannot drop schema %s: objects outside the schema depend on it: %s. "
+                        + "Remove those dependencies before retrying.",
+                    schema, external);
+              }
             }
           }
         }
-        try (PreparedStatement statement = connection.prepareStatement(EXTERNAL_DEPENDENTS_SQL)) {
-          statement.setString(1, schema);
-          statement.setString(2, schema);
-          try (ResultSet result = statement.executeQuery()) {
-            List<String> external = new ArrayList<>();
-            while (result.next()) {
-              external.add(result.getString(1));
-            }
-            if (!external.isEmpty()) {
-              throw new NonEmptySchemaException(
-                  "Cannot drop schema %s: objects outside the schema depend on it: %s",
-                  schema, external);
-            }
-          }
-        }
-        JdbcConnectorUtils.executeUpdate(connection, generateDropDatabaseSql(schema, true));
         connection.commit();
       } catch (SQLException | RuntimeException e) {
         try {
@@ -226,10 +245,6 @@ public class PostgreSqlSchemaOperations extends JdbcDatabaseOperations {
     } catch (SQLException e) {
       throw exceptionMapper.toGravitinoException(e);
     }
-  }
-
-  private static String quoteName(String name) {
-    return "\"" + name.replace("\"", "\"\"") + "\"";
   }
 
   @Override
@@ -284,5 +299,34 @@ public class PostgreSqlSchemaOperations extends JdbcDatabaseOperations {
       }
     }
     return null;
+  }
+
+  private static String quoteName(String name) {
+    return "\"" + name.replace("\"", "\"\"") + "\"";
+  }
+
+  // Export a new post-DROP snapshot even when the pool normally uses REPEATABLE READ. Restore the
+  // original isolation before returning the connection; try-with-resources preserves any earlier
+  // failure if restoration also fails.
+  private static final class ReadCommittedScope implements AutoCloseable {
+    private final Connection connection;
+    private final int originalIsolation;
+
+    private ReadCommittedScope(Connection connection) throws SQLException {
+      this.connection = connection;
+      connection.setAutoCommit(true);
+      originalIsolation = connection.getTransactionIsolation();
+      if (originalIsolation != Connection.TRANSACTION_READ_COMMITTED) {
+        connection.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
+      }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void close() throws SQLException {
+      if (originalIsolation != Connection.TRANSACTION_READ_COMMITTED) {
+        connection.setTransactionIsolation(originalIsolation);
+      }
+    }
   }
 }

@@ -87,6 +87,18 @@ Sensitive catalog properties such as `jdbc-password` are hidden from the default
 
 Refer to [Manage Catalogs and Schemas](./manage-catalogs-and-schemas.md#schema-operations) for more details.
 
+Cascading drops remove objects within the requested schema. If objects in another schema depend on
+them, including views, foreign keys, or column defaults, Gravitino rejects the drop with a
+schema-not-empty error identifying the dependencies. Remove those dependencies before retrying.
+PostgreSQL-managed TOAST storage is included in a contained drop.
+
+The drop and dependency validation run before the transaction commits. Native PostgreSQL DDL locks
+protect against concurrently created dependencies, and a rejected drop is rolled back. Validation
+imports a snapshot exported after the drop, using one additional short-lived connection with the
+catalog's authentication and connection settings. It does not consume another connection-pool slot
+or require extra table-lock privileges. If that connection reaches a different server through a
+multi-host JDBC URL, snapshot import fails and the drop is rolled back.
+
 ## Table
 
 ### Table Capabilities

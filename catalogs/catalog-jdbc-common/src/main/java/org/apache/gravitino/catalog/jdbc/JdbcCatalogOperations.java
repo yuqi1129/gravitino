@@ -504,7 +504,8 @@ public class JdbcCatalogOperations
    * @param ident The identifier of the schema to drop.
    * @param cascade If set to true, drops all the tables in the schema as well.
    * @return true if the schema is successfully dropped; false if the schema does not exist.
-   * @throws NonEmptySchemaException If the schema is not empty and 'cascade' is set to false.
+   * @throws NonEmptySchemaException If the schema is not empty and 'cascade' is set to false, or
+   *     external dependencies prevent a cascading drop confined to the schema.
    */
   @Override
   public boolean dropSchema(NameIdentifier ident, boolean cascade) throws NonEmptySchemaException {

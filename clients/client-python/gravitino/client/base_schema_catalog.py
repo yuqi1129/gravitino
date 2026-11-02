@@ -299,7 +299,8 @@ class BaseSchemaCatalog(
             cascade: Whether to drop all the tables under the schema.
 
         Raises:
-            NonEmptySchemaException if the schema is not empty and cascade is false.
+            NonEmptySchemaException if the schema is not empty and cascade is false,
+            or external dependencies prevent a cascading drop confined to the schema.
 
         Returns:
              true if the schema is dropped successfully, false otherwise.

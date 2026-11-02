@@ -18,6 +18,7 @@
  */
 package org.apache.gravitino.catalog.jdbc.utils;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
@@ -27,6 +28,10 @@ import java.util.Properties;
 import javax.sql.DataSource;
 import org.apache.commons.dbcp2.BasicDataSource;
 import org.apache.commons.dbcp2.BasicDataSourceFactory;
+import org.apache.commons.dbcp2.DelegatingConnection;
+import org.apache.commons.dbcp2.PoolableConnection;
+import org.apache.commons.dbcp2.PoolableConnectionFactory;
+import org.apache.commons.pool2.PooledObject;
 import org.apache.gravitino.catalog.jdbc.config.JdbcConfig;
 import org.apache.gravitino.exceptions.GravitinoRuntimeException;
 import org.apache.gravitino.utils.JdbcUrlUtils;
@@ -103,6 +108,44 @@ public class DataSourceUtils {
       }
       throw new GravitinoRuntimeException(exception, "Error creating datasource");
     }
+  }
+
+  /**
+   * Opens an independent connection with the data source's driver properties and session defaults.
+   *
+   * <p>This connection does not consume a pool slot and is physically closed by {@code close()}. It
+   * is intended for validation that needs a different transaction while a pooled connection is
+   * already held, including when the catalog pool has only one slot.
+   *
+   * @param dataSource a DBCP data source created by this utility, or a wrapper around one
+   * @return an independent connection that the caller must close
+   * @throws SQLException if the data source cannot be unwrapped or the connection cannot be opened
+   */
+  public static Connection createIndependentConnection(DataSource dataSource) throws SQLException {
+    BasicDataSource source = dataSource.unwrap(BasicDataSource.class);
+    source.start();
+    PoolableConnectionFactory factory =
+        (PoolableConnectionFactory) source.getConnectionPool().getFactory();
+    PooledObject<PoolableConnection> object = factory.makeObject();
+    PoolableConnection connection = object.getObject();
+    try {
+      factory.activateObject(object);
+    } catch (SQLException | RuntimeException e) {
+      try {
+        connection.reallyClose();
+      } catch (SQLException closeFailure) {
+        e.addSuppressed(closeFailure);
+      }
+      throw e;
+    }
+    return new DelegatingConnection<PoolableConnection>(connection) {
+      /** {@inheritDoc} */
+      @Override
+      public void close() throws SQLException {
+        // This object was never borrowed from the pool, so it must not be returned to it.
+        connection.reallyClose();
+      }
+    };
   }
 
   /**

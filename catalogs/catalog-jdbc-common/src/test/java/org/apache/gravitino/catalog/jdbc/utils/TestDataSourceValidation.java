@@ -18,6 +18,12 @@
  */
 package org.apache.gravitino.catalog.jdbc.utils;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
@@ -27,10 +33,15 @@ import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import javax.annotation.Nullable;
 import org.apache.commons.dbcp2.BasicDataSource;
+import org.apache.commons.dbcp2.PoolableConnection;
+import org.apache.commons.dbcp2.PoolableConnectionFactory;
+import org.apache.commons.pool2.impl.DefaultPooledObject;
+import org.apache.commons.pool2.impl.GenericObjectPool;
 import org.apache.gravitino.catalog.jdbc.config.JdbcConfig;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -41,6 +52,68 @@ import org.sqlite.SQLiteConnection;
 
 /** Tests default driver validation and explicitly configured SQL validation. */
 public class TestDataSourceValidation {
+
+  /** Activation failures close the independent connection and preserve the original exception. */
+  @ParameterizedTest
+  @ValueSource(strings = {"sql", "runtime", "close"})
+  public void testIndependentConnectionActivationFailure(String failureType) throws SQLException {
+    BasicDataSource source = mock(BasicDataSource.class);
+    PoolableConnectionFactory factory = mock(PoolableConnectionFactory.class);
+    PoolableConnection connection = mock(PoolableConnection.class);
+    try (GenericObjectPool<PoolableConnection> pool = new GenericObjectPool<>(factory)) {
+      when(source.unwrap(BasicDataSource.class)).thenReturn(source);
+      when(source.getConnectionPool()).thenReturn(pool);
+      when(factory.makeObject()).thenReturn(new DefaultPooledObject<>(connection));
+      Exception failure =
+          failureType.equals("runtime")
+              ? new IllegalStateException("Activation failed")
+              : new SQLException("Activation failed");
+      doThrow(failure).when(factory).activateObject(any());
+      SQLException closeFailure = new SQLException("Close failed");
+      if (failureType.equals("close")) {
+        doThrow(closeFailure).when(connection).reallyClose();
+      }
+      Exception actual =
+          Assertions.assertThrows(
+              Exception.class, () -> DataSourceUtils.createIndependentConnection(source));
+      Assertions.assertSame(failure, actual);
+      verify(connection).reallyClose();
+      if (failureType.equals("close")) {
+        Assertions.assertArrayEquals(new Throwable[] {closeFailure}, actual.getSuppressed());
+      } else {
+        Assertions.assertEquals(0, actual.getSuppressed().length);
+      }
+    }
+  }
+
+  /**
+   * Independent connections preserve session initialization without borrowing another pool slot.
+   */
+  @Test
+  public void testIndependentConnectionWithOneSlotPool() throws SQLException {
+    try (BasicDataSource dataSource = createDataSource(Map.of())) {
+      dataSource.setConnectionInitSqls(List.of("CREATE TABLE session_marker (id INTEGER)"));
+      dataSource.setDefaultAutoCommit(false);
+      try (Connection pooled = dataSource.getConnection()) {
+        Assertions.assertEquals(1, dataSource.getNumActive());
+        SQLiteConnection physical;
+        try (Connection independent = DataSourceUtils.createIndependentConnection(dataSource)) {
+          physical = independent.unwrap(SQLiteConnection.class);
+          Assertions.assertNotSame(pooled.unwrap(SQLiteConnection.class), physical);
+          Assertions.assertFalse(independent.getAutoCommit());
+          Assertions.assertEquals(1, dataSource.getNumActive());
+          try (Statement statement = independent.createStatement();
+              ResultSet rows = statement.executeQuery("SELECT * FROM session_marker")) {
+            Assertions.assertFalse(rows.next());
+          }
+        }
+        Assertions.assertTrue(physical.isClosed());
+        Assertions.assertFalse(pooled.isClosed());
+        Assertions.assertEquals(1, dataSource.getNumActive());
+      }
+      Assertions.assertEquals(0, dataSource.getNumActive());
+    }
+  }
 
   /** Verifies default validation preserves a live physical SQLite connection across borrows. */
   @Test
