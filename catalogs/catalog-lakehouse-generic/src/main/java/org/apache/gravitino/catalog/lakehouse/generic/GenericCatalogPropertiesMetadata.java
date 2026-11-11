@@ -19,9 +19,11 @@
 
 package org.apache.gravitino.catalog.lakehouse.generic;
 
+import static org.apache.gravitino.connector.PropertyEntry.booleanPropertyEntry;
 import static org.apache.gravitino.connector.PropertyEntry.enumPropertyEntry;
 import static org.apache.gravitino.connector.PropertyEntry.stringOptionalPropertyEntry;
 import static org.apache.gravitino.connector.PropertyEntry.stringOptionalPropertyPrefixEntry;
+import static org.apache.gravitino.lance.common.utils.LanceConstants.LANCE_REQUIRE_ABSOLUTE_LOCATION;
 import static org.apache.gravitino.lance.common.utils.LanceConstants.LANCE_SCHEMA_REFRESH_MODE;
 import static org.apache.gravitino.lance.common.utils.LanceConstants.LANCE_STORAGE_OPTIONS_PREFIX;
 
@@ -70,6 +72,15 @@ public class GenericCatalogPropertiesMetadata extends BaseCatalogPropertiesMetad
                 true /* immutable */,
                 DefaultTableLocationProvider.NAME, /* defaultValue */
                 false /* hidden */),
+            booleanPropertyEntry(
+                LANCE_REQUIRE_ABSOLUTE_LOCATION,
+                "Whether new Lance table locations must be absolute local paths or URIs with a"
+                    + " scheme. Relative paths remain allowed by default for compatibility.",
+                false /* required */,
+                false /* immutable */,
+                false /* defaultValue */,
+                false /* hidden */,
+                false /* reserved */),
             enumPropertyEntry(
                 LANCE_SCHEMA_REFRESH_MODE,
                 "Controls when Lance table schemas are refreshed from the underlying dataset.",

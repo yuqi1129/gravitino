@@ -153,9 +153,15 @@ public interface TableLocationProvider {
    *
    * <p>The returned location is stored verbatim in the table's {@code location} property. It must
    * be non-blank; the caller rejects the table creation with an {@link IllegalArgumentException}
-   * otherwise. Nothing else is required of it: the shape of the path belongs to the provider,
-   * nothing downstream appends to the location, and storing it unchanged is what lets a provider
-   * unprovisioning it later match the string it handed out.
+   * otherwise. Nothing downstream appends to the location, and storing it unchanged is what lets a
+   * provider unprovisioning it later match the string it handed out.
+   *
+   * <p>The table format may apply additional validation after this method returns. For Lance,
+   * enabling the catalog property {@code lance.require-absolute-location} requires an absolute
+   * local path or a URI with a scheme; a relative location is rejected with an {@link
+   * IllegalArgumentException} before table metadata or data is removed. Providers can read the
+   * policy from {@link TableLocationContext#catalogProperties()}. This failure, like other format
+   * failures, does not trigger compensating unprovisioning.
    *
    * <p><b>What the returned location promises.</b> Exactly one thing: that the location is usable,
    * meaning a table format may create its dataset there and will not be refused for any reason

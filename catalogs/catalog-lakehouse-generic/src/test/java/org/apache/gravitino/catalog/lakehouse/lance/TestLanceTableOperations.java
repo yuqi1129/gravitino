@@ -19,6 +19,7 @@
 package org.apache.gravitino.catalog.lakehouse.lance;
 
 import static org.apache.gravitino.lance.common.utils.LanceConstants.LANCE_CREATION_MODE;
+import static org.apache.gravitino.lance.common.utils.LanceConstants.LANCE_REQUIRE_ABSOLUTE_LOCATION;
 import static org.apache.gravitino.lance.common.utils.LanceConstants.LANCE_SCHEMA_REFRESH_MODE;
 import static org.apache.gravitino.lance.common.utils.LanceConstants.LANCE_STORAGE_OPTIONS_PREFIX;
 import static org.apache.gravitino.lance.common.utils.LanceConstants.LANCE_TABLE_DECLARED;
@@ -105,6 +106,123 @@ public class TestLanceTableOperations {
     schemaOps = mock(ManagedSchemaOperations.class);
     idGenerator = mock(IdGenerator.class);
     lanceTableOps = spy(new LanceTableOperations(store, schemaOps, idGenerator));
+  }
+
+  /** The catalog policy rejects ambiguous locations before overwrite or storage access. */
+  @ParameterizedTest
+  @CsvSource({
+    "CREATE,false,false",
+    "OVERWRITE,false,false",
+    "CREATE,true,false",
+    "OVERWRITE,true,false",
+    "CREATE,false,true"
+  })
+  void testAbsoluteLocationPolicyRejectsRelativeBeforeMutation(
+      String mode, boolean register, boolean declared) throws Exception {
+    lanceTableOps.setCatalogProperties(Map.of(LANCE_REQUIRE_ABSOLUTE_LOCATION, "true"));
+    NameIdentifier ident = NameIdentifier.of("schema", "table");
+    for (String location : List.of("invalid-s3-path/table", "./table", "../table", "s3://")) {
+      Map<String, String> props =
+          Map.of(
+              Table.PROPERTY_LOCATION,
+              location,
+              LANCE_CREATION_MODE,
+              mode,
+              LANCE_TABLE_REGISTER,
+              String.valueOf(register),
+              LANCE_TABLE_DECLARED,
+              String.valueOf(declared),
+              LANCE_REQUIRE_ABSOLUTE_LOCATION,
+              "false");
+      IllegalArgumentException failure =
+          Assertions.assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  lanceTableOps.createTable(
+                      ident,
+                      new Column[0],
+                      null,
+                      props,
+                      new Transform[0],
+                      null,
+                      new SortOrder[0],
+                      new Index[0]));
+      Assertions.assertTrue(failure.getMessage().contains(ident.toString()));
+      Assertions.assertTrue(failure.getMessage().contains(LANCE_REQUIRE_ABSOLUTE_LOCATION));
+      Assertions.assertTrue(failure.getMessage().contains("s3://bucket/table"));
+    }
+    Mockito.verifyNoInteractions(store, idGenerator, schemaOps);
+    verify(lanceTableOps, never()).openDataset(anyString(), anyMap());
+    verify(lanceTableOps, never()).createDataset(anyString(), any(), anyMap());
+  }
+
+  /** URI schemes and absolute local paths pass through without normalization or storage probes. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "s3://bucket/table",
+        "gs://bucket/table",
+        "memory://table",
+        "file:///tmp/table",
+        "/tmp/lance table",
+        "custom+store://bucket/table"
+      })
+  void testAbsoluteLocationPolicyAcceptsExplicitLocations(String location) throws Exception {
+    lanceTableOps.setCatalogProperties(Map.of(LANCE_REQUIRE_ABSOLUTE_LOCATION, "true"));
+    NameIdentifier ident = NameIdentifier.of("schema", "table");
+    Table expected = mock(Table.class);
+    Mockito.doReturn(expected)
+        .when(lanceTableOps)
+        .createTableInternal(
+            eq(ident), any(), any(), anyMap(), any(), any(), any(), any(), eq(false), eq(location));
+    Table actual =
+        lanceTableOps.createTable(
+            ident,
+            new Column[0],
+            null,
+            Map.of(Table.PROPERTY_LOCATION, location),
+            new Transform[0],
+            null,
+            new SortOrder[0],
+            new Index[0]);
+    Assertions.assertSame(expected, actual);
+    Mockito.verifyNoInteractions(store);
+  }
+
+  /** Missing and false catalog settings retain native Lance relative-path support. */
+  @ParameterizedTest
+  @ValueSource(strings = {"unset", "false"})
+  void testRelativeLocationsRemainSupportedByDefault(String setting) throws Exception {
+    if (!setting.equals("unset")) {
+      lanceTableOps.setCatalogProperties(Map.of(LANCE_REQUIRE_ABSOLUTE_LOCATION, setting));
+    }
+    NameIdentifier ident = NameIdentifier.of("schema", "relative_table");
+    Path absolute = tempDir.resolve("relative table");
+    String location = Paths.get("").toAbsolutePath().relativize(absolute).toString();
+    when(idGenerator.nextId()).thenReturn(10L);
+    Map<String, String> props = Maps.newHashMap();
+    props.put(Table.PROPERTY_LOCATION, location);
+    props.put(Table.PROPERTY_TABLE_FORMAT, "lance");
+    // A table property cannot enable or disable the catalog policy.
+    props.put(LANCE_REQUIRE_ABSOLUTE_LOCATION, "true");
+    props.putAll(StringIdentifier.newPropertiesWithId(StringIdentifier.fromId(1L), null));
+    PrincipalUtils.doAs(
+        new UserPrincipal("tester"),
+        () ->
+            lanceTableOps.createTable(
+                ident,
+                new Column[] {Column.of("id", Types.IntegerType.get())},
+                null,
+                props,
+                new Transform[0],
+                null,
+                new SortOrder[0],
+                new Index[0]));
+    try (Dataset dataset = lanceTableOps.openDataset(absolute.toString())) {
+      Assertions.assertEquals(1, dataset.getSchema().getFields().size());
+      Assertions.assertEquals(0, dataset.countRows());
+    }
+    verify(store).put(any(TableEntity.class), eq(false));
   }
 
   /** Registered tables persist external ownership and retain the existing dataset on drop. */

@@ -25,7 +25,10 @@ import static org.apache.gravitino.rel.Column.DEFAULT_VALUE_NOT_SET;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
+import java.io.File;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -207,6 +210,7 @@ public class LanceTableOperations extends ManagedTableOperations {
     String location = properties.get(Table.PROPERTY_LOCATION);
     Preconditions.checkArgument(
         StringUtils.isNotBlank(location), "Table location must be specified");
+    validateLocationPolicy(ident, location);
 
     // Extract creation mode from properties
     CreationMode mode =
@@ -377,6 +381,30 @@ public class LanceTableOperations extends ManagedTableOperations {
       throw e;
     } catch (Exception e) {
       throw ExceptionMessages.wrap("Failed to drop Lance dataset for table " + ident, e);
+    }
+  }
+
+  private void validateLocationPolicy(NameIdentifier ident, String location) {
+    if (!Boolean.parseBoolean(
+        catalogProperties.get(LanceConstants.LANCE_REQUIRE_ABSOLUTE_LOCATION))) {
+      return;
+    }
+
+    // Local paths may contain spaces and need not be URI-encoded. Leave storage-scheme support
+    // and dataset validation to Lance; this policy only prevents accidental relative local paths.
+    if (new File(location).isAbsolute()) {
+      return;
+    }
+    String message =
+        String.format(
+            "Lance table %s requires an absolute location because catalog property %s is true. "
+                + "Use an absolute local path or a URI with a scheme, such as s3://bucket/table; "
+                + "a path without a scheme is interpreted as local storage, not S3.",
+            ident, LanceConstants.LANCE_REQUIRE_ABSOLUTE_LOCATION);
+    try {
+      Preconditions.checkArgument(new URI(location).isAbsolute(), message);
+    } catch (URISyntaxException e) {
+      throw new IllegalArgumentException(message, e);
     }
   }
 

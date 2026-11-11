@@ -561,9 +561,9 @@ public class GenericCatalogOperations implements CatalogOperations, SupportsSche
                 .withCatalogProperties(catalogProperties)
                 .build());
 
-    // Only blankness is checked. The shape of the path belongs to the provider: nothing downstream
-    // appends to the location, and the value is stored verbatim so that a provider unprovisioning
-    // it later sees exactly the string it returned.
+    // The generic catalog checks blankness here; the table format may apply further validation,
+    // such as Lance's opt-in absolute-location policy. Nothing downstream appends to the location,
+    // and storing it verbatim lets a provider unprovisioning it match the string it returned.
     Preconditions.checkArgument(
         StringUtils.isNotBlank(location),
         "Table location provider '%s' returned a null or blank location for table %s",

@@ -42,5 +42,8 @@ public class LanceConstants {
   public static final String LANCE_TABLE_DECLARED = "lance.declared";
   public static final String LANCE_SCHEMA_REFRESH_MODE = "lance.schema-refresh-mode";
 
+  /** Catalog-only policy requiring an absolute local path or a URI with a scheme for new tables. */
+  public static final String LANCE_REQUIRE_ABSOLUTE_LOCATION = "lance.require-absolute-location";
+
   public static final String LANCE_TABLE_FORMAT = "lance";
 }

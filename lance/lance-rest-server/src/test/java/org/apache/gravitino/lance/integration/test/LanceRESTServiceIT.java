@@ -47,6 +47,7 @@ import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.commons.io.FileUtils;
 import org.apache.gravitino.Catalog;
+import org.apache.gravitino.CatalogChange;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Schema;
 import org.apache.gravitino.client.GravitinoMetalake;
@@ -504,6 +505,106 @@ public class LanceRESTServiceIT extends BaseIT {
     try (Dataset dataset = Dataset.open().uri(location).build()) {
       Assertions.assertEquals(0, dataset.countRows());
       Assertions.assertEquals(2, dataset.getSchema().getFields().size());
+    }
+  }
+
+  /** The catalog policy applies to all REST creation paths and precedes destructive overwrite. */
+  @Test
+  void testAbsoluteLocationPolicy() throws Exception {
+    catalog = createCatalog(CATALOG_NAME);
+    createSchema();
+    String key = LanceConstants.LANCE_REQUIRE_ABSOLUTE_LOCATION;
+    catalog = metalake.alterCatalog(CATALOG_NAME, CatalogChange.setProperty(key, "true"));
+    String name = "absolute_policy";
+    List<String> ids = List.of(CATALOG_NAME, SCHEMA_NAME, name);
+    String relative =
+        Path.of("")
+            .toAbsolutePath()
+            .relativize(tempDir.resolve("invalid-s3-path").resolve(name))
+            .toString();
+    byte[] body;
+    try (VectorSchemaRoot root = VectorSchemaRoot.of(new IntVector("id", allocator))) {
+      body = ArrowUtils.generateIpcStream(root.getSchema());
+    }
+    ApiException createFailure =
+        Assertions.assertThrows(
+            ApiException.class,
+            () ->
+                createTableApi()
+                    .createTable(
+                        String.join(DELIMITER, ids),
+                        body,
+                        DELIMITER,
+                        "create",
+                        null,
+                        null,
+                        Map.of(
+                            LanceConstants.LANCE_TABLE_LOCATION_HEADER,
+                            relative,
+                            LanceConstants.LANCE_TABLE_PROPERTIES_PREFIX_HEADER,
+                            serializeTableProperties(Map.of(key, "false")))));
+    Assertions.assertEquals(400, createFailure.getCode());
+    Assertions.assertTrue(createFailure.getResponseBody().contains(key));
+    Assertions.assertTrue(createFailure.getResponseBody().contains("s3://bucket/table"));
+
+    DeclareTableRequest declare = new DeclareTableRequest();
+    declare.setId(ids);
+    declare.setLocation(relative);
+    LanceNamespaceException declareFailure =
+        Assertions.assertThrows(LanceNamespaceException.class, () -> ns.declareTable(declare));
+    assertLanceErrorCode(declareFailure, ErrorCode.INVALID_INPUT);
+    Assertions.assertTrue(declareFailure.getMessage().contains(key));
+    RegisterTableRequest register = new RegisterTableRequest();
+    register.setId(ids);
+    register.setLocation(relative);
+    LanceNamespaceException registerFailure =
+        Assertions.assertThrows(LanceNamespaceException.class, () -> ns.registerTable(register));
+    assertLanceErrorCode(registerFailure, ErrorCode.INVALID_INPUT);
+    Assertions.assertTrue(registerFailure.getMessage().contains(key));
+    Assertions.assertFalse(
+        catalog.asTableCatalog().tableExists(NameIdentifier.of(SCHEMA_NAME, name)));
+    Assertions.assertFalse(Files.exists(Path.of(relative)));
+
+    String absolute = tempDir.resolve(name).toString();
+    createTable(ids, absolute, Map.of(), body, "create");
+    ApiException overwriteFailure =
+        Assertions.assertThrows(
+            ApiException.class,
+            () ->
+                createTableApi()
+                    .createTable(
+                        String.join(DELIMITER, ids),
+                        body,
+                        DELIMITER,
+                        "overwrite",
+                        null,
+                        null,
+                        Map.of(LanceConstants.LANCE_TABLE_LOCATION_HEADER, relative)));
+    Assertions.assertEquals(400, overwriteFailure.getCode());
+    Assertions.assertEquals(
+        absolute + "/",
+        catalog
+            .asTableCatalog()
+            .loadTable(NameIdentifier.of(SCHEMA_NAME, name))
+            .properties()
+            .get("location"));
+    try (Dataset dataset = Dataset.open().uri(absolute).build()) {
+      Assertions.assertEquals(1, dataset.getSchema().getFields().size());
+    }
+
+    // The setting can be disabled dynamically; existing local-path support remains available.
+    catalog = metalake.alterCatalog(CATALOG_NAME, CatalogChange.setProperty(key, "false"));
+    String relativeName = "relative_policy";
+    String relativeLocation =
+        Path.of("").toAbsolutePath().relativize(tempDir.resolve(relativeName)).toString();
+    createTable(
+        List.of(CATALOG_NAME, SCHEMA_NAME, relativeName),
+        relativeLocation,
+        Map.of(),
+        body,
+        "create");
+    try (Dataset dataset = Dataset.open().uri(tempDir.resolve(relativeName).toString()).build()) {
+      Assertions.assertEquals(1, dataset.getSchema().getFields().size());
     }
   }
 

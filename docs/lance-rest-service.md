@@ -441,6 +441,16 @@ Forwarding the caller's identity alone does not eliminate these differences.
 Alignment of the authorization behavior is tracked in
 [#13089](https://github.com/apache/gravitino/issues/13089).
 
+### Table location policy
+
+Locations without a URI scheme select the server's local filesystem, not S3, even if AWS storage
+options are provided. Use a URI such as `s3://bucket/table` for remote storage. To prevent accidental
+relative local paths, set `lance.require-absolute-location=true` on the Generic Lakehouse catalog.
+Create (including overwrite), declare and register then reject relative locations with HTTP 400
+before deleting existing metadata or data. The setting defaults to `false` and cannot be overridden
+through table properties or request headers. Absolute local paths remain supported. See
+[Lance table locations](./lakehouse-generic-lance-table.md#table-properties) for details.
+
 ## Examples
 
 The following examples demonstrate how to interact with Lance REST service using different programming languages and tools.

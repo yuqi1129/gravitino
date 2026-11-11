@@ -49,6 +49,7 @@ For detailed information on available operations, see [Manage Relational Metadat
 | `provider`                  | Catalog provider type                                                                                                                                                                                                                                                                                                     | `lakehouse-generic`     | Yes      |
 | `location`                  | Root storage path for all schemas and tables                                                                                                                                                                                                                                                                              | `s3://bucket/lakehouse` | No       |
 | `table-location-provider`   | Name of the [table location provider](#pluggable-table-location-provider) that provisions and unprovisions the locations of this catalog's tables. Defaults to `default`, which resolves the location from the table, schema and catalog `location` properties as described below. Immutable once the catalog is created. | `default`               | No       |
+| `lance.require-absolute-location` | Require new Lance table locations to be absolute local paths or URIs with a scheme. Defaults to `false` for compatibility with relative local paths. Catalog-level only and mutable. | `true` | No |
 | `lance.schema-refresh-mode` | Lance table schema refresh mode. `DECLARED_AND_EMPTY` (default) refreshes declared tables and tables with empty stored columns. `VERSION_CHECK` additionally refreshes when the Lance dataset version changes.                                                                                                            | `DECLARED_AND_EMPTY`    | No       |
 
 #### Pluggable table location provider
@@ -126,9 +127,9 @@ applies no timeout, so a provider that calls a remote service must bound every c
 fast when the service is unavailable; a call that blocks holds that request thread until it returns.
 
 `provisionTableLocation` must return a non-blank location; the catalog rejects the table creation
-otherwise. That is the only check: the shape of the path belongs to the provider, nothing downstream
-appends to it, and the value is stored verbatim so that a provider unprovisioning it later sees
-exactly the string it returned.
+otherwise. The provider determines the shape of the path; Lance additionally rejects relative
+locations when `lance.require-absolute-location=true`. Nothing downstream appends to the path, and the
+value is stored verbatim so that a provider unprovisioning it later sees exactly the string it returned.
 
 **What the returned location promises, and what it does not.** It promises exactly one thing: that the
 location is usable, meaning a table format may create its dataset there and will not be refused for

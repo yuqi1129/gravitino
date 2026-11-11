@@ -177,6 +177,20 @@ concern.
 
 **Location Requirement:** Must be specified at catalog, schema, or table level. See [Location Resolution](./lakehouse-generic-catalog.md#key-property-location).
 
+A location without a URI scheme is a local filesystem path on the Gravitino server. For example,
+`invalid-s3-path/table` is a valid relative local path, even when AWS storage options are supplied;
+credentials do not select the storage backend. Use `s3://bucket/table` for S3.
+
+Administrators can set the catalog property `lance.require-absolute-location=true` to reject relative
+locations for create, declare and register, including overwrite, before existing table metadata or
+data is removed. The default is `false`, preserving Lance's relative local path support. The policy
+checks the effective location returned by the table location provider, including locations derived
+from schema or catalog properties. Table properties cannot override it. Existing tables remain
+readable; this is a placement policy for new requests, not a storage access authorization mechanism.
+Absolute local paths and URIs with a scheme pass this check; Lance still validates storage-scheme
+support and dataset access. No storage connectivity check is added for metadata-only declare.
+
+
 Also set additional properties specific to your lakehouse format or custom requirements.
 
 ### Schema Refresh
