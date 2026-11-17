@@ -1,5 +1,11 @@
 name: Fork CI
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [invalid-failure, invalid-success, valid-success]
+        default: invalid-failure
 permissions:
   contents: read
 jobs:
@@ -10,25 +16,28 @@ jobs:
       sha: ${{ steps.context.outputs.sha }}
     steps:
       - id: context
-        run: echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          if [ "$MODE" = valid-success ]; then
+            echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo 'sha=0000000000000000000000000000000000000001' >> "$GITHUB_OUTPUT"
+          fi
   build:
     name: build / changes
     needs: eligibility
     runs-on: ubuntu-latest
     steps:
-      - run: echo 'Retained successful suite'
+      - run: echo 'Sandbox build passed'
   backend:
     name: backend / changes
     needs: eligibility
     runs-on: ubuntu-latest
     steps:
-      - run: test '${{ github.run_attempt }}' != '1'
-  fail_fast:
-    name: Stop on first failure
-    needs: eligibility
-    runs-on: ubuntu-latest
-    steps:
-      - run: sleep 240
+      - env:
+          MODE: ${{ inputs.mode }}
+        run: test "$MODE" != invalid-failure
   required_ci:
     name: Required CI / main / ${{ needs.eligibility.outputs.sha }} / ${{ github.sha }}
     if: ${{ !cancelled() }}
