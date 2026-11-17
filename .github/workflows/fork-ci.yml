@@ -5,7 +5,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [invalid-failure, invalid-success, valid-success, trusted-switch, current-failure]
+        options: [invalid-failure, invalid-success, valid-success, trusted-switch, current-failure, watcher-only]
         default: invalid-failure
 permissions:
   contents: read
@@ -21,7 +21,7 @@ jobs:
         env:
           MODE: ${{ inputs.mode }}
         run: |
-          if [ "$MODE" = valid-success ] || [ "$MODE" = trusted-switch ] || [ "$MODE" = current-failure ]; then
+          if [ "$MODE" = valid-success ] || [ "$MODE" = trusted-switch ] || [ "$MODE" = current-failure ] || [ "$MODE" = watcher-only ]; then
             echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           else
             echo 'sha=0000000000000000000000000000000000000001' >> "$GITHUB_OUTPUT"
@@ -45,6 +45,13 @@ jobs:
       - env:
           MODE: ${{ inputs.mode }}
         run: test "$MODE" != invalid-failure && test "$MODE" != current-failure
+  fail_fast:
+    name: Stop on first failure
+    needs: eligibility
+    if: inputs.mode == 'watcher-only'
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 300
   required_ci:
     name: Required CI / main / ${{ needs.eligibility.outputs.sha }} / ${{ needs.eligibility.outputs.head }}
     if: ${{ !cancelled() }}
