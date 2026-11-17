@@ -41,7 +41,7 @@ jobs:
             }
             const out = {};
             await require('./.github/scripts/resolve-fork-ci.cjs').resolve({
-              github, context: { ...context, eventName: 'push', ref: 'refs/heads/backport/test/branch-2.0',
+              github, context: { ...context, repo: context.repo, eventName: 'push', ref: 'refs/heads/backport/test/branch-2.0',
                 payload: { ...context.payload, sender: { type: 'Bot' } } },
               core: { ...core, setOutput: (name, value) => { out[name] = value; } }
             });
