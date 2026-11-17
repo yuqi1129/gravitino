@@ -1,10 +1,11 @@
 name: Fork CI
+run-name: "${{ inputs.mode == 'trusted-switch' && 'Trusted Fork CI #14990' || format('Fork CI {0}', inputs.mode) }}"
 on:
   workflow_dispatch:
     inputs:
       mode:
         type: choice
-        options: [invalid-failure, invalid-success, valid-success]
+        options: [invalid-failure, invalid-success, valid-success, trusted-switch, current-failure]
         default: invalid-failure
 permissions:
   contents: read
@@ -14,15 +15,21 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.context.outputs.sha }}
+      head: ${{ steps.context.outputs.head }}
     steps:
       - id: context
         env:
           MODE: ${{ inputs.mode }}
         run: |
-          if [ "$MODE" = valid-success ]; then
+          if [ "$MODE" = valid-success ] || [ "$MODE" = trusted-switch ] || [ "$MODE" = current-failure ]; then
             echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           else
             echo 'sha=0000000000000000000000000000000000000001' >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$MODE" = trusted-switch ] && [ "$GITHUB_RUN_ATTEMPT" -gt 1 ]; then
+            echo 'head=6a23a35eaf0b74bbb7ab579f559653479ff0abd0' >> "$GITHUB_OUTPUT"
+          else
+            echo "head=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           fi
   build:
     name: build / changes
@@ -37,9 +44,9 @@ jobs:
     steps:
       - env:
           MODE: ${{ inputs.mode }}
-        run: test "$MODE" != invalid-failure
+        run: test "$MODE" != invalid-failure && test "$MODE" != current-failure
   required_ci:
-    name: Required CI / main / ${{ needs.eligibility.outputs.sha }} / ${{ github.sha }}
+    name: Required CI / main / ${{ needs.eligibility.outputs.sha }} / ${{ needs.eligibility.outputs.head }}
     if: ${{ !cancelled() }}
     needs:
       - eligibility
