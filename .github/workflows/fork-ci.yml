@@ -44,7 +44,9 @@ jobs:
     steps:
       - env:
           MODE: ${{ inputs.mode }}
-        run: test "$MODE" != invalid-failure && test "$MODE" != current-failure
+        run: |
+          test "$MODE" != invalid-failure && test "$MODE" != current-failure
+          test "$MODE" != trusted-switch || test "$GITHUB_RUN_ATTEMPT" = 1
   fail_fast:
     name: Stop on first failure
     needs: eligibility
