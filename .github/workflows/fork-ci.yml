@@ -1,335 +1,104 @@
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
-#
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an
-# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-# KIND, either express or implied.  See the License for the
-# specific language governing permissions and limitations
-# under the License.
-
-# Run the complete CI entry point from branch pushes in the contributor's repository.
-name: Fork CI
-run-name: "${{ github.event_name == 'workflow_dispatch' && inputs.pull-request != '' && format('Trusted Fork CI #{0}', inputs.pull-request) || format('Fork CI {0}', github.ref_name) }}"
-
+name: Backport routing live sandbox
 on:
   push:
-    branches: ['**']
+    branches: [test/backport-routing-15014]
   workflow_dispatch:
-    inputs:
-      pull-request:
-        description: 'In apache/gravitino: PR to test using the reviewed default-branch workflows (committers only). In a fork: leave empty to test the selected branch.'
-        required: false
-        type: string
-
 permissions:
-  contents: read
-  actions: read
+  contents: write
+  actions: write
   pull-requests: read
-
-# A human push and Run workflow share a group. App preparation pushes use a separate
-# group: a delayed push event must not cancel the explicitly dispatched tests.
-# Backport fork routing v1
-concurrency:
-  group: fork-ci-${{ inputs.pull-request && format('trusted-{0}', inputs.pull-request) || github.ref }}${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/backport/') && github.event.sender.type == 'Bot' && '-prepare' || '' }}
-  cancel-in-progress: true
-
 jobs:
-  eligibility:
-    name: Resolve fork CI eligibility
-    if: vars.DISABLE_FORK_CI != 'true'
-    runs-on: ubuntu-slim
-    outputs:
-      base-ref: ${{ steps.resolve.outputs.base-ref }}
-      base-sha: ${{ steps.resolve.outputs.base-sha }}
-      head-repository: ${{ steps.resolve.outputs.head-repository }}
-      head-sha: ${{ steps.resolve.outputs.head-sha }}
-      sync: ${{ steps.resolve.outputs.sync }}
-      valid: ${{ steps.resolve.outputs.valid == 'true' && (steps.resolve.outputs.sync != 'true' || steps.merge.outcome == 'success') }}
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: 8e6b5439e52b1792bd5af39db9c3bdb7909d31dc
           persist-credentials: false
-      - name: Resolve one immutable test context
-        id: resolve
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Verify tools and run the entire script test suite without skips
+        run: |
+          node --version
+          yq --version
+          jq --version
+          node --test .github/scripts/tests/*.test.cjs
+      - name: Real public API and Node 20 github-script compatibility
         uses: actions/github-script@v7
         with:
           script: |
-            await require('./.github/scripts/resolve-fork-ci.cjs').resolve({ github, context, core });
-
-      - name: Check the frozen merge before starting suites
-        id: merge
-        if: steps.resolve.outputs.sync == 'true'
+            const assert = require('node:assert/strict');
+            const helper = require('./.github/scripts/backport-to-fork.cjs');
+            const anonymous = new github.constructor();
+            assert.equal(typeof anonymous.request, 'function');
+            for (const number of [14930, 14975, 14998]) {
+              const { data: pr } = await github.rest.pulls.get({ owner: 'apache', repo: 'gravitino', pull_number: number });
+              const sourceBase = await helper.mergedChangeBase(github, pr);
+              assert.match(sourceBase, /^[0-9a-f]{40}$/);
+              core.info(JSON.stringify({ number, merger: pr.merged_by.login, sha: pr.merge_commit_sha, sourceBase }));
+            }
+            const out = {};
+            await require('./.github/scripts/resolve-fork-ci.cjs').resolve({
+              github, context: { ...context, eventName: 'push', ref: 'refs/heads/backport/test/branch-2.0',
+                payload: { ...context.payload, sender: { type: 'Bot' } } },
+              core: { ...core, setOutput: (name, value) => { out[name] = value; } }
+            });
+            assert.equal(out.valid, 'false');
+      - name: Real fork Git push, API readback, idempotent retry and cleanup
+        if: github.event_name == 'push'
+        uses: actions/github-script@v7
         env:
-          BASE_SHA: ${{ steps.resolve.outputs.base-sha }}
-          HEAD_SHA: ${{ steps.resolve.outputs.head-sha }}
-          HEAD_REPOSITORY: ${{ steps.resolve.outputs.head-repository }}
-        run: |
-          set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/merge-check"
-          cd "${RUNNER_TEMP}/merge-check"
-          git init --quiet
-          git fetch --quiet --no-tags https://github.com/apache/gravitino.git "${BASE_SHA}"
-          git fetch --quiet --no-tags "https://github.com/${HEAD_REPOSITORY}.git" "${HEAD_SHA}"
-          git merge-tree --write-tree --name-only "${BASE_SHA}" "${HEAD_SHA}"
-
-  build:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/build.yml
-
-  backend:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/backend-integration-test.yml
-
-  spark:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/spark-integration-test.yml
-
-  flink:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/flink-integration-test.yml
-
-  trino:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/trino-integration-test.yml
-
-  iceberg_rest_trino:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/iceberg-rest-trino-integration-test.yml
-
-  python:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/python-integration-test.yml
-
-  frontend:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/frontend-integration-test.yml
-
-  access_control:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/access-control-integration-test.yml
-
-  idp_basic:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/idp-basic-test.yml
-
-  mcp:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/mcp-integration-test.yml
-
-  maintenance:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/maintenance-integration-test.yml
-
-  tms:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/tms-test.yml
-
-  web_ui:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/web-ui-tests.yml
-
-  charts:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/chart-test.yaml
-
-  contrib_catalog:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/contrib-catalog-test.yml
-
-  asf_allowlist:
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    with:
-      base-ref: ${{ needs.eligibility.outputs.base-ref }}
-      base-sha: ${{ needs.eligibility.outputs.base-sha }}
-      head-repository: ${{ needs.eligibility.outputs.head-repository }}
-      head-sha: ${{ needs.eligibility.outputs.head-sha }}
-      sync: ${{ needs.eligibility.outputs.sync }}
-    uses: ./.github/workflows/asf-allowlist-check.yml
-
-  fail_fast:
-    name: Stop on first failure
-    needs: eligibility
-    if: needs.eligibility.outputs.valid == 'true'
-    # Not ubuntu-slim: it limits jobs to 15 minutes, and this job lasts as long as the slowest suite.
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    # The watcher only observes the suites; its own failure or timeout must not fail the run.
-    continue-on-error: true
-    permissions:
-      contents: read
-      actions: write
-    steps:
-      - uses: actions/checkout@v4
+          FORK_TOKEN: ${{ github.token }}
         with:
-          persist-credentials: false
-      - uses: actions/github-script@v7
-        with:
-          retries: 3
           script: |
-            await require('./.github/scripts/fail-fast.cjs').watch({ github, context, core, self: 'Stop on first failure' });
-
-  required_ci:
-    name: Required CI / ${{ needs.eligibility.outputs.base-ref }} / ${{ needs.eligibility.outputs.base-sha }} / ${{ needs.eligibility.outputs.head-sha }}
-    # !cancelled() rather than always(), so a cancelled run does not wait for a runner here.
-    if: ${{ !cancelled() && needs.eligibility.outputs.valid == 'true' }}
-    needs:
-      - eligibility
-      - build
-      - backend
-      - spark
-      - flink
-      - trino
-      - iceberg_rest_trino
-      - python
-      - frontend
-      - access_control
-      - idp_basic
-      - mcp
-      - maintenance
-      - tms
-      - web_ui
-      - charts
-      - contrib_catalog
-      - asf_allowlist
-    runs-on: ubuntu-latest
-    steps:
-      - name: Verify required CI suites
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-        run: |
-          set -euo pipefail
-          echo "Required CI suite results:"
-          jq -r 'to_entries[] | "\(.key)=\(.value.result)"' <<< "${RESULTS}"
-          failures="$(
-            jq -r '
-              to_entries[]
-              | select(.value.result != "success" and .value.result != "skipped")
-              | "\(.key)=\(.value.result)"
-            ' <<< "${RESULTS}"
-          )"
-          if [ -n "${failures}" ]; then
-            echo "::error::One or more required CI suites did not succeed."
-            echo "${failures}"
-            exit 1
-          fi
+            const assert = require('node:assert/strict');
+            const helper = require('./.github/scripts/backport-to-fork.cjs');
+            const { data: pr } = await github.rest.pulls.get({ owner: 'apache', repo: 'gravitino', pull_number: 14930 });
+            const task = { owner: context.repo.owner, repo: context.repo.repo, number: context.runId,
+              sha: pr.merge_commit_sha, sourceBaseSha: await helper.mergedChangeBase(github, pr), title: pr.title };
+            const outputs = {};
+            const testCore = { ...core, setOutput: (name, value) => { outputs[name] = value; } };
+            const args = { github, core: testCore, task, target: 'branch-2.0', token: process.env.FORK_TOKEN };
+            // Apache release has not received the bootstrap. Verify the real guard first.
+            await assert.rejects(helper.prepare(args), /routing support/);
+            // Only this prerequisite is simulated; fork lookup, Git fetch/push, retry
+            // lookup and cleanup use actual GitHub APIs and the job-scoped token.
+            const routedGithub = { ...github, rest: { ...github.rest, repos: { ...github.rest.repos,
+              getContent: async () => ({ data: { encoding: 'base64',
+                content: Buffer.from(helper.ROUTING_MARKER).toString('base64') } })
+            } } };
+            const branch = `backport/pr-${context.runId}/branch-2.0`;
+            try {
+              await helper.prepare({ ...args, github: routedGithub });
+              assert.equal(outputs.conflict, 'false');
+              const sha = outputs.sha;
+              const { data: ref } = await github.rest.git.getRef({ ...context.repo, ref: `heads/${branch}` });
+              assert.equal(ref.object.sha, sha);
+              const { data: commit } = await github.rest.repos.getCommit({ ...context.repo, ref: sha });
+              assert.match(commit.commit.message, /Backport-conflicts: false/);
+              assert.equal(commit.files.length, 3);
+              await helper.prepare({ ...args, github: routedGithub });
+              assert.equal(outputs.sha, sha);
+              core.info(JSON.stringify({ repository: context.repo, branch, sha, files: commit.files.map(f => f.filename), retry: 'same SHA' }));
+            } finally {
+              try { await github.rest.git.deleteRef({ ...context.repo, ref: `heads/${branch}` }); }
+              catch (error) { if (error.status !== 404 && error.status !== 422) throw error; }
+            }
+      - name: Real workflow dispatch through production helper
+        if: github.event_name == 'push'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const helper = require('./.github/scripts/backport-to-fork.cjs');
+            const branch = context.ref.replace('refs/heads/', '');
+            // PR metadata is a fixture: no upstream PR is created by this sandbox.
+            // Actions lookup and dispatch are real and execute this branch's test workflow.
+            const fixtureGithub = { ...github, rest: { ...github.rest, pulls: { ...github.rest.pulls,
+              get: async () => ({ data: { state: 'open', draft: false, base: { ref: 'branch-2.0' },
+                head: { sha: context.sha, repo: { full_name: `${context.repo.owner}/${context.repo.repo}` } }, labels: [] } })
+            } } };
+            await helper.dispatch({ github: fixtureGithub, core,
+              task: { owner: context.repo.owner, repo: context.repo.repo }, target: 'branch-2.0',
+              branch, sha: context.sha, number: 1 });
