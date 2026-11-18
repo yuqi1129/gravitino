@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: yuqi1129/gravitino
-          ref: b70791cdfd06c0c53e6af017d8f4e46e24368716
+          ref: 1e249b377ae7c421177c613f6ada2c50404b6075
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
