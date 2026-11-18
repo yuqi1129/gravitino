@@ -1,0 +1,41 @@
+name: Glossary backend verification
+on:
+  push:
+    branches: [ci-15070-glossary-backends]
+permissions:
+  contents: read
+jobs:
+  glossary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {task: coreH2Test, skipDocker: true}
+          - {task: coreMySQLTest, skipDocker: false}
+          - {task: corePostgreSQLTest, skipDocker: false}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 95ed3b69273bae899614524f57eb69623f3b37ad
+          persist-credentials: false
+      - uses: ./.github/actions/setup-java-toolchains
+      - run: bash dev/ci/util_free_space.sh
+      - name: Run glossary backend tests
+        run: |
+          cat > "$RUNNER_TEMP/central.gradle" <<'GRADLE'
+          beforeSettings { settings ->
+            settings.pluginManagement.repositories {
+              mavenCentral()
+              gradlePluginPortal()
+            }
+          }
+          GRADLE
+          ./gradlew -I "$RUNNER_TEMP/central.gradle" :core:${{ matrix.task }} -PskipWeb=true -PskipITs -PskipDockerTests=${{ matrix.skipDocker }} --tests '*TestGlossaryManager' --tests '*TestGlossaryTermMetaService' --tests '*TestGlossaryTermRelService'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: glossary-${{ matrix.task }}
+          path: core/build/test-results/${{ matrix.task }}/TEST-*.xml
+          if-no-files-found: error
