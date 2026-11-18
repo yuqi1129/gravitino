@@ -1,104 +1,22 @@
-name: Backport routing live sandbox
+name: Fixed bot fork credential preflight
 on:
   push:
-    branches: [backport-routing-sandbox-15014]
-  workflow_dispatch:
+    branches: [bot-backport-sandbox-15014]
 permissions:
-  contents: write
-  actions: write
-  pull-requests: read
+  contents: read
 jobs:
-  verify:
+  preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
         with:
-          ref: 8e6b5439e52b1792bd5af39db9c3bdb7909d31dc
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Verify tools and run the entire script test suite without skips
-        run: |
-          node --version
-          yq --version
-          jq --version
-          node --test .github/scripts/tests/*.test.cjs
-      - name: Real public API and Node 20 github-script compatibility
-        uses: actions/github-script@v7
-        with:
+          github-token: ${{ secrets.CHERRY_PICK_TOKEN }}
           script: |
-            const assert = require('node:assert/strict');
-            const helper = require('./.github/scripts/backport-to-fork.cjs');
-            const anonymous = new github.constructor();
-            assert.equal(typeof anonymous.request, 'function');
-            for (const number of [14930, 14975, 14998]) {
-              const { data: pr } = await github.rest.pulls.get({ owner: 'apache', repo: 'gravitino', pull_number: number });
-              const sourceBase = await helper.mergedChangeBase(github, pr);
-              assert.match(sourceBase, /^[0-9a-f]{40}$/);
-              core.info(JSON.stringify({ number, merger: pr.merged_by.login, sha: pr.merge_commit_sha, sourceBase }));
+            const {data: user} = await github.rest.users.getAuthenticated();
+            core.info(JSON.stringify({credentialUser: user.login, type: user.type}));
+            for (const owner of ['yuqi1129', 'timelyflow']) {
+              const {data: repo} = await github.rest.repos.get({owner, repo: 'gravitino'});
+              core.info(JSON.stringify({repository: repo.full_name, permissions: repo.permissions}));
+              if (!repo.permissions?.push) throw new Error('Test credential cannot push ' + repo.full_name);
             }
-            const out = {};
-            await require('./.github/scripts/resolve-fork-ci.cjs').resolve({
-              github, context: { ...context, repo: context.repo, eventName: 'push', ref: 'refs/heads/backport/test/branch-2.0',
-                payload: { ...context.payload, sender: { type: 'Bot' } } },
-              core: { ...core, setOutput: (name, value) => { out[name] = value; } }
-            });
-            assert.equal(out.valid, 'false');
-      - name: Real fork Git push, API readback, idempotent retry and cleanup
-        if: github.event_name == 'push'
-        uses: actions/github-script@v7
-        env:
-          FORK_TOKEN: ${{ github.token }}
-        with:
-          script: |
-            const assert = require('node:assert/strict');
-            const helper = require('./.github/scripts/backport-to-fork.cjs');
-            const { data: pr } = await github.rest.pulls.get({ owner: 'apache', repo: 'gravitino', pull_number: 14930 });
-            const task = { owner: context.repo.owner, repo: context.repo.repo, number: context.runId,
-              sha: pr.merge_commit_sha, sourceBaseSha: await helper.mergedChangeBase(github, pr), title: pr.title };
-            const outputs = {};
-            const testCore = { ...core, setOutput: (name, value) => { outputs[name] = value; } };
-            const args = { github, core: testCore, task, target: 'branch-2.0', token: process.env.FORK_TOKEN };
-            // Apache release has not received the bootstrap. Verify the real guard first.
-            await assert.rejects(helper.prepare(args), /routing support/);
-            // Only this prerequisite is simulated; fork lookup, Git fetch/push, retry
-            // lookup and cleanup use actual GitHub APIs and the job-scoped token.
-            const routedGithub = { ...github, rest: { ...github.rest, repos: { ...github.rest.repos,
-              getContent: async () => ({ data: { encoding: 'base64',
-                content: Buffer.from(helper.ROUTING_MARKER).toString('base64') } })
-            } } };
-            const branch = `backport/pr-${context.runId}/branch-2.0`;
-            try {
-              await helper.prepare({ ...args, github: routedGithub });
-              assert.equal(outputs.conflict, 'false');
-              const sha = outputs.sha;
-              const { data: ref } = await github.rest.git.getRef({ ...context.repo, ref: `heads/${branch}` });
-              assert.equal(ref.object.sha, sha);
-              const { data: commit } = await github.rest.repos.getCommit({ ...context.repo, ref: sha });
-              assert.match(commit.commit.message, /Backport-conflicts: false/);
-              assert.equal(commit.files.length, 3);
-              await helper.prepare({ ...args, github: routedGithub });
-              assert.equal(outputs.sha, sha);
-              core.info(JSON.stringify({ repository: context.repo, branch, sha, files: commit.files.map(f => f.filename), retry: 'same SHA' }));
-            } finally {
-              try { await github.rest.git.deleteRef({ ...context.repo, ref: `heads/${branch}` }); }
-              catch (error) { if (error.status !== 404 && error.status !== 422) throw error; }
-            }
-      - name: Real workflow dispatch through production helper
-        if: github.event_name == 'push'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const helper = require('./.github/scripts/backport-to-fork.cjs');
-            const branch = context.ref.replace('refs/heads/', '');
-            // PR metadata is a fixture: no upstream PR is created by this sandbox.
-            // Actions lookup and dispatch are real and execute this branch's test workflow.
-            const fixtureGithub = { ...github, rest: { ...github.rest, pulls: { ...github.rest.pulls,
-              get: async () => ({ data: { state: 'open', draft: false, base: { ref: 'branch-2.0' },
-                head: { sha: context.sha, repo: { full_name: `${context.repo.owner}/${context.repo.repo}` } }, labels: [] } })
-            } } };
-            await helper.dispatch({ github: fixtureGithub, core,
-              task: { owner: context.repo.owner, repo: context.repo.repo }, target: 'branch-2.0',
-              branch, sha: context.sha, number: 1 });
