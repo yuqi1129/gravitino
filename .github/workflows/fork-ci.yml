@@ -1,4 +1,4 @@
-name: Fixed bot fork credential preflight
+name: Real bot fork backport prepare
 on:
   push:
     branches: [bot-backport-sandbox-15014]
@@ -7,7 +7,7 @@ permissions:
 jobs:
   preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/github-script@v7
         env:
@@ -35,3 +35,43 @@ jobs:
             } catch (error) {
               core.setFailed(error.status ? 'Bot credential API verification failed: HTTP ' + error.status : error.message);
             }
+      - uses: actions/checkout@v4
+        with:
+          repository: yuqi1129/gravitino
+          ref: aa16dd1456ea973c12e22c464bcf7a04464bff49
+          persist-credentials: false
+      - name: Cherry-pick and push with real bot credential, then retry
+        uses: actions/github-script@v7
+        env:
+          BOT_TOKEN: ${{ secrets.BACKPORT_BOT_TOKEN }}
+        with:
+          script: |
+            const assert = require('node:assert/strict');
+            const token = process.env.BOT_TOKEN.trim();
+            core.setSecret(token);
+            const bot = new github.constructor({auth: token});
+            const task = {
+              owner: 'yuqi-datastrato', repo: 'gravitino', number: 15014,
+              sha: 'aa16dd1456ea973c12e22c464bcf7a04464bff49',
+              sourceBaseSha: 'f2b2637947a5f20c3a6c1f6ac3cbae2c50cc8767',
+              title: '[MINOR] test(ci): Validate real bot fork backport routing'
+            };
+            const target = 'bot-real-base-15014';
+            const {data: base} = await bot.rest.repos.getBranch({owner:'yuqi1129',repo:'gravitino',branch:target});
+            assert.equal(base.commit.sha, task.sourceBaseSha);
+            const outputs = {};
+            const captured = {...core, setOutput: (key,value) => { outputs[key] = value; }};
+            const helper = require('./.sandbox/backport.cjs');
+            await helper.prepare({github: bot, core: captured, task, target, token});
+            assert.equal(outputs.conflict, 'false');
+            const sha = outputs.sha;
+            await helper.prepare({github: bot, core: captured, task, target, token});
+            assert.equal(outputs.sha, sha);
+            assert.equal(outputs.conflict, 'false');
+            const {data: diff} = await bot.rest.repos.compareCommitsWithBasehead({
+              owner:'yuqi1129',repo:'gravitino',basehead:task.sourceBaseSha + '...' + sha
+            });
+            assert.equal(diff.files.length, 1);
+            assert.equal(diff.files[0].filename, '.sandbox/change.txt');
+            assert.equal(diff.files[0].status, 'added');
+            core.info(JSON.stringify({task, target, ...outputs, retry:'same SHA', files:diff.files.map(f=>f.filename)}));
