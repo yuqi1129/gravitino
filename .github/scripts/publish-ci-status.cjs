@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 'use strict';
-const UPSTREAM = { owner: 'apache', repo: 'gravitino' };
+const UPSTREAM = { owner: 'timelyflow', repo: 'gravitino' };
 
 // Commit statuses are the only signal on the PR: check runs created with GITHUB_TOKEN are
 // attached to an arbitrary Actions suite, show up as duplicates such as

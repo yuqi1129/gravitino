@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 'use strict';
-const UPSTREAM = 'apache/gravitino';
+const UPSTREAM = 'timelyflow/gravitino';
 
 async function resolve({ github, context, core }) {
   const repository = `${context.repo.owner}/${context.repo.repo}`;
@@ -26,21 +26,19 @@ async function resolve({ github, context, core }) {
   const trustedDispatch = context.eventName === 'workflow_dispatch' &&
     (repository === UPSTREAM || !!context.payload.inputs?.['pull-request']);
   if (trustedDispatch) {
-    if (repository !== UPSTREAM) throw new Error('Trusted runs must be dispatched in apache/gravitino.');
+    if (repository !== UPSTREAM) throw new Error('Trusted runs must be dispatched in timelyflow/gravitino.');
     const number = context.payload.inputs?.['pull-request'];
     if (!/^[1-9][0-9]*$/.test(String(number))) throw new Error('A pull request number is required.');
     const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) });
     if (pr.state !== 'open' || !pr.head.repo) throw new Error('The pull request must be open with an existing head repository.');
     baseRef = pr.base.ref;
-    // Use only reviewed upstream default/release branch workflows, never a PR or feature ref.
-    const supportedTarget = baseRef === context.payload.repository.default_branch || /^branch-\d+\.\d+$/.test(baseRef);
-    if (!supportedTarget || context.ref !== `refs/heads/${baseRef}`) {
-      throw new Error(`Dispatch trusted Fork CI from the current upstream PR target branch (${baseRef}); only the default branch and branch-X.Y releases are supported.`);
+    if (baseRef !== context.payload.repository.default_branch || context.ref !== `refs/heads/${baseRef}`) {
+      throw new Error('Dispatch the trusted workflow from the current default branch; release branches use their own CI.');
     }
     // Pull requests retain an older base.sha after the base branch advances.
     const { data: base } = await github.rest.repos.getBranch({ ...context.repo, branch: baseRef });
     if (context.sha !== base.commit.sha) {
-      throw new Error(`Dispatch trusted Fork CI from the current upstream PR target branch (${baseRef}); only the default branch and branch-X.Y releases are supported.`);
+      throw new Error('Dispatch the trusted workflow from the current default branch; release branches use their own CI.');
     }
     headSha = pr.head.sha;
     headRepository = pr.head.repo.full_name;
@@ -50,9 +48,9 @@ async function resolve({ github, context, core }) {
     // Post-merge CI tests the pushed upstream commit itself.
   } else {
     const { data: repo } = await github.rest.repos.get(context.repo);
-    if (repo.fork && repo.source?.full_name === UPSTREAM) {
+    if (repo.fork && repo.source?.full_name === 'apache/gravitino') {
       const prs = await github.paginate(github.rest.pulls.list, {
-        owner: 'apache', repo: 'gravitino', state: 'open',
+        owner: 'timelyflow', repo: 'gravitino', state: 'open',
         head: `${context.repo.owner}:${baseRef}`, per_page: 100
       });
       const matches = prs.filter(pr => pr.head.sha === headSha && pr.head.repo?.full_name === repository);
@@ -60,9 +58,9 @@ async function resolve({ github, context, core }) {
       if (matches.length === 1) {
         baseRef = matches[0].base.ref;
       } else {
-        const { data: upstream } = await github.rest.repos.get({ owner: 'apache', repo: 'gravitino' });
+        const { data: upstream } = await github.rest.repos.get({ owner: 'timelyflow', repo: 'gravitino' });
         const branches = await github.paginate(github.rest.repos.listBranches, {
-          owner: 'apache', repo: 'gravitino', per_page: 100
+          owner: 'timelyflow', repo: 'gravitino', per_page: 100
         });
         const releases = branches.map(b => b.name).filter(n => /^branch-\d+\.\d+$/.test(n))
           .sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).slice(-3);
@@ -71,7 +69,7 @@ async function resolve({ github, context, core }) {
         let fewestBehind = Infinity;
         for (const candidate of candidates) {
           const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
-            owner: 'apache', repo: 'gravitino',
+            owner: 'timelyflow', repo: 'gravitino',
             basehead: `${candidate}...${context.repo.owner}:${headSha}`, per_page: 1
           });
           // Branches sharing a fork point can have the same head-only commits.
@@ -85,7 +83,7 @@ async function resolve({ github, context, core }) {
         }
         core.notice(`No open PR: testing against ${baseRef}; results require a matching PR base.`);
       }
-      const { data: base } = await github.rest.repos.getBranch({ owner: 'apache', repo: 'gravitino', branch: baseRef });
+      const { data: base } = await github.rest.repos.getBranch({ owner: 'timelyflow', repo: 'gravitino', branch: baseRef });
       baseSha = base.commit.sha;
       sync = true;
     } else if (repository === UPSTREAM) {

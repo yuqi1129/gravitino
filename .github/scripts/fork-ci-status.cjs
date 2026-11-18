@@ -16,7 +16,7 @@
 const { TRUSTED_REQUIRED, NEEDS_ATTENTION } = require('./publish-ci-status.cjs');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
-const UPSTREAM = { owner: 'apache', repo: 'gravitino' };
+const UPSTREAM = { owner: 'timelyflow', repo: 'gravitino' };
 
 // Only the block-list syntax used by Required CI is accepted. Unsupported workflow
 // changes must fail closed rather than silently dropping required callers. SUITES below
