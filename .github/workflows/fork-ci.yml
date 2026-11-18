@@ -1,121 +1,20 @@
-name: Real bot fork PR and CI test
+name: Central bot backport regression tests
 on:
   push:
     branches: [bot-backport-sandbox-15014]
 permissions:
   contents: read
-  issues: write
-  pull-requests: write
 jobs:
-  preflight:
+  test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/github-script@v7
-        env:
-          BOT_TOKEN: ${{ secrets.BACKPORT_BOT_TOKEN }}
-        with:
-          script: |
-            const raw = process.env.BOT_TOKEN || '';
-            const token = raw.trim();
-            core.setSecret(token);
-            const kind = /^ghp_[A-Za-z0-9]+$/.test(token) ? 'classic PAT' :
-              /^github_pat_[A-Za-z0-9_]+$/.test(token) ? 'fine-grained PAT' : 'unrecognized';
-            core.info(JSON.stringify({secretPresent: !!raw, surroundingWhitespace: raw !== token, format: kind}));
-            if (kind === 'unrecognized') {
-              core.setFailed('Secret is not in an expected personal access token format; replace it with the token value, not its name or URL.');
-              return;
-            }
-            const bot = new github.constructor({auth: token});
-            try {
-              const {data: user} = await bot.rest.users.getAuthenticated();
-              core.info(JSON.stringify({credentialUser: user.login, type: user.type}));
-              if (user.login !== 'yuqi-datastrato') throw new Error('Unexpected credential owner');
-              const {data: repo} = await bot.rest.repos.get({owner:'yuqi-datastrato',repo:'gravitino'});
-              core.info(JSON.stringify({repository: repo.full_name, permissions: repo.permissions}));
-              if (!repo.permissions?.push) throw new Error('Test credential cannot push the bot fork');
-            } catch (error) {
-              core.setFailed(error.status ? 'Bot credential API verification failed: HTTP ' + error.status : error.message);
-            }
       - uses: actions/checkout@v4
         with:
           repository: yuqi1129/gravitino
-          ref: aa16dd1456ea973c12e22c464bcf7a04464bff49
+          ref: 235a22b522481e76dc49e1dea39fd1d66bd162f7
           persist-credentials: false
-      - name: Cherry-pick and push with real bot credential, then retry
-        uses: actions/github-script@v7
-        env:
-          BOT_TOKEN: ${{ secrets.BACKPORT_BOT_TOKEN }}
+      - uses: actions/setup-node@v4
         with:
-          script: |
-            const assert = require('node:assert/strict');
-            const token = process.env.BOT_TOKEN.trim();
-            core.setSecret(token);
-            const bot = new github.constructor({auth: token});
-            const task = {
-              owner: 'yuqi-datastrato', repo: 'gravitino', number: 15014,
-              sha: 'aa16dd1456ea973c12e22c464bcf7a04464bff49',
-              sourceBaseSha: 'f2b2637947a5f20c3a6c1f6ac3cbae2c50cc8767',
-              title: '[MINOR] test(ci): Validate real bot fork backport routing'
-            };
-            const target = 'bot-real-base-15014';
-            const {data: base} = await bot.rest.repos.getBranch({owner:'yuqi1129',repo:'gravitino',branch:target});
-            assert.equal(base.commit.sha, task.sourceBaseSha);
-            const outputs = {};
-            const captured = {...core, setOutput: (key,value) => { outputs[key] = value; }};
-            const helper = require('./.sandbox/backport.cjs');
-            await helper.prepare({github: bot, core: captured, task, target, token});
-            assert.equal(outputs.conflict, 'false');
-            const sha = outputs.sha;
-            await helper.prepare({github: bot, core: captured, task, target, token});
-            assert.equal(outputs.sha, sha);
-            assert.equal(outputs.conflict, 'false');
-            const {data: diff} = await bot.rest.repos.compareCommitsWithBasehead({
-              owner:'yuqi1129',repo:'gravitino',basehead:task.sourceBaseSha + '...' + sha
-            });
-            assert.equal(diff.files.length, 1);
-            assert.equal(diff.files[0].filename, '.sandbox/change.txt');
-            assert.equal(diff.files[0].status, 'added');
-            core.info(JSON.stringify({task, target, ...outputs, retry:'same SHA', files:diff.files.map(f=>f.filename)}));
-      - name: Create approved PR with bot identity and dispatch bot fork CI
-        uses: actions/github-script@v7
-        env:
-          BOT_TOKEN: ${{ secrets.BACKPORT_BOT_TOKEN }}
-        with:
-          script: |
-            const assert = require('node:assert/strict');
-            const token = process.env.BOT_TOKEN.trim();
-            core.setSecret(token);
-            const bot = new github.constructor({auth: token});
-            const task = {
-              owner:'yuqi-datastrato', repo:'gravitino', number:15014,
-              sha:'aa16dd1456ea973c12e22c464bcf7a04464bff49',
-              sourceBaseSha:'f2b2637947a5f20c3a6c1f6ac3cbae2c50cc8767',
-              title:'[MINOR] test(ci): Validate real bot fork backport routing'
-            };
-            const target = 'bot-real-base-15014';
-            const branch = 'backport/pr-15014/' + target;
-            const sha = '8ef01f26d03c88e1431be8aefa351266485696c7';
-            const {data: ref} = await bot.rest.git.getRef({owner:task.owner,repo:task.repo,ref:'heads/' + branch});
-            assert.equal(ref.object.sha, sha, 'Head must match approved preview');
-            const body = "### What changes were proposed in this pull request?\n\nAdd a one-line backport fixture from yuqi-datastrato/gravitino into a temporary yuqi1129/gravitino branch.\n\n### Why are the changes needed?\n\nValidate real bot authentication and fork CI for the backport routing experiment related to apache/gravitino#15014.\n\n### Does this PR introduce _any_ user-facing change?\n\nNo. This is an isolated test PR and will be closed after validation.\n\n### How was this patch tested?\n\nHosted Actions authenticated as yuqi-datastrato, cherry-picked and pushed the fixture, and verified that retry preserves the same SHA. The diff contains only .sandbox/change.txt. Fork CI dispatch and its script suite will be verified after PR creation.\n";
-            const api = {
-              paginate: bot.paginate.bind(bot),
-              rest: {...bot.rest, issues:github.rest.issues, pulls:{...bot.rest.pulls,
-                create: p => bot.rest.pulls.create({...p,title:task.title,body})}}
-            };
-            const helper = require('./.sandbox/backport.cjs');
-            const outputs = {};
-            const captured = {...core,setOutput:(key,value) => {outputs[key] = value;}};
-            await helper.openPullRequest({github:api,core:captured,task,target,branch,conflict:false});
-            assert.equal(outputs.ready, 'true');
-            const number = outputs.number;
-            await helper.openPullRequest({github:api,core:captured,task,target,branch,conflict:false});
-            assert.equal(outputs.number, number, 'Retry must reuse the PR');
-            const {data: pr} = await bot.rest.pulls.get({owner:'yuqi1129',repo:'gravitino',pull_number:Number(number)});
-            assert.equal(pr.user.login, task.owner);
-            assert.equal(pr.head.sha, sha);
-            assert.equal(pr.base.sha, task.sourceBaseSha);
-            assert.equal(pr.head.repo.full_name, 'yuqi-datastrato/gravitino');
-            core.info(JSON.stringify({number, url:pr.html_url, author:pr.user.login, head:sha, base:pr.base.sha, retry:'same PR'}));
-            await helper.dispatch({github:bot,core,task,target,branch,sha,number});
+          node-version: '20'
+      - run: node --test .github/scripts/tests/*.test.cjs
