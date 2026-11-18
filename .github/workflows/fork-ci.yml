@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   test:
-    if: github.repository == 'timelyflow/gravitino'
+    if: github.repository == 'yuqi-datastrato/gravitino'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -28,8 +28,8 @@ jobs:
             await require('./.sandbox/resolve.cjs').resolve({ github, context,
               core: { ...core, setOutput: (k,v) => { outputs[k] = v; core.setOutput(k,v); } } });
             assert.equal(outputs.valid, 'true');
-            assert.equal(outputs['base-ref'], 'bot-backport-base-15014');
-            assert.equal(outputs['head-repository'], 'timelyflow/gravitino');
+            assert.equal(outputs['base-ref'], 'bot-real-base-15014');
+            assert.equal(outputs['head-repository'], 'yuqi-datastrato/gravitino');
             assert.equal(outputs['head-sha'], context.sha);
             assert.equal(outputs.sync, 'true');
             core.info(JSON.stringify(outputs));
@@ -39,11 +39,12 @@ jobs:
           HEAD_SHA: ${{ steps.resolve.outputs.head-sha }}
         run: |
           git fetch --no-tags https://github.com/yuqi1129/gravitino.git "$BASE_SHA"
-          git fetch --no-tags https://github.com/timelyflow/gravitino.git "$HEAD_SHA"
+          git fetch --no-tags https://github.com/yuqi-datastrato/gravitino.git "$HEAD_SHA"
           git merge-tree --write-tree "$BASE_SHA" "$HEAD_SHA"
           test "$(cat .sandbox/change.txt)" = "fixed bot fork backport test"
       - uses: actions/checkout@v4
         with:
+          repository: yuqi1129/gravitino
           ref: 8e6b5439e52b1792bd5af39db9c3bdb7909d31dc
           path: implementation
           persist-credentials: false

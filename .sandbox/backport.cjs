@@ -20,7 +20,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const UPSTREAM = { owner: 'yuqi1129', repo: 'gravitino' };
 const ROUTING_MARKER = 'Backport fork routing v1';
-const TARGETS = ['bot-backport-base-15014'];
+const TARGETS = ['bot-real-base-15014'];
 
 // For a rebase merge, merge_commit_sha names only the last rebased commit.
 // GitHub's commit/PR association identifies the merged PR that introduced each
