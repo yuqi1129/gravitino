@@ -1,19 +1,75 @@
-name: Central bot backport regression tests
+name: Backport owner Secret multi-job validation
 on:
   push:
     branches: [bot-backport-sandbox-15014]
 permissions:
   contents: read
+  pull-requests: read
 jobs:
-  test:
+  resolve:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      task: ${{ steps.resolve.outputs.task }}
     steps:
       - uses: actions/checkout@v4
         with:
           repository: yuqi1129/gravitino
-          ref: 31c545db3edd3ebd55550a2551fa602dd080b9b0
+          ref: 2e2158e4366599ecd64f866a0266bbeb6269b8a2
           persist-credentials: false
+      - id: resolve
+        uses: actions/github-script@v7
+        env:
+          BACKPORT_BOT_OWNER: ${{ secrets.BACKPORT_BOT_OWNER }}
+        with:
+          script: |
+            const assert = require('node:assert/strict');
+            assert.ok(process.env.BACKPORT_BOT_OWNER);
+            const outputs = {};
+            await require('./.github/scripts/backport-to-fork.cjs').resolve({
+              github, core: {...core,setOutput:(key,value) => {outputs[key] = value;core.setOutput(key,value);}},
+              botOwner:process.env.BACKPORT_BOT_OWNER,
+              context:{repo:{owner:'apache',repo:'gravitino'},ref:'refs/heads/main',eventName:'workflow_dispatch',
+                payload:{repository:{default_branch:'main'},inputs:{'pull-request':'14990'}}}
+            });
+            assert.equal(JSON.parse(outputs.task).destination,'fork');
+            assert.ok(!outputs.task.includes(process.env.BACKPORT_BOT_OWNER));
+            core.info('Resolved actual merged Apache PR; exported task contains no owner secret.');
+  verify:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BACKPORT_TASK: ${{ needs.resolve.outputs.task }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: yuqi1129/gravitino
+          ref: 2e2158e4366599ecd64f866a0266bbeb6269b8a2
+          persist-credentials: false
+      - name: Restore secret owner inside the consuming job
+        uses: actions/github-script@v7
+        env:
+          BACKPORT_BOT_OWNER: ${{ secrets.BACKPORT_BOT_OWNER }}
+        with:
+          script: |
+            const assert = require('node:assert/strict');
+            assert.ok(process.env.BACKPORT_TASK,'GitHub must preserve cross-job task output');
+            const task = JSON.parse(process.env.BACKPORT_TASK);
+            assert.equal(task.owner,undefined);
+            await require('./.github/scripts/backport-to-fork.cjs').loadTask({github,core,task,botOwner:process.env.BACKPORT_BOT_OWNER});
+      - name: Verify the real bot credential using restored same-job environment
+        uses: actions/github-script@v7
+        env:
+          BACKPORT_BOT_OWNER: ${{ secrets.BACKPORT_BOT_OWNER }}
+        with:
+          github-token: ${{ secrets.BACKPORT_BOT_TOKEN }}
+          script: |
+            const assert = require('node:assert/strict');
+            const task = JSON.parse(process.env.BACKPORT_TASK);
+            assert.equal(task.owner,process.env.BACKPORT_BOT_OWNER);
+            await require('./.github/scripts/backport-to-fork.cjs').verifyBot({github,task});
+            core.info('Cross-job output, same-job secret restoration, and real bot identity verified. No branch or PR was created.');
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
