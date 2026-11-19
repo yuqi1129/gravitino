@@ -108,6 +108,28 @@ public class TestLanceRESTCatalogProvider {
   }
 
   @Test
+  void testHeaderNormalizationPreservesNonHeaderProperties() {
+    Map<String, String> properties = new LinkedHashMap<>();
+    properties.put("HeAdErS.Authorization", "Bearer test-token");
+    properties.put("HEADERS.X-Test", "value");
+    properties.put("header", "short-prefix");
+    properties.put("headersExtra", "no-dot");
+    properties.put("other.headers.X-Test", "not-at-start");
+    properties.put(null, "null-key");
+
+    new LanceRESTCatalogProvider().normalizeCatalogProperties(properties);
+
+    Map<String, String> expected = new LinkedHashMap<>();
+    expected.put("headers.Authorization", "Bearer test-token");
+    expected.put("headers.x-test", "value");
+    expected.put("header", "short-prefix");
+    expected.put("headersExtra", "no-dot");
+    expected.put("other.headers.X-Test", "not-at-start");
+    expected.put(null, "null-key");
+    assertEquals(expected, properties);
+  }
+
+  @Test
   void testDiscoverySendsOneAuthorizationValuePerPageForIdenticalHeaders() {
     List<String> authorizationHeaders = new CopyOnWriteArrayList<>();
     List<String> customHeaders = new CopyOnWriteArrayList<>();
