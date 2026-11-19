@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 95ed3b69273bae899614524f57eb69623f3b37ad
+          ref: 4843882d94ea95a389d0f8cbae0a6a449b4f1d4b
           persist-credentials: false
       - uses: ./.github/actions/setup-java-toolchains
       - run: bash dev/ci/util_free_space.sh
