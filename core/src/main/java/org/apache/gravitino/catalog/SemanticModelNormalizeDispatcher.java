@@ -21,12 +21,15 @@ package org.apache.gravitino.catalog;
 import static org.apache.gravitino.catalog.CapabilityHelpers.applyCapabilities;
 import static org.apache.gravitino.catalog.CapabilityHelpers.applyCapabilitiesOnName;
 import static org.apache.gravitino.catalog.CapabilityHelpers.applyCaseSensitive;
-import static org.apache.gravitino.catalog.CapabilityHelpers.getCapability;
+import static org.apache.gravitino.catalog.CapabilityHelpers.resolvePhysicalTableName;
+import static org.apache.gravitino.catalog.CapabilityHelpers.withCapability;
 
 import com.google.common.base.Preconditions;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.function.Consumer;
 import javax.annotation.Nullable;
+import org.apache.gravitino.Entity;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Namespace;
 import org.apache.gravitino.connector.capability.Capability;
@@ -34,11 +37,14 @@ import org.apache.gravitino.exceptions.IllegalSemanticModelException;
 import org.apache.gravitino.exceptions.NoSuchSchemaException;
 import org.apache.gravitino.exceptions.NoSuchSemanticModelException;
 import org.apache.gravitino.exceptions.SemanticModelAlreadyExistsException;
-import org.apache.gravitino.semantic.OssieDocument;
 import org.apache.gravitino.semantic.OssieFormat;
 import org.apache.gravitino.semantic.SemanticModel;
 import org.apache.gravitino.semantic.SemanticModelChange;
 import org.apache.gravitino.semantic.SemanticModelDefinition;
+import org.apache.gravitino.semantic.SemanticModelMetric;
+import org.apache.gravitino.semantic.SemanticModelRevision;
+import org.apache.gravitino.semantic.SemanticModelRevisionSelector;
+import org.apache.gravitino.semantic.SemanticModelSourceUpdate;
 
 /** Normalizes Semantic Model parents while retaining Gravitino-owned model naming rules. */
 public class SemanticModelNormalizeDispatcher implements SemanticModelDispatcher {
@@ -59,8 +65,35 @@ public class SemanticModelNormalizeDispatcher implements SemanticModelDispatcher
   }
 
   @Override
+  public NameIdentifier[] listSemanticModelDatasets(
+      NameIdentifier source, Entity.EntityType sourceType) {
+    Preconditions.checkArgument(
+        sourceType == Entity.EntityType.TABLE || sourceType == Entity.EntityType.VIEW,
+        "Source must be a table or View");
+    Capability.Scope scope =
+        sourceType == Entity.EntityType.TABLE ? Capability.Scope.TABLE : Capability.Scope.VIEW;
+    NameIdentifier normalized =
+        withCapability(
+            source, catalogManager, capability -> applyCaseSensitive(source, scope, capability));
+    if (sourceType == Entity.EntityType.TABLE) {
+      normalized = resolvePhysicalTableName(normalized, catalogManager);
+    }
+    return dispatcher.listSemanticModelDatasets(normalized, sourceType);
+  }
+
+  @Override
   public NameIdentifier[] listSemanticModels(Namespace namespace) throws NoSuchSchemaException {
     return dispatcher.listSemanticModels(normalizeParentForLookup(namespace));
+  }
+
+  @Override
+  public NameIdentifier[] listMetrics(Namespace namespace) throws NoSuchSchemaException {
+    return dispatcher.listMetrics(normalizeParentForLookup(namespace));
+  }
+
+  @Override
+  public SemanticModelMetric[] listMetricInfos(Namespace namespace) throws NoSuchSchemaException {
+    return dispatcher.listMetricInfos(normalizeParentForLookup(namespace));
   }
 
   @Override
@@ -74,15 +107,36 @@ public class SemanticModelNormalizeDispatcher implements SemanticModelDispatcher
   }
 
   @Override
+  public SemanticModel loadSemanticModelRevision(
+      NameIdentifier ident,
+      SemanticModelRevisionSelector selector,
+      Consumer<SemanticModelRevision> checkVisibility) {
+    return dispatcher.loadSemanticModelRevision(
+        normalizeForLookup(ident), selector, checkVisibility);
+  }
+
+  @Override
+  public SemanticModelRevision[] listSemanticModelRevisions(NameIdentifier ident) {
+    return dispatcher.listSemanticModelRevisions(normalizeForLookup(ident));
+  }
+
+  @Override
+  public SemanticModel publishSemanticModelRevision(
+      NameIdentifier ident, int revision, String principal) {
+    return dispatcher.publishSemanticModelRevision(normalizeForLookup(ident), revision, principal);
+  }
+
+  @Override
   public SemanticModel createSemanticModel(
       NameIdentifier ident,
       @Nullable String comment,
       SemanticModelDefinition definition,
-      Map<String, String> properties)
+      Map<String, String> properties,
+      SemanticModelSourceUpdate sourceUpdate)
       throws NoSuchSchemaException, SemanticModelAlreadyExistsException,
           IllegalSemanticModelException {
     return dispatcher.createSemanticModel(
-        normalizeForCreate(ident), comment, definition, properties);
+        normalizeForCreate(ident), comment, definition, properties, sourceUpdate);
   }
 
   @Override
@@ -90,25 +144,36 @@ public class SemanticModelNormalizeDispatcher implements SemanticModelDispatcher
       NameIdentifier ident,
       @Nullable String comment,
       SemanticModelDefinition definition,
-      Map<String, String> properties) {
+      Map<String, String> properties,
+      SemanticModelSourceUpdate sourceUpdate) {
     return dispatcher.importSemanticModel(
-        normalizeForCreate(ident), comment, definition, properties);
+        normalizeForCreate(ident), comment, definition, properties, sourceUpdate);
   }
 
   @Override
-  public OssieDocument exportOssieDocument(NameIdentifier ident, OssieFormat format) {
-    return dispatcher.exportOssieDocument(normalizeForLookup(ident), format);
+  public SemanticModelExport exportSemanticModel(
+      NameIdentifier ident,
+      SemanticModelRevisionSelector selector,
+      OssieFormat format,
+      Consumer<SemanticModelRevision> checkVisibility) {
+    return dispatcher.exportSemanticModel(
+        normalizeForLookup(ident), selector, format, checkVisibility);
   }
 
   @Override
-  public SemanticModel alterSemanticModel(NameIdentifier ident, SemanticModelChange... changes)
+  public SemanticModel alterSemanticModel(
+      NameIdentifier ident,
+      @Nullable Integer expectedRevision,
+      SemanticModelSourceUpdate sourceUpdate,
+      SemanticModelChange... changes)
       throws NoSuchSemanticModelException, SemanticModelAlreadyExistsException,
           IllegalSemanticModelException {
     Preconditions.checkArgument(
         changes != null && changes.length > 0, "At least one change is required");
     SemanticModelChange[] normalizedChanges =
         Arrays.stream(changes).map(this::normalizeChange).toArray(SemanticModelChange[]::new);
-    return dispatcher.alterSemanticModel(normalizeForLookup(ident), normalizedChanges);
+    return dispatcher.alterSemanticModel(
+        normalizeForLookup(ident), expectedRevision, sourceUpdate, normalizedChanges);
   }
 
   @Override
@@ -117,8 +182,10 @@ public class SemanticModelNormalizeDispatcher implements SemanticModelDispatcher
   }
 
   private Namespace normalizeParentForLookup(Namespace namespace) {
-    Capability capability = getCapability(NameIdentifier.of(namespace.levels()), catalogManager);
-    return applyCaseSensitive(namespace, Capability.Scope.SEMANTIC_MODEL, capability);
+    return withCapability(
+        NameIdentifier.of(namespace.levels()),
+        catalogManager,
+        capability -> applyCaseSensitive(namespace, Capability.Scope.SEMANTIC_MODEL, capability));
   }
 
   private NameIdentifier normalizeForLookup(NameIdentifier ident) {
@@ -126,9 +193,12 @@ public class SemanticModelNormalizeDispatcher implements SemanticModelDispatcher
   }
 
   private NameIdentifier normalizeForCreate(NameIdentifier ident) {
-    Capability capability = getCapability(ident, catalogManager);
     Namespace namespace =
-        applyCapabilities(ident.namespace(), Capability.Scope.SEMANTIC_MODEL, capability);
+        withCapability(
+            ident,
+            catalogManager,
+            capability ->
+                applyCapabilities(ident.namespace(), Capability.Scope.SEMANTIC_MODEL, capability));
     return NameIdentifier.of(namespace, normalizeSemanticModelName(ident.name()));
   }
 

@@ -19,6 +19,7 @@
 package org.apache.gravitino.listener.api.event;
 
 import static org.apache.gravitino.semantic.SemanticModel.PROPERTY_OSSIE_VERSION;
+import static org.apache.gravitino.semantic.SemanticModelTestUtils.sources;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -61,6 +62,7 @@ import org.apache.gravitino.connector.capability.CapabilityResult;
 import org.apache.gravitino.exceptions.ForbiddenException;
 import org.apache.gravitino.exceptions.IllegalSemanticModelException;
 import org.apache.gravitino.exceptions.NoSuchSemanticModelException;
+import org.apache.gravitino.exceptions.OptimisticLockException;
 import org.apache.gravitino.exceptions.SemanticModelAlreadyExistsException;
 import org.apache.gravitino.hook.SemanticModelHookDispatcher;
 import org.apache.gravitino.listener.DummyEventListener;
@@ -72,6 +74,9 @@ import org.apache.gravitino.listener.api.event.semantic.ExportSemanticModelPreEv
 import org.apache.gravitino.listener.api.event.semantic.ImportSemanticModelEvent;
 import org.apache.gravitino.listener.api.event.semantic.ImportSemanticModelFailureEvent;
 import org.apache.gravitino.listener.api.event.semantic.ImportSemanticModelPreEvent;
+import org.apache.gravitino.listener.api.event.semantic.PublishSemanticModelRevisionEvent;
+import org.apache.gravitino.listener.api.event.semantic.PublishSemanticModelRevisionFailureEvent;
+import org.apache.gravitino.listener.api.event.semantic.PublishSemanticModelRevisionPreEvent;
 import org.apache.gravitino.semantic.Dataset;
 import org.apache.gravitino.semantic.OssieDocument;
 import org.apache.gravitino.semantic.OssieDocumentConverter;
@@ -107,13 +112,14 @@ class TestSemanticModelImportExportEvent {
     authorizationEnabled = true;
     owners = mock(OwnerDispatcher.class);
     operation = mock(SemanticModelOperationDispatcher.class);
-    doCallRealMethod().when(operation).importSemanticModel(any(), any(), any(), any());
-    doCallRealMethod().when(operation).exportOssieDocument(any(), any());
+    doCallRealMethod().when(operation).importSemanticModel(any(), any(), any(), any(), any());
+    doCallRealMethod().when(operation).exportSemanticModel(any(), any(), any(), any());
     model = mock(SemanticModel.class);
     when(model.name()).thenReturn(IDENT.name());
+    when(model.revision()).thenReturn(7);
     when(model.definition()).thenReturn(definition());
     when(model.properties()).thenReturn(Map.of());
-    when(operation.createSemanticModel(any(), any(), any(), any())).thenReturn(model);
+    when(operation.createSemanticModel(any(), any(), any(), any(), any())).thenReturn(model);
     when(operation.loadSemanticModel(NORMALIZED_IDENT)).thenReturn(model);
     CatalogManager catalogs = mock(CatalogManager.class);
     BaseCatalog<?> catalog = mock(BaseCatalog.class);
@@ -140,15 +146,20 @@ class TestSemanticModelImportExportEvent {
               document,
               definition -> {
                 assertEquals(definition(), definition);
-                verify(operation, never()).createSemanticModel(any(), any(), any(), any());
+                verify(operation, never()).createSemanticModel(any(), any(), any(), any(), any());
                 verifyNoInteractions(owners);
                 validations.incrementAndGet();
+                return sources(definition);
               }));
       converter.verify(() -> OssieDocumentConverter.importDocument(document));
     }
     assertEquals(1, validations.get());
-    verify(operation).importSemanticModel(eq(NORMALIZED_IDENT), any(), eq(definition()), any());
-    verify(operation).createSemanticModel(eq(NORMALIZED_IDENT), any(), eq(definition()), any());
+    verify(operation)
+        .importSemanticModel(
+            eq(NORMALIZED_IDENT), any(), eq(definition()), any(), eq(sources(definition())));
+    verify(operation)
+        .createSemanticModel(
+            eq(NORMALIZED_IDENT), any(), eq(definition()), any(), eq(sources(definition())));
     ArgumentCaptor<MetadataObject> object = ArgumentCaptor.forClass(MetadataObject.class);
     verify(owners).setOwner(eq("metalake"), object.capture(), any(), eq(Owner.Type.USER));
     assertEquals("catalog.mixedschema.SalesModel", object.getValue().fullName());
@@ -173,7 +184,9 @@ class TestSemanticModelImportExportEvent {
     UnsupportedOperationException failure =
         assertThrows(
             UnsupportedOperationException.class,
-            () -> dispatcher.importSemanticModel(IDENT, null, definition(), Map.of()));
+            () ->
+                dispatcher.importSemanticModel(
+                    IDENT, null, definition(), Map.of(), sources(definition())));
 
     assertTrue(failure.getMessage().contains("importOssieDocument"));
     verifyNoInteractions(normalizer, hook, operation, owners);
@@ -186,7 +199,12 @@ class TestSemanticModelImportExportEvent {
     authorizationEnabled = false;
     AtomicInteger validations = new AtomicInteger();
     dispatcher.importOssieDocument(
-        NAMESPACE, document(), definition -> validations.incrementAndGet());
+        NAMESPACE,
+        document(),
+        definition -> {
+          validations.incrementAndGet();
+          return sources(definition);
+        });
     assertEquals(1, validations.get());
     assertEvents(ImportSemanticModelPreEvent.class, ImportSemanticModelEvent.class);
     verifyNoInteractions(owners);
@@ -203,7 +221,7 @@ class TestSemanticModelImportExportEvent {
       document = OssieDocument.yaml(document.content().replace("SalesModel", "invalid model"));
     } else if (stage.equals("create")) {
       expected = new SemanticModelAlreadyExistsException("already exists");
-      doThrow(expected).when(operation).createSemanticModel(any(), any(), any(), any());
+      doThrow(expected).when(operation).createSemanticModel(any(), any(), any(), any(), any());
     } else if (stage.equals("owner")) {
       expected = new IllegalStateException("owner assignment failed");
       doThrow(expected).when(owners).setOwner(any(), any(), any(), any());
@@ -219,6 +237,7 @@ class TestSemanticModelImportExportEvent {
                     request,
                     definition -> {
                       if (stage.equals("source")) throw failure;
+                      return sources(definition);
                     }));
     ImportSemanticModelFailureEvent event =
         assertEvents(ImportSemanticModelPreEvent.class, ImportSemanticModelFailureEvent.class);
@@ -229,7 +248,7 @@ class TestSemanticModelImportExportEvent {
     assertAudit(event, AuditLog.Operation.IMPORT_SEMANTIC_MODEL, OperationStatus.FAILURE);
     if (!stage.equals("owner")) verifyNoInteractions(owners);
     if (List.of("parse", "source", "normalize").contains(stage)) {
-      verify(operation, never()).createSemanticModel(any(), any(), any(), any());
+      verify(operation, never()).createSemanticModel(any(), any(), any(), any(), any());
     } else {
       assertSame(expected, thrown);
     }
@@ -244,6 +263,19 @@ class TestSemanticModelImportExportEvent {
     verifyNoInteractions(operation, owners);
   }
 
+  @Test
+  void testImportRejectsNullSourceUpdateBeforeWriting() {
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> dispatcher.importOssieDocument(NAMESPACE, document(), definition -> null));
+    assertEquals("sourceValidator must not return null", failure.getMessage());
+    ImportSemanticModelFailureEvent event =
+        assertEvents(ImportSemanticModelPreEvent.class, ImportSemanticModelFailureEvent.class);
+    assertSame(failure, event.exception());
+    verifyNoInteractions(operation, owners);
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void testPreEventRejectionEmitsFailureWithoutInvokingOperation(boolean importing) {
@@ -254,7 +286,9 @@ class TestSemanticModelImportExportEvent {
         new SemanticModelEventDispatcher(new EventBus(List.of(rejecting)), normalizer);
     Runnable action =
         importing
-            ? () -> rejectedDispatcher.importOssieDocument(NAMESPACE, document(), definition -> {})
+            ? () ->
+                rejectedDispatcher.importOssieDocument(
+                    NAMESPACE, document(), definition -> sources(definition))
             : () -> rejectedDispatcher.exportOssieDocument(IDENT, OssieFormat.YAML);
     assertSame(denied, assertThrows(ForbiddenException.class, action::run));
     verifyNoInteractions(normalizer, operation, owners);
@@ -271,7 +305,7 @@ class TestSemanticModelImportExportEvent {
   void testNullImportDocumentStillEmitsFailure() {
     assertThrows(
         NullPointerException.class,
-        () -> dispatcher.importOssieDocument(NAMESPACE, null, definition -> {}));
+        () -> dispatcher.importOssieDocument(NAMESPACE, null, definition -> sources(definition)));
     ImportSemanticModelFailureEvent event =
         assertEvents(ImportSemanticModelPreEvent.class, ImportSemanticModelFailureEvent.class);
     assertNull(event.format());
@@ -294,7 +328,36 @@ class TestSemanticModelImportExportEvent {
     assertEquals(format, pre.format());
     assertEquals(IDENT, event.identifier());
     assertEquals(format, event.format());
+    assertEquals(7, event.revision());
+    assertEquals("7", event.customInfo().get("revision"));
     assertAudit(event, AuditLog.Operation.EXPORT_SEMANTIC_MODEL, OperationStatus.SUCCESS);
+  }
+
+  @Test
+  void testPublicationEventsRecordPublisherAndRevision() {
+    when(operation.publishSemanticModelRevision(NORMALIZED_IDENT, 7, "reviewer")).thenReturn(model);
+    assertEquals(model, dispatcher.publishSemanticModelRevision(IDENT, 7, "reviewer"));
+    PublishSemanticModelRevisionEvent event =
+        assertEvents(
+            PublishSemanticModelRevisionPreEvent.class, PublishSemanticModelRevisionEvent.class);
+    assertEquals("reviewer", event.user());
+    assertEquals("7", event.customInfo().get("revision"));
+    assertAudit(event, AuditLog.Operation.PUBLISH_SEMANTIC_MODEL_REVISION, OperationStatus.SUCCESS);
+  }
+
+  @Test
+  void testStalePublicationEmitsFailureEvent() {
+    when(operation.publishSemanticModelRevision(NORMALIZED_IDENT, 6, "reviewer"))
+        .thenThrow(new OptimisticLockException("Newer revision"));
+    assertThrows(
+        OptimisticLockException.class,
+        () -> dispatcher.publishSemanticModelRevision(IDENT, 6, "reviewer"));
+    PublishSemanticModelRevisionFailureEvent event =
+        assertEvents(
+            PublishSemanticModelRevisionPreEvent.class,
+            PublishSemanticModelRevisionFailureEvent.class);
+    assertEquals("6", event.customInfo().get("revision"));
+    assertAudit(event, AuditLog.Operation.PUBLISH_SEMANTIC_MODEL_REVISION, OperationStatus.FAILURE);
   }
 
   @ParameterizedTest
@@ -338,7 +401,7 @@ class TestSemanticModelImportExportEvent {
     if (fail) {
       doThrow(new IllegalArgumentException("rejected"))
           .when(operation)
-          .createSemanticModel(any(), any(), any(), any());
+          .createSemanticModel(any(), any(), any(), any(), any());
       doThrow(new IllegalArgumentException("rejected")).when(operation).loadSemanticModel(any());
     }
     for (boolean importing : new boolean[] {true, false}) {
@@ -347,7 +410,9 @@ class TestSemanticModelImportExportEvent {
         principal.when(PrincipalUtils::getCurrentUserName).thenReturn("initiator", "changed");
         Runnable action =
             importing
-                ? () -> dispatcher.importOssieDocument(NAMESPACE, document(), definition -> {})
+                ? () ->
+                    dispatcher.importOssieDocument(
+                        NAMESPACE, document(), definition -> sources(definition))
                 : () -> dispatcher.exportOssieDocument(IDENT, OssieFormat.JSON);
         if (fail) assertThrows(IllegalArgumentException.class, action::run);
         else action.run();
@@ -365,9 +430,9 @@ class TestSemanticModelImportExportEvent {
     T postEvent = assertInstanceOf(post, listener.getPostEvents().getFirst());
     assertEquals(preEvent.operationType(), postEvent.operationType());
     assertEquals(OperationStatus.UNPROCESSED, preEvent.operationStatus());
-    verify(normalizer, never()).createSemanticModel(any(), any(), any(), any());
+    verify(normalizer, never()).createSemanticModel(any(), any(), any(), any(), any());
     verify(normalizer, never()).loadSemanticModel(any());
-    verify(hook, never()).createSemanticModel(any(), any(), any(), any());
+    verify(hook, never()).createSemanticModel(any(), any(), any(), any(), any());
     verify(hook, never()).loadSemanticModel(any());
     return postEvent;
   }

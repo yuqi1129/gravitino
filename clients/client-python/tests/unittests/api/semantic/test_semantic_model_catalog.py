@@ -63,7 +63,11 @@ class _InMemorySemanticModelCatalog(SemanticModelCatalog):
             NameIdentifier.of(namespace.level(0), name) for name in sorted(self._models)
         ]
 
-    def load_semantic_model(self, identifier: NameIdentifier) -> SemanticModel:
+    def load_semantic_model(
+        self, identifier: NameIdentifier, revision: Optional[int | str] = None
+    ) -> SemanticModel:
+        if revision is not None:
+            raise UnsupportedOperationException("Revision reads are not supported")
         model = self._models.get(identifier.name())
         if model is None:
             raise NoSuchSemanticModelException(
@@ -83,8 +87,13 @@ class _InMemorySemanticModelCatalog(SemanticModelCatalog):
         return model
 
     def alter_semantic_model(
-        self, identifier: NameIdentifier, *changes: SemanticModelChange
+        self,
+        identifier: NameIdentifier,
+        *changes: SemanticModelChange,
+        expected_revision: Optional[int] = None,
     ) -> SemanticModel:
+        if expected_revision is not None:
+            raise UnsupportedOperationException("Conditional updates are not supported")
         return self.load_semantic_model(identifier)
 
     def drop_semantic_model(self, identifier: NameIdentifier) -> bool:
@@ -92,6 +101,17 @@ class _InMemorySemanticModelCatalog(SemanticModelCatalog):
 
 
 class TestSemanticModelCatalog(unittest.TestCase):
+    def test_metric_discovery_defaults_preserve_existing_implementations(self):
+        catalog = _InMemorySemanticModelCatalog()
+        for method, message in (
+            (catalog.list_metrics, "Metric listing is not supported"),
+            (catalog.list_metric_infos, "Metric info listing is not supported"),
+        ):
+            with self.subTest(method=method), self.assertRaisesRegex(
+                UnsupportedOperationException, message
+            ):
+                method(Namespace.of("semantic"))
+
     def test_semantic_model_exists_uses_load(self):
         catalog = _InMemorySemanticModelCatalog()
         identifier = NameIdentifier.of("semantic", "sales_model")

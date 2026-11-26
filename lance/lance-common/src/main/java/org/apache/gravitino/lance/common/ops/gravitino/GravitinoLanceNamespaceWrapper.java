@@ -144,19 +144,32 @@ public class GravitinoLanceNamespaceWrapper extends NamespaceWrapper {
     return props;
   }
 
+  /**
+   * Loads catalog secrets for in-process Lance storage config. Passes {@code true} for {@code
+   * includeStaticCredentials}: this is a server-side operational path that must merge the full
+   * secret map (including static credential keys) into properties so Lance can reach object
+   * storage. Caller privilege filtering for static credentials belongs only on the REST {@code
+   * getSecrets} boundary, not here. Lance does not use catalog {@code getCredentials} / credential
+   * vending.
+   */
   private Map<String, String> catalogSecrets(String catalogName) {
     SecretPropertyOperationDispatcher dispatcher = secretDispatcher();
     if (dispatcher != null) {
       return dispatcher.getSecrets(
-          NameIdentifierUtil.ofCatalog(metalakeName, catalogName), Entity.EntityType.CATALOG);
+          NameIdentifierUtil.ofCatalog(metalakeName, catalogName), Entity.EntityType.CATALOG, true);
     }
     return loadCatalog(catalogName).supportsSecrets().getSecrets();
   }
 
+  /**
+   * Loads schema secrets for in-process Lance storage config. Same rationale as {@link
+   * #catalogSecrets(String)}: always include static credentials for operational merge.
+   */
   private Map<String, String> schemaSecrets(String catalogName, String schemaName) {
     SecretPropertyOperationDispatcher dispatcher = secretDispatcher();
     if (dispatcher != null) {
-      return dispatcher.getSecrets(schemaIdent(catalogName, schemaName), Entity.EntityType.SCHEMA);
+      return dispatcher.getSecrets(
+          schemaIdent(catalogName, schemaName), Entity.EntityType.SCHEMA, true);
     }
     return loadSchema(loadCatalog(catalogName), schemaName).supportsSecrets().getSecrets();
   }
@@ -205,13 +218,25 @@ public class GravitinoLanceNamespaceWrapper extends NamespaceWrapper {
       throw new NamespaceNotFoundException(
           "Catalog not found: " + catalogName, CommonUtil.formatCurrentStackTrace(), catalogName);
     }
+    validateLakehouseCatalog(catalogName, catalog);
+    return catalog;
+  }
+
+  /**
+   * Rejects a catalog that is not a lakehouse catalog. Lance only exposes lakehouse catalogs as
+   * namespaces, so any other catalog is reported as a missing namespace.
+   *
+   * @param catalogName the catalog name used in the error
+   * @param catalog the loaded catalog
+   * @throws NamespaceNotFoundException if the catalog is not a lakehouse catalog
+   */
+  void validateLakehouseCatalog(String catalogName, Catalog catalog) {
     if (!isLakehouseCatalog(catalog)) {
       throw new NamespaceNotFoundException(
           "Catalog is not a lakehouse catalog: " + catalogName,
           CommonUtil.formatCurrentStackTrace(),
           catalogName);
     }
-    return catalog;
   }
 
   String[] listSchemas(Catalog catalog) throws NoSuchCatalogException {

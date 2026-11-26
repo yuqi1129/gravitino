@@ -25,6 +25,18 @@ import org.junit.jupiter.api.Test;
 public class TestCapability {
 
   @Test
+  void testExistingColumnReferencesPreserveDefaultRestrictions() {
+    Assertions.assertTrue(
+        Capability.DEFAULT
+            .specificationOnExistingName(Capability.Scope.COLUMN, "valid")
+            .supported());
+    Assertions.assertFalse(
+        Capability.DEFAULT
+            .specificationOnExistingName(Capability.Scope.COLUMN, "c`, DROP COLUMN victim -- ")
+            .supported());
+  }
+
+  @Test
   void testDefaultNameSpecification() {
     for (Capability.Scope scope : Capability.Scope.values()) {
       // test for normal name
@@ -77,21 +89,19 @@ public class TestCapability {
       Assertions.assertFalse(result.supported());
       Assertions.assertTrue(result.unsupportedMessage().contains("is illegal"));
 
-      // test for long name
-      StringBuilder longName = new StringBuilder();
-      for (int i = 0; i < 64; i++) {
-        longName.append("a");
-      }
+      String maxName = "a".repeat(64);
+      Assertions.assertTrue(Capability.DEFAULT.specificationOnName(scope, maxName).supported());
 
-      Assertions.assertEquals(64, longName.length());
-      result = Capability.DEFAULT.specificationOnName(scope, longName.toString());
-      Assertions.assertTrue(result.supported());
-
-      longName.append("a");
-      Assertions.assertEquals(65, longName.length());
-      result = Capability.DEFAULT.specificationOnName(scope, longName.toString());
+      result = Capability.DEFAULT.specificationOnName(scope, maxName + "a");
       Assertions.assertFalse(result.supported());
-      Assertions.assertTrue(result.unsupportedMessage().contains("is illegal"));
+      Assertions.assertEquals(
+          "The " + scope + " name must not exceed 64 characters.", result.unsupportedMessage());
+
+      String illegalName = maxName + "?";
+      result = Capability.DEFAULT.specificationOnName(scope, illegalName);
+      Assertions.assertFalse(result.supported());
+      Assertions.assertEquals(
+          "The " + scope + " name '" + illegalName + "' is illegal.", result.unsupportedMessage());
     }
   }
 

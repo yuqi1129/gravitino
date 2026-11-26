@@ -24,12 +24,50 @@ import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.maintenance.optimizer.api.recommender.JobExecutionContext;
 import org.apache.gravitino.maintenance.optimizer.common.OptimizerEnv;
 import org.apache.gravitino.maintenance.optimizer.common.conf.OptimizerConfig;
+import org.apache.gravitino.maintenance.optimizer.common.util.IdentifierUtils;
+import org.apache.gravitino.maintenance.optimizer.recommender.handler.ManifestRewriteJobContext;
 import org.apache.gravitino.policy.IcebergDataCompactionContent;
 import org.apache.gravitino.policy.IcebergOrphanFileRemovalContent;
+import org.apache.gravitino.policy.IcebergRewriteManifestsContent;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 public class TestGravitinoJobSubmitter {
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(booleans = {true, false})
+  void testManifestAdapterPreservesPolicyOptionsOverGlobalConfig(Boolean useCaching) {
+    GravitinoJobAdapter adapter =
+        new GravitinoJobSubmitter()
+            .loadJobAdapter(IcebergRewriteManifestsContent.JOB_TEMPLATE_NAME_VALUE);
+    Assertions.assertInstanceOf(GravitinoManifestRewriteJobAdapter.class, adapter);
+    OptimizerConfig config =
+        new OptimizerConfig(
+            Map.of(
+                OptimizerConfig.JOB_SUBMITTER_CONFIG_PREFIX + "spec_id", "99",
+                OptimizerConfig.JOB_SUBMITTER_CONFIG_PREFIX + "use_caching", "false",
+                OptimizerConfig.JOB_SUBMITTER_CONFIG_PREFIX + "catalog_name", "other",
+                OptimizerConfig.JOB_SUBMITTER_CONFIG_PREFIX + "spark_master", "local[2]"));
+    Map<String, String> result =
+        GravitinoJobSubmitter.buildJobConfig(
+            config,
+            new ManifestRewriteJobContext(
+                NameIdentifier.of("catalog", "db", "table"), 1, useCaching),
+            adapter,
+            IdentifierUtils.DEFAULT_SCHEMA_SEPARATOR);
+    Assertions.assertEquals("1", result.get("spec_id"));
+    Assertions.assertEquals("catalog", result.get("catalog_name"));
+    Assertions.assertEquals("local[2]", result.get("spark_master"));
+    Assertions.assertEquals(
+        useCaching == null ? "" : useCaching.toString(), result.get("use_caching"));
+    Assertions.assertThrows(
+        IllegalArgumentException.class,
+        () -> adapter.jobConfig(null, IdentifierUtils.DEFAULT_SCHEMA_SEPARATOR));
+  }
+
   @Test
   void loadJobAdapterReturnsCompactionAdapterForBuiltInTemplateName() {
     GravitinoJobSubmitter submitter = new GravitinoJobSubmitter();
@@ -66,12 +104,13 @@ public class TestGravitinoJobSubmitter {
   }
 
   @Test
-  void buildJobConfigMergesWithExpectedPrecedence() {
+  void buildJobConfigReturnsAdapterOutputOnly() {
     OptimizerConfig config =
         new OptimizerConfig(
             Map.of(
                 OptimizerConfig.JOB_SUBMITTER_CONFIG_PREFIX + "custom", "optimizer",
-                OptimizerConfig.JOB_SUBMITTER_CONFIG_PREFIX + "override", "optimizer"));
+                OptimizerConfig.JOB_SUBMITTER_CONFIG_PREFIX + "override", "optimizer",
+                OptimizerConfig.JOB_SUBMITTER_CONFIG_PREFIX + "spark_master", "local[2]"));
     GravitinoJobSubmitter submitter = new GravitinoJobSubmitter();
     submitter.initialize(new OptimizerEnv(config));
 
@@ -94,14 +133,20 @@ public class TestGravitinoJobSubmitter {
         };
 
     GravitinoJobAdapter adapter =
-        jobExecutionContext ->
-            Map.of("table", "db.table", "options", "map('k','v')", "override", "adapter");
+        (jobExecutionContext, submitterConfigs, schemaSeparator) -> {
+          Assertions.assertEquals("optimizer", submitterConfigs.get("custom"));
+          Assertions.assertEquals("local[2]", submitterConfigs.get("spark_master"));
+          return Map.of("table", "db.table", "options", "map('k','v')", "override", "adapter");
+        };
 
-    Map<String, String> merged = GravitinoJobSubmitter.buildJobConfig(config, context, adapter);
+    Map<String, String> jobConf =
+        GravitinoJobSubmitter.buildJobConfig(
+            config, context, adapter, IdentifierUtils.DEFAULT_SCHEMA_SEPARATOR);
 
-    Assertions.assertEquals("optimizer", merged.get("custom"));
-    Assertions.assertEquals("adapter", merged.get("override"));
-    Assertions.assertEquals("db.table", merged.get("table"));
-    Assertions.assertEquals("map('k','v')", merged.get("options"));
+    Assertions.assertFalse(jobConf.containsKey("custom"));
+    Assertions.assertFalse(jobConf.containsKey("spark_master"));
+    Assertions.assertEquals("adapter", jobConf.get("override"));
+    Assertions.assertEquals("db.table", jobConf.get("table"));
+    Assertions.assertEquals("map('k','v')", jobConf.get("options"));
   }
 }

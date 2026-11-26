@@ -41,6 +41,7 @@ import org.apache.gravitino.catalog.TableDispatcher;
 import org.apache.gravitino.catalog.TopicDispatcher;
 import org.apache.gravitino.catalog.ViewDispatcher;
 import org.apache.gravitino.credential.CredentialOperationDispatcher;
+import org.apache.gravitino.domain.DomainDispatcher;
 import org.apache.gravitino.job.JobOperationDispatcher;
 import org.apache.gravitino.lineage.LineageConfig;
 import org.apache.gravitino.lineage.LineageDispatcher;
@@ -54,8 +55,10 @@ import org.apache.gravitino.secret.SecretPropertyOperationDispatcher;
 import org.apache.gravitino.secret.SecretProviderRegistry;
 import org.apache.gravitino.server.authentication.ServerAuthenticator;
 import org.apache.gravitino.server.authorization.GravitinoAuthorizerProvider;
+import org.apache.gravitino.server.web.ClientAddressResolver;
 import org.apache.gravitino.server.web.ConfigServlet;
 import org.apache.gravitino.server.web.HealthAliasServlet;
+import org.apache.gravitino.server.web.HealthCheckPathMatcher;
 import org.apache.gravitino.server.web.HttpAuditFilter;
 import org.apache.gravitino.server.web.HttpServerMetricsSource;
 import org.apache.gravitino.server.web.JettyServer;
@@ -177,6 +180,7 @@ public class GravitinoServer extends ResourceConfig {
             bind(gravitinoEnv.filesetDispatcher()).to(FilesetDispatcher.class).ranked(1);
             bind(gravitinoEnv.topicDispatcher()).to(TopicDispatcher.class).ranked(1);
             bind(gravitinoEnv.tagDispatcher()).to(TagDispatcher.class).ranked(1);
+            bind(gravitinoEnv.domainDispatcher()).to(DomainDispatcher.class).ranked(1);
             bind(gravitinoEnv.policyDispatcher()).to(PolicyDispatcher.class).ranked(1);
             bind(gravitinoEnv.credentialOperationDispatcher())
                 .to(CredentialOperationDispatcher.class)
@@ -232,9 +236,10 @@ public class GravitinoServer extends ResourceConfig {
 
     // API_ANY_PATH keeps its original, unabridged filter set: this is the only pathspec that is
     // part of the Jersey-managed REST surface, so it's the only one VersioningFilter applies to.
-    server.addFilter(new RequestContextFilter(gravitinoEnv.eventBus()), API_ANY_PATH);
+    ClientAddressResolver clientAddressResolver = jettyServerConfig.getClientAddressResolver();
     server.addFilter(
-        new HttpAuditFilter(gravitinoEnv.eventBus(), EventSource.GRAVITINO_SERVER), API_ANY_PATH);
+        new RequestContextFilter(gravitinoEnv.eventBus(), clientAddressResolver), API_ANY_PATH);
+    server.addFilter(createHttpAuditFilter(clientAddressResolver), API_ANY_PATH);
     server.addFilter(
         new VersioningFilter(jettyServerConfig.isIncludeErrorStackTrace()), API_ANY_PATH);
 
@@ -247,9 +252,9 @@ public class GravitinoServer extends ResourceConfig {
     // given gravitinoEnv.eventBus() here too (not just API_ANY_PATH) so query-parameter capture
     // (see RequestContextFilter's class doc) applies uniformly, not only to the REST API.
     for (String pathSpec : ROOT_MOUNTED_PATHS) {
-      server.addFilter(new RequestContextFilter(gravitinoEnv.eventBus()), pathSpec);
       server.addFilter(
-          new HttpAuditFilter(gravitinoEnv.eventBus(), EventSource.GRAVITINO_SERVER), pathSpec);
+          new RequestContextFilter(gravitinoEnv.eventBus(), clientAddressResolver), pathSpec);
+      server.addFilter(createHttpAuditFilter(clientAddressResolver), pathSpec);
     }
 
     // Custom filters are registered once, across every filtered path in a single call, so a
@@ -269,6 +274,14 @@ public class GravitinoServer extends ResourceConfig {
     }
   }
 
+  private HttpAuditFilter createHttpAuditFilter(ClientAddressResolver clientAddressResolver) {
+    return new HttpAuditFilter(
+        gravitinoEnv.eventBus(),
+        EventSource.GRAVITINO_SERVER,
+        new HealthCheckPathMatcher(),
+        clientAddressResolver);
+  }
+
   public void start() throws Exception {
     gravitinoEnv.start();
     server.start();
@@ -279,8 +292,9 @@ public class GravitinoServer extends ResourceConfig {
   }
 
   public void stop() throws IOException {
-    GravitinoAuthorizerProvider.getInstance().close();
+    // Stop the web server first: it waits for in-flight requests, which still need the authorizer.
     server.stop();
+    GravitinoAuthorizerProvider.getInstance().close();
     gravitinoEnv.shutdown();
     if (lineageService != null) {
       lineageService.close();

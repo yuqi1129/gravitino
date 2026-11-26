@@ -21,8 +21,10 @@ package org.apache.gravitino.connector.capability;
 import com.google.common.collect.ImmutableSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.apache.gravitino.MetadataObjects;
 import org.apache.gravitino.annotation.Evolving;
+import org.apache.gravitino.utils.NameValidationUtils;
 
 /**
  * The Catalog interface to provide the capabilities of the catalog. If the implemented catalog has
@@ -106,10 +108,31 @@ public interface Capability {
   }
 
   /**
+   * Checks an existing table or schema name for deletion, or an existing column reference.
+   *
+   * <p>The default preserves the create-time restrictions. A catalog may accept additional native
+   * names only when the corresponding operations safely quote them. This does not relax creation or
+   * rename-target validation.
+   *
+   * @param scope the table, schema, or column scope
+   * @param name the existing name to check
+   * @return whether the existing name is supported
+   */
+  default CapabilityResult specificationOnExistingName(Scope scope, String name) {
+    return specificationOnName(scope, name);
+  }
+
+  /**
    * Check if the metadata entity is fully managed by Gravitino for the passed-in scope. This is
    * used to determine whether Gravitino should manage the lifecycle of the metadata and related
    * data. For example, if a catalog storage is managed, when the catalog is dropped, Gravitino will
    * also delete all underlying data associated with the catalog.
+   *
+   * <p>For managed table storage, creating a new table must persist the server-supplied {@code
+   * gravitino.identifier} as its entity ID. If creation returns an existing table, its stored ID
+   * must be retained instead. Core uses these identities to distinguish creation from reuse before
+   * assigning ownership. A connector may omit the reserved identifier from the returned table
+   * properties if it is preserved in the entity store; core reads the stored ID in that case.
    *
    * @param scope The scope of the capability.
    * @return The capability of the managed storage.
@@ -137,17 +160,17 @@ public interface Capability {
     private static final Set<String> RESERVED_WORDS =
         ImmutableSet.of(MetadataObjects.METADATA_OBJECT_RESERVED_NAME);
 
+    private static final Pattern DEFAULT_NAME_PATTERN = Pattern.compile("\\w[\\w/=-]*");
+
     /**
-     * Regular expression explanation:
+     * Checks the default catalog object name syntax, excluding reserved names and length limits.
      *
-     * <p>^\w - Starts with a letter, digit, or underscore
-     *
-     * <p>[\w/=-]{0,63} - Followed by 0 to 63 characters (making the total length at most 64) of
-     * letters (both cases), digits, underscores, slashes, hyphens, or equals signs
-     *
-     * <p>$ - End of the string
+     * @param name the proposed name
+     * @return whether the characters and their positions are valid
      */
-    private static final String DEFAULT_NAME_PATTERN = "^\\w[\\w/=-]{0,63}$";
+    public static boolean matchesNameSyntax(String name) {
+      return DEFAULT_NAME_PATTERN.matcher(name).matches();
+    }
 
     @Override
     public CapabilityResult columnNotNull() {
@@ -171,11 +194,10 @@ public interface Capability {
             String.format("The %s name '%s' is reserved.", scope, name));
       }
 
-      if (!name.matches(DEFAULT_NAME_PATTERN)) {
-        return CapabilityResult.unsupported(
-            String.format("The %s name '%s' is illegal.", scope, name));
-      }
-      return CapabilityResult.SUPPORTED;
+      String error =
+          NameValidationUtils.nameValidationError(
+              String.valueOf(scope), name, DEFAULT_NAME_PATTERN);
+      return error == null ? CapabilityResult.SUPPORTED : CapabilityResult.unsupported(error);
     }
 
     @Override

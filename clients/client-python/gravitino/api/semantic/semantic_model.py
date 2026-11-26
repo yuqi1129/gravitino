@@ -18,13 +18,15 @@
 from abc import abstractmethod
 from typing import Optional
 
-from gravitino.api.auditable import Auditable
 from gravitino.api.semantic.semantic_model_definition import SemanticModelDefinition
+from gravitino.api.semantic.semantic_model_revision import SemanticModelRevision
+from gravitino.api.domain.supports_domains import SupportsDomains
+from gravitino.api.policy.supports_policies import SupportsPolicies
 from gravitino.api.tag.supports_tags import SupportsTags
 from gravitino.exceptions.base import UnsupportedOperationException
 
 
-class SemanticModel(Auditable):
+class SemanticModel(SemanticModelRevision):
     """A schema-scoped analytical semantic model compatible with Apache Ossie Core.
 
     A Semantic Model is always managed by Gravitino and is never persisted in an
@@ -59,4 +61,23 @@ class SemanticModel(Auditable):
         """
         raise UnsupportedOperationException(
             "Semantic Model does not support tag operations."
+        )
+
+    def supports_domains(self) -> SupportsDomains:
+        """Return domain lookup operations for this semantic model."""
+        raise UnsupportedOperationException(
+            "Semantic model does not support domain operations."
+        )
+
+    def supports_policies(self) -> SupportsPolicies:
+        """Return policy operations if the Semantic Model supports policies.
+
+        Raises:
+            UnsupportedOperationException: If policy operations are not supported.
+
+        Returns:
+            SupportsPolicies: The policy operations supported by the Semantic Model.
+        """
+        raise UnsupportedOperationException(
+            "Semantic Model does not support policy operations."
         )

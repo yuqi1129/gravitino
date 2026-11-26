@@ -25,9 +25,11 @@ from gravitino.exceptions.base import (
     IllegalSemanticModelException,
     MetalakeNotInUseException,
     NoSuchCatalogException,
+    NoSuchMetadataObjectException,
     NoSuchMetalakeException,
     NoSuchSchemaException,
     NoSuchSemanticModelException,
+    NoSuchSemanticModelRevisionException,
     NotFoundException,
     NotInUseException,
     SemanticModelAlreadyExistsException,
@@ -72,6 +74,8 @@ class SemanticModelErrorHandler(RestErrorHandler):
 
     @staticmethod
     def _raise_not_found(exception_type: str, error_message: str):
+        if exception_type == NoSuchMetadataObjectException.__name__:
+            raise NoSuchMetadataObjectException(error_message)
         if exception_type == NoSuchMetalakeException.__name__:
             raise NoSuchMetalakeException(error_message)
         if exception_type == NoSuchCatalogException.__name__:
@@ -80,6 +84,9 @@ class SemanticModelErrorHandler(RestErrorHandler):
             raise NoSuchSchemaException(error_message)
         if exception_type == NoSuchSemanticModelException.__name__:
             raise NoSuchSemanticModelException(error_message)
+
+        if exception_type == NoSuchSemanticModelRevisionException.__name__:
+            raise NoSuchSemanticModelRevisionException(error_message)
 
         raise NotFoundException(error_message)
 

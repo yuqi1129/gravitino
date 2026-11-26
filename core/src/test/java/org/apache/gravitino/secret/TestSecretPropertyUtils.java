@@ -18,6 +18,8 @@
  */
 package org.apache.gravitino.secret;
 
+import static org.apache.gravitino.StringIdentifier.ID_KEY;
+
 import com.google.common.collect.ImmutableMap;
 import java.util.HashMap;
 import java.util.List;
@@ -27,6 +29,7 @@ import org.apache.gravitino.Config;
 import org.apache.gravitino.Configs;
 import org.apache.gravitino.connector.PropertiesMetadata;
 import org.apache.gravitino.connector.PropertyEntry;
+import org.apache.gravitino.credential.CredentialConstants;
 import org.apache.gravitino.secret.memory.InMemorySecretsProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
@@ -47,15 +50,16 @@ public class TestSecretPropertyUtils {
           Map.of("jdbc-password", new SecretBinding("memory", "s3cr3t"));
       Map<String, String> entityProps =
           SecretPropertyUtils.copyEntityProperties(properties, bindings, Map.of());
-      List<SecretMaterial> writes =
-          sm.assembleSecretMaterials(properties, entityProps, "catalog", 42L, bindings, Map.of());
-      sm.writeSecrets(writes);
+      Map<String, String> plaintexts =
+          sm.assembleSecretPlaintexts(properties, entityProps, "catalog", 42L, bindings, Map.of());
+      sm.stageSecrets(null, entityProps, "catalog", 42L, plaintexts);
 
       Assertions.assertEquals("root", entityProps.get("jdbc-user"));
       Assertions.assertTrue(
           SecretPropertyUtils.isSecretProperty("jdbc-password", entityProps.get("jdbc-password")));
-      Assertions.assertEquals(1, writes.size());
-      Assertions.assertEquals("s3cr3t", sm.readSecret(writes.get(0).urn()));
+      Assertions.assertEquals(Map.of("jdbc-password", "s3cr3t"), plaintexts);
+      Assertions.assertEquals(
+          "s3cr3t", sm.readSecret(SecretUrn.parse(entityProps.get("jdbc-password"))));
     }
   }
 
@@ -81,10 +85,9 @@ public class TestSecretPropertyUtils {
   void testEmptySecretsNoOp() {
     try (SecretManager sm = memorySecretManager()) {
       Map<String, String> entityProps = new HashMap<>(Map.of("jdbc-user", "root"));
-      List<SecretMaterial> writes =
-          sm.assembleSecretMaterials(entityProps, entityProps, "schema", 1L, Map.of(), Map.of());
-      sm.writeSecrets(writes);
-      Assertions.assertTrue(writes.isEmpty());
+      Map<String, String> plaintexts =
+          sm.assembleSecretPlaintexts(entityProps, entityProps, "schema", 1L, Map.of(), Map.of());
+      Assertions.assertTrue(plaintexts.isEmpty());
       Assertions.assertEquals("root", entityProps.get("jdbc-user"));
     }
   }
@@ -103,15 +106,15 @@ public class TestSecretPropertyUtils {
               new SecretBinding("memory", "custom-value"),
               "s3-secret-access-key",
               new SecretBinding("memory", "s3-secret-value"));
-      List<SecretMaterial> writes =
-          sm.assembleSecretMaterials(
+      Map<String, String> plaintexts =
+          sm.assembleSecretPlaintexts(
               Map.of("jdbc-url", "jdbc:mysql://localhost/db", "jdbc-user", "root"),
               entityProps,
               "catalog",
               42L,
               bindings,
               Map.of());
-      sm.writeSecrets(writes);
+      sm.stageSecrets(null, entityProps, "catalog", 42L, plaintexts);
 
       entityProps.put("s3-access-key-id", "AKIA");
       entityProps.put("visible", "ok");
@@ -189,9 +192,9 @@ public class TestSecretPropertyUtils {
       entityProps.put("jdbc-password", "inline-secret");
       Map<String, SecretBinding> bindings =
           Map.of("custom-secret", new SecretBinding("memory", "custom-value"));
-      List<SecretMaterial> writes =
-          sm.assembleSecretMaterials(Map.of(), entityProps, "catalog", 42L, bindings, Map.of());
-      sm.writeSecrets(writes);
+      Map<String, String> plaintexts =
+          sm.assembleSecretPlaintexts(Map.of(), entityProps, "catalog", 42L, bindings, Map.of());
+      sm.stageSecrets(null, entityProps, "catalog", 42L, plaintexts);
 
       Map<String, String> secrets = SecretPropertyUtils.buildSecrets(sm, entityProps, null);
       Assertions.assertEquals("custom-value", secrets.get("custom-secret"));
@@ -255,6 +258,36 @@ public class TestSecretPropertyUtils {
   }
 
   @Test
+  void testBuildSecretsOmitsReservedHiddenProperties() {
+    try (SecretManager sm = memorySecretManager()) {
+      PropertiesMetadata metadata =
+          new PropertiesMetadata() {
+            @Override
+            public Map<String, PropertyEntry<?>> propertyEntries() {
+              return ImmutableMap.of(
+                  ID_KEY,
+                  PropertyEntry.stringReservedPropertyEntry(
+                      ID_KEY, "internal entity identifier", true),
+                  "jdbc-password",
+                  PropertyEntry.stringOptionalPropertyEntry(
+                      "jdbc-password", "password", false, null, true));
+            }
+          };
+      Map<String, String> entityProps =
+          Map.of(ID_KEY, "gravitino.v1.uid123", "jdbc-password", "s3cr3t");
+      Map<String, String> secrets = SecretPropertyUtils.buildSecrets(sm, entityProps, metadata);
+      Assertions.assertEquals("s3cr3t", secrets.get("jdbc-password"));
+      Assertions.assertFalse(
+          secrets.containsKey(ID_KEY),
+          "reserved+hidden gravitino.identifier must not appear in getSecrets");
+      Assertions.assertFalse(
+          SecretPropertyUtils.shouldRecoverSensitiveNamedSecret(ID_KEY, metadata));
+      Assertions.assertTrue(
+          SecretPropertyUtils.shouldRecoverSensitiveNamedSecret("jdbc-password", metadata));
+    }
+  }
+
+  @Test
   void testMergeProperties() {
     Map<String, String> merged =
         SecretPropertyUtils.mergeProperties(Map.of("a", "1"), Map.of("b", "2", "a", "override"));
@@ -264,11 +297,128 @@ public class TestSecretPropertyUtils {
   }
 
   @Test
+  void testOmitStaticCredentialSecretsScopedByMetadata() {
+    PropertiesMetadata jdbcMetadata =
+        () ->
+            Map.of(
+                "jdbc-user",
+                PropertyEntry.stringOptionalPropertyEntry("jdbc-user", "doc", false, null, false),
+                "jdbc-password",
+                PropertyEntry.stringOptionalPropertyEntry(
+                    "jdbc-password", "doc", false, null, true));
+    PropertiesMetadata hiveMetadata = () -> Map.of();
+
+    Map<String, String> secrets =
+        Map.of(
+            "jdbc-user",
+            "db-user",
+            "jdbc-password",
+            "db-pass",
+            "custom-secret",
+            "keep",
+            "s3-access-key-id",
+            "AKIA");
+
+    Map<String, String> jdbcFiltered =
+        SecretPropertyUtils.omitStaticCredentialSecrets(secrets, jdbcMetadata, null);
+    Assertions.assertEquals("keep", jdbcFiltered.get("custom-secret"));
+    Assertions.assertEquals("AKIA", jdbcFiltered.get("s3-access-key-id"));
+    Assertions.assertFalse(jdbcFiltered.containsKey("jdbc-user"));
+    Assertions.assertFalse(jdbcFiltered.containsKey("jdbc-password"));
+
+    Map<String, String> hiveFiltered =
+        SecretPropertyUtils.omitStaticCredentialSecrets(secrets, hiveMetadata, null);
+    Assertions.assertEquals("db-user", hiveFiltered.get("jdbc-user"));
+    Assertions.assertEquals("db-pass", hiveFiltered.get("jdbc-password"));
+    Assertions.assertEquals("keep", hiveFiltered.get("custom-secret"));
+    Assertions.assertEquals("AKIA", hiveFiltered.get("s3-access-key-id"));
+  }
+
+  @Test
+  void testOmitStaticCredentialSecretsFromCredentialProviders() {
+    PropertiesMetadata emptyMetadata = () -> Map.of();
+    Map<String, String> secrets =
+        Map.of("jdbc-user", "u", "jdbc-password", "p", "custom-secret", "keep");
+    Map<String, String> raw =
+        Map.of(CredentialConstants.CREDENTIAL_PROVIDERS, "jdbc-user-password,s3-token");
+
+    Map<String, String> filtered =
+        SecretPropertyUtils.omitStaticCredentialSecrets(secrets, emptyMetadata, raw);
+    Assertions.assertEquals("keep", filtered.get("custom-secret"));
+    Assertions.assertFalse(filtered.containsKey("jdbc-user"));
+    Assertions.assertFalse(filtered.containsKey("jdbc-password"));
+  }
+
+  /** Mixed token + static providers: only static provider keys are omitted. */
+  @Test
+  void testOmitStaticCredentialSecretsWithMixedTokenAndStaticProviders() {
+    PropertiesMetadata emptyMetadata = () -> Map.of();
+    Map<String, String> secrets =
+        Map.of(
+            "s3-access-key-id", "AKIA", "s3-secret-access-key", "secret", "custom-secret", "keep");
+    Map<String, String> raw =
+        Map.of(CredentialConstants.CREDENTIAL_PROVIDERS, "s3-token,s3-secret-key");
+
+    Map<String, String> filtered =
+        SecretPropertyUtils.omitStaticCredentialSecrets(secrets, emptyMetadata, raw);
+    Assertions.assertEquals("keep", filtered.get("custom-secret"));
+    Assertions.assertFalse(filtered.containsKey("s3-access-key-id"));
+    Assertions.assertFalse(filtered.containsKey("s3-secret-access-key"));
+  }
+
+  /**
+   * When metadata does not declare S3 keys, omit still drops the pair if those keys are present on
+   * the property map (inferred providers or leftover static pairs beside a token-only list).
+   */
+  @Test
+  void testOmitStaticCredentialSecretsWhenStaticKeysPresentOnProperties() {
+    PropertiesMetadata emptyMetadata = () -> Map.of();
+    Map<String, String> secrets =
+        Map.of(
+            "s3-access-key-id", "AKIA", "s3-secret-access-key", "secret", "custom-secret", "keep");
+
+    Map<String, String> entityRawWithoutProviders =
+        Map.of("s3-access-key-id", "AKIA", "s3-secret-access-key", "secret");
+    Map<String, String> fromPresence =
+        SecretPropertyUtils.omitStaticCredentialSecrets(
+            secrets, emptyMetadata, entityRawWithoutProviders);
+    Assertions.assertEquals("keep", fromPresence.get("custom-secret"));
+    Assertions.assertFalse(fromPresence.containsKey("s3-access-key-id"));
+    Assertions.assertFalse(fromPresence.containsKey("s3-secret-access-key"));
+
+    Map<String, String> tokenOnlyWithLeftoverStatic =
+        Map.of(
+            "s3-access-key-id",
+            "AKIA",
+            "s3-secret-access-key",
+            "secret",
+            CredentialConstants.CREDENTIAL_PROVIDERS,
+            "s3-token");
+    Map<String, String> filtered =
+        SecretPropertyUtils.omitStaticCredentialSecrets(
+            secrets, emptyMetadata, tokenOnlyWithLeftoverStatic);
+    Assertions.assertEquals("keep", filtered.get("custom-secret"));
+    Assertions.assertFalse(filtered.containsKey("s3-access-key-id"));
+    Assertions.assertFalse(filtered.containsKey("s3-secret-access-key"));
+  }
+
+  @Test
+  void testIsStaticCredentialType() {
+    Assertions.assertTrue(StaticCredentialSecretKeys.isStaticCredentialType("s3-secret-key"));
+    Assertions.assertTrue(StaticCredentialSecretKeys.isStaticCredentialType("S3-SECRET-KEY"));
+    Assertions.assertTrue(StaticCredentialSecretKeys.isStaticCredentialType("jdbc-user-password"));
+    Assertions.assertFalse(StaticCredentialSecretKeys.isStaticCredentialType("s3-token"));
+    Assertions.assertFalse(StaticCredentialSecretKeys.isStaticCredentialType("aws-irsa"));
+    Assertions.assertFalse(StaticCredentialSecretKeys.isStaticCredentialType(null));
+    Assertions.assertFalse(StaticCredentialSecretKeys.isStaticCredentialType(""));
+  }
+
+  @Test
   void testAssembleWithNullTargetWhenNoSecrets() {
     try (SecretManager sm = memorySecretManager()) {
-      List<SecretMaterial> writes =
-          sm.assembleSecretMaterials(null, null, "schema", 1L, null, null);
-      Assertions.assertTrue(writes.isEmpty());
+      Map<String, String> plaintexts =
+          sm.assembleSecretPlaintexts(null, null, "schema", 1L, null, null);
+      Assertions.assertTrue(plaintexts.isEmpty());
     }
   }
 

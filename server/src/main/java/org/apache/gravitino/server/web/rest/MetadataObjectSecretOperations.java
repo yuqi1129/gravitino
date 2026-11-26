@@ -29,7 +29,6 @@ import java.util.Set;
 import javax.inject.Inject;
 import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.GET;
-import javax.ws.rs.NotSupportedException;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
@@ -42,7 +41,6 @@ import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.dto.responses.SecretsResponse;
 import org.apache.gravitino.metrics.MetricNames;
 import org.apache.gravitino.secret.SecretPropertyOperationDispatcher;
-import org.apache.gravitino.secret.SecretPropertyUtils;
 import org.apache.gravitino.server.authorization.MetadataAuthzHelper;
 import org.apache.gravitino.server.authorization.annotations.AuthorizationExpression;
 import org.apache.gravitino.server.authorization.annotations.AuthorizationFullName;
@@ -105,7 +103,7 @@ public class MetadataObjectSecretOperations {
                 MetadataObjects.parse(
                     fullName, MetadataObject.Type.valueOf(type.toUpperCase(Locale.ROOT)));
             if (!supportsSecretOperations(object)) {
-              throw new NotSupportedException(
+              throw new IllegalArgumentException(
                   "Doesn't support secret property operations for metadata object type");
             }
 
@@ -126,10 +124,8 @@ public class MetadataObjectSecretOperations {
                     AuthorizationExpressionConstants
                         .FILTER_INCLUDE_CREDENTIAL_SECRETS_AUTHORIZATION_EXPRESSION);
             Map<String, String> secrets =
-                secretPropertyOperationDispatcher.getSecrets(identifier, entityType);
-            if (!canIncludeCredentialSecrets) {
-              secrets = SecretPropertyUtils.omitCloudAccessKeyPairSecrets(secrets);
-            }
+                secretPropertyOperationDispatcher.getSecrets(
+                    identifier, entityType, canIncludeCredentialSecrets);
             return Utils.ok(new SecretsResponse(secrets));
           });
     } catch (Exception e) {

@@ -29,6 +29,7 @@ paths:
       operationId: listCatalogs
       parameters:
         - $ref: "#/components/parameters/details"
+        - $ref: "#/components/parameters/includeProperties"
       responses:
         "200":
           description: Returns the list of catalog objects if {details} is true, otherwise returns the list of catalog identifiers
@@ -45,6 +46,8 @@ paths:
                   $ref: "#/components/examples/CatalogInfoListResponse"
         "400":
           $ref: "./openapi.yaml#/components/responses/BadRequestErrorResponse"
+        "403":
+          $ref: "./openapi.yaml#/components/responses/ForbiddenErrorResponse"
         "5xx":
           $ref: "./openapi.yaml#/components/responses/ServerErrorResponse"
 
@@ -69,6 +72,15 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/CatalogResponse"
+        "403":
+          description: >-
+            Forbidden - The caller cannot create catalogs in the metalake, or the backend refuses
+            the credentials configured for the catalog at creation. When authorization is enabled,
+            a missing metalake also returns 403.
+          content:
+            application/json:
+              schema:
+                $ref: "./openapi.yaml#/components/schemas/ErrorModel"
         "409":
           description: Conflict - The target catalog already exists in the specified metalake
           content:
@@ -153,6 +165,8 @@ paths:
                   $ref: "./metalakes.yaml#/components/examples/NoSuchMetalakeException"
         "400":
           $ref: "./openapi.yaml#/components/responses/BadRequestErrorResponse"
+        "403":
+          $ref: "./openapi.yaml#/components/responses/ForbiddenErrorResponse"
         "5xx":
           $ref: "./openapi.yaml#/components/responses/ServerErrorResponse"
 
@@ -239,9 +253,10 @@ paths:
         "403":
           description: >-
             Forbidden - The caller cannot load the catalog, or tests proposed changes without
-            owning the metalake or the catalog
+            owning the metalake or the catalog. When authorization is enabled, a missing metalake
+            also returns 403.
           content:
-            application/vnd.gravitino.v1+json:
+            application/json:
               schema:
                 $ref: "./openapi.yaml#/components/schemas/ErrorModel"
         "5xx":
@@ -261,10 +276,14 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/CatalogResponse"
+        "403":
+          $ref: "./openapi.yaml#/components/responses/ForbiddenErrorResponse"
         "404":
-          description: Not Found - The specified catalog does not exist in the specified metalake
+          description: >-
+            Not Found - The specified catalog or its parent metalake does not exist. When
+            authorization is enabled, a missing metalake returns 403.
           content:
-            application/vnd.gravitino.v1+json:
+            application/json:
               schema:
                 $ref: "./openapi.yaml#/components/schemas/ErrorModel"
               examples:
@@ -289,10 +308,14 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/CatalogResponse"
+        "403":
+          $ref: "./openapi.yaml#/components/responses/ForbiddenErrorResponse"
         "404":
-          description: Not Found - The specified catalog does not exist in the specified metalake
+          description: >-
+            Not Found - The specified catalog or its parent metalake does not exist. When
+            authorization is enabled, a missing metalake returns 403.
           content:
-            application/vnd.gravitino.v1+json:
+            application/json:
               schema:
                 $ref: "./openapi.yaml#/components/schemas/ErrorModel"
               examples:
@@ -301,14 +324,23 @@ paths:
                 NoSuchCatalogException:
                   $ref: "#/components/examples/NoSuchCatalogException"
         "409":
-            description: Conflict - The target catalog already exists in the specified metalake
-            content:
-              application/vnd.gravitino.v1+json:
-                schema:
-                  $ref: "./openapi.yaml#/components/schemas/ErrorModel"
-                examples:
-                  CatalogAlreadyExistsException:
-                    $ref: "#/components/examples/CatalogAlreadyExistsException"
+          description: >-
+            Conflict - The rename target already exists, or the catalog is disabled
+            (CatalogNotInUseException).
+          content:
+            application/json:
+              schema:
+                $ref: "./openapi.yaml#/components/schemas/ErrorModel"
+              examples:
+                CatalogAlreadyExistsException:
+                  $ref: "#/components/examples/CatalogAlreadyExistsException"
+                CatalogNotInUseException:
+                  value:
+                    code: 1009
+                    type: CatalogNotInUseException
+                    message: >-
+                      Failed to operate catalog(s) [my_catalog] operation [ALTER] under metalake
+                      [my_metalake], reason [The catalog my_catalog is not in use]
         "5xx":
           $ref: "./openapi.yaml#/components/responses/ServerErrorResponse"
 
@@ -326,14 +358,18 @@ paths:
       responses:
         "200":
           $ref: "./openapi.yaml#/components/responses/BaseResponse"
+        "403":
+          $ref: "./openapi.yaml#/components/responses/ForbiddenErrorResponse"
         "404":
-          description: Not Found - The metalake does not exist
+          description: >-
+            Not Found - The specified catalog or its parent metalake does not exist. When
+            authorization is enabled, a missing metalake returns 403.
           content:
-            application/vnd.gravitino.v1+json:
+            application/json:
               schema:
                 $ref: "./openapi.yaml#/components/schemas/ErrorModel"
               examples:
-                NoSuchMetalakeException:
+                NoSuchCatalogException:
                   $ref: "#/components/examples/NoSuchCatalogException"
         "500":
           description:
@@ -358,6 +394,26 @@ paths:
           $ref: "./openapi.yaml#/components/responses/DropResponse"
         "400":
           $ref: "./openapi.yaml#/components/responses/BadRequestErrorResponse"
+        "403":
+          $ref: "./openapi.yaml#/components/responses/ForbiddenErrorResponse"
+        "409":
+          description: >-
+            Conflict - With force omitted or false, an active catalog raises CatalogInUseException.
+            Disable it before dropping it. If the disabled catalog still contains user-created
+            schemas, a non-forced drop raises NonEmptyCatalogException.
+          content:
+            application/json:
+              schema:
+                $ref: "./openapi.yaml#/components/schemas/ErrorModel"
+              examples:
+                CatalogInUseException:
+                  value:
+                    code: 1010
+                    type: CatalogInUseException
+                    message: >-
+                      Failed to operate catalog(s) [my_catalog] operation [DROP] under metalake
+                      [my_metalake], reason [Catalog my_metalake.my_catalog is in use, please
+                      disable it first or use force option]
         "5xx":
           $ref: "./openapi.yaml#/components/responses/ServerErrorResponse"
 
@@ -371,6 +427,14 @@ components:
       schema:
         type: boolean
         default: false
+    includeProperties:
+      name: includeProperties
+      in: query
+      description: Include resolved catalog properties when details is true. When false, retain only in-use from stored metadata (defaults to "true").
+      required: false
+      schema:
+        type: boolean
+        default: true
 
   schemas:
 
@@ -600,7 +664,11 @@ components:
           description: The property to set
         value:
           type: string
-          description: The value to set
+          description: >
+            The value to set. If the property holds a write-through secret URN of this catalog, the
+            value is written as a new version of that secret. If it holds another secret URN, the
+            value is written through that secret's provider right away, and a failed alter does not
+            undo it.
       example: {
         "@type": "setProperty",
         "property": "key1",

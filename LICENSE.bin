@@ -206,6 +206,9 @@
    This product bundles various third-party components also under the
    Apache Software License 2.0 from:
 
+   Apache Ossie (ontology schema)
+   NetworkNT JSON Schema Validator
+   Ethlo Time ITU
    Apache Hive
    Apache Paimon
    FastDoubleParser (older Jackson copy shaded in paimon-format 1.2.0)
@@ -354,6 +357,7 @@
    JBoss Logging
    RoaringBitmap
    cglib
+   Objenesis
    jmxutils
    SQLite JDBC
    SnakeYAML
@@ -388,6 +392,7 @@
    Jetty SSLEngine
    JJWT
    LZ4 and XxHash
+   LZ4 Java (at.yawk.lz4 fork)
    Prometheus Java Simpleclient
    Snappy Java
    XNIO API
@@ -414,6 +419,13 @@
    db-scheduler
    cron-utils (shaded into db-scheduler)
    JSpecify
+   Google AutoValue Annotations
+   Failsafe
+   Carrot Search HPPC
+   JPam
+   Micrometer
+   OpenCensus
+   QuestDB jar-jni
 
    This product bundles various third-party components also under the
    Apache Software Foundation License 1.1
@@ -442,6 +454,9 @@
    ParaNamer
    RE2/J
    ZSTD JNI
+   LZ4 native library and xxHash (bundled in LZ4 Java, see licenses/lz4.txt)
+   Zstandard native library (bundled in ZSTD JNI, see licenses/zstd-native.txt)
+   Snappy native library (bundled in Snappy Java, see licenses/snappy.txt)
    fsspec
    Google auth HTTP
    Google auth Credentials
@@ -453,6 +468,8 @@
    PostgreSQL JDBC Driver
    SQLLine
    ThreeTen-Extra
+   ANTLR 3 Runtime
+   JDOM
 
    This product bundles various third-party components also under the
    MIT license
@@ -470,6 +487,8 @@
    elarivie/pyReaderWriterLock
    tkem/cachetools
    gethostname4j
+   Bitshuffle (bundled in Snappy Java, see licenses/bitshuffle.txt)
+   Reactive Streams (MIT No Attribution)
 
    This product bundles various third-party components also under the
    Boost Software License 1.0
@@ -553,5 +572,19 @@
 
 For the BSD license of OGNL shaded in MyBatis, see licenses/mybatis-ognl.txt.
 
+For the BSD licenses of the native LZ4 and xxHash code bundled in LZ4 Java, see licenses/lz4.txt.
+
+For the BSD license of the native Snappy code and the MIT license of the Bitshuffle code bundled
+   in Snappy Java, see licenses/snappy.txt and licenses/bitshuffle.txt.
+
+For the BSD license of the ZSTD JNI wrapper, see licenses/zstd.txt. For the BSD license of the
+   native Zstandard code it bundles, see licenses/zstd-native.txt.
+
 For the license texts of code included in Apache Commons Math 3.1.1,
    see licenses/commons-math3.txt.
+
+For the BSD license of the ANTLR 3 runtime, see licenses/antlr3.txt.
+
+For the JDOM license, see licenses/jdom.txt.
+
+For the MIT No Attribution license of Reactive Streams, see licenses/reactive-streams.txt.

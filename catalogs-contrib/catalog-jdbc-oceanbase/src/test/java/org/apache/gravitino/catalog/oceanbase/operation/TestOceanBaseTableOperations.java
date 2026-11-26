@@ -550,14 +550,20 @@ public class TestOceanBaseTableOperations extends TestOceanBase {
     assertionsTableInfo(
         tableName, newComment, columns, properties, indexes, Transforms.EMPTY_TRANSFORM, load);
 
-    TableChange updateColumn =
-        TableChange.updateColumnNullability(new String[] {col3.name()}, !col3.nullable());
-    IllegalArgumentException exception =
-        Assertions.assertThrows(
-            IllegalArgumentException.class,
-            () -> TABLE_OPERATIONS.alterTable(TEST_DB_NAME, tableName, updateColumn));
-    Assertions.assertTrue(
-        exception.getMessage().contains("with null default value cannot be changed to not null"));
+    // A nullable column whose default is NULL can be changed to not null.
+    TABLE_OPERATIONS.alterTable(
+        TEST_DB_NAME,
+        tableName,
+        TableChange.updateColumnNullability(new String[] {col3.name()}, false));
+    load = TABLE_OPERATIONS.load(TEST_DB_NAME, tableName);
+    JdbcColumn updatedCol3 =
+        (JdbcColumn)
+            Arrays.stream(load.columns())
+                .filter(c -> c.name().equals(col3.name()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Column not found: " + col3.name()));
+    Assertions.assertFalse(updatedCol3.nullable());
+    Assertions.assertEquals(Column.DEFAULT_VALUE_NOT_SET, updatedCol3.defaultValue());
   }
 
   @Test
@@ -1189,11 +1195,22 @@ public class TestOceanBaseTableOperations extends TestOceanBase {
     // load table
     JdbcTable load = TABLE_OPERATIONS.load(TEST_DB_NAME, tableName);
 
-    // If ifExists is set to true then the code should not throw an exception if the index doesn't
-    // exist.
+    // If ifExists is set to true and the index doesn't exist, no SQL should be generated.
     TableChange.DeleteIndex deleteIndex = new TableChange.DeleteIndex("uk_1", true);
     sql = OceanBaseTableOperations.deleteIndexDefinition(load, deleteIndex);
-    Assertions.assertEquals("DROP INDEX `uk_1`", sql);
+    Assertions.assertEquals("", sql);
+    Assertions.assertDoesNotThrow(
+        () -> TABLE_OPERATIONS.alterTable(TEST_DB_NAME, tableName, deleteIndex));
+    Assertions.assertDoesNotThrow(
+        () ->
+            TABLE_OPERATIONS.alterTable(
+                TEST_DB_NAME,
+                tableName,
+                deleteIndex,
+                TableChange.updateComment("updated comment")));
+    JdbcTable altered = TABLE_OPERATIONS.load(TEST_DB_NAME, tableName);
+    Assertions.assertEquals("updated comment", altered.comment());
+    Assertions.assertEquals(1, altered.index().length);
 
     // The index existence check should only verify existence when ifExists is false, preventing
     // failures when dropping non-existent indexes.
@@ -1207,6 +1224,13 @@ public class TestOceanBaseTableOperations extends TestOceanBase {
     TableChange.DeleteIndex deleteIndex3 = new TableChange.DeleteIndex("uk_2", false);
     sql = OceanBaseTableOperations.deleteIndexDefinition(load, deleteIndex3);
     Assertions.assertEquals("DROP INDEX `uk_2`", sql);
+
+    // Index names are matched case-insensitively.
+    TableChange.DeleteIndex deleteIndex4 = new TableChange.DeleteIndex("UK_2", true);
+    sql = OceanBaseTableOperations.deleteIndexDefinition(load, deleteIndex4);
+    Assertions.assertEquals("DROP INDEX `UK_2`", sql);
+    TABLE_OPERATIONS.alterTable(TEST_DB_NAME, tableName, deleteIndex4);
+    Assertions.assertEquals(0, TABLE_OPERATIONS.load(TEST_DB_NAME, tableName).index().length);
   }
 
   @Test

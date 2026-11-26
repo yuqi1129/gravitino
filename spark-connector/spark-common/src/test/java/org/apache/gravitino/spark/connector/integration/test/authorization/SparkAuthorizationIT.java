@@ -22,6 +22,7 @@ import static org.junit.Assert.assertThrows;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import java.io.IOException;
 import java.sql.SQLException;
@@ -39,7 +40,9 @@ import org.apache.gravitino.auth.AuthConstants;
 import org.apache.gravitino.authorization.Privileges;
 import org.apache.gravitino.authorization.SecurableObject;
 import org.apache.gravitino.authorization.SecurableObjects;
+import org.apache.gravitino.client.GravitinoAdminClient;
 import org.apache.gravitino.client.GravitinoMetalake;
+import org.apache.gravitino.credential.JdbcCredential;
 import org.apache.gravitino.exceptions.ForbiddenException;
 import org.apache.gravitino.integration.test.util.BaseIT;
 import org.apache.gravitino.integration.test.util.TestDatabaseName;
@@ -157,8 +160,9 @@ public abstract class SparkAuthorizationIT extends BaseIT {
                 Privileges.UseSchema.allow(),
                 Privileges.SelectTable.allow(),
                 Privileges.CreateTable.allow(),
-                // Spark JDBC catalog needs USE_SECRETS to receive vended jdbc credentials.
-                Privileges.UseSecrets.allow()));
+                // Spark JDBC needs both secret privileges to vend static catalog credentials.
+                Privileges.UseSecrets.allow(),
+                Privileges.IncludeCredentialSecrets.allow()));
     gravitinoMetalake.createRole(ROLE, new HashMap<>(), ImmutableList.of(securableObject));
     gravitinoMetalake.grantRolesToUser(ImmutableList.of(ROLE), NORMAL_USER);
   }
@@ -181,6 +185,46 @@ public abstract class SparkAuthorizationIT extends BaseIT {
             .appName("Spark connector integration test")
             .config(sparkConf)
             .getOrCreate();
+  }
+
+  /**
+   * Catalog {@code getCredentials} omits static JDBC credentials unless the caller holds both
+   * secret privileges (metadata access alone is not forbidden).
+   */
+  @Test
+  @Order(0)
+  public void testCatalogRequiresBothCredentialPrivileges() {
+    GravitinoMetalake metalake = client.loadMetalake(METALAKE);
+    MetadataObject catalogObject =
+        MetadataObjects.of(ImmutableList.of(JDBC_CATALOG), MetadataObject.Type.CATALOG);
+    GravitinoAdminClient normalUserClient =
+        GravitinoAdminClient.builder(gravitinoUri).withSimpleAuth(NORMAL_USER).build();
+    try {
+      metalake.revokePrivilegesFromRole(
+          ROLE, catalogObject, ImmutableSet.of(Privileges.UseSecrets.allow()));
+      Catalog withoutUseSecrets = normalUserClient.loadMetalake(METALAKE).loadCatalog(JDBC_CATALOG);
+      Assertions.assertEquals(0, withoutUseSecrets.supportsCredentials().getCredentials().length);
+
+      metalake.grantPrivilegesToRole(
+          ROLE, catalogObject, ImmutableList.of(Privileges.UseSecrets.allow()));
+      metalake.revokePrivilegesFromRole(
+          ROLE, catalogObject, ImmutableSet.of(Privileges.IncludeCredentialSecrets.allow()));
+      Catalog withoutInclude = normalUserClient.loadMetalake(METALAKE).loadCatalog(JDBC_CATALOG);
+      Assertions.assertEquals(0, withoutInclude.supportsCredentials().getCredentials().length);
+
+      metalake.grantPrivilegesToRole(
+          ROLE, catalogObject, ImmutableList.of(Privileges.IncludeCredentialSecrets.allow()));
+      Catalog withBoth = normalUserClient.loadMetalake(METALAKE).loadCatalog(JDBC_CATALOG);
+      Assertions.assertEquals(1, withBoth.supportsCredentials().getCredentials().length);
+      Assertions.assertInstanceOf(
+          JdbcCredential.class, withBoth.supportsCredentials().getCredentials()[0]);
+    } finally {
+      metalake.grantPrivilegesToRole(
+          ROLE,
+          catalogObject,
+          ImmutableList.of(
+              Privileges.UseSecrets.allow(), Privileges.IncludeCredentialSecrets.allow()));
+    }
   }
 
   @Test
@@ -286,7 +330,10 @@ public abstract class SparkAuthorizationIT extends BaseIT {
     SecurableObject catalogObject =
         SecurableObjects.ofCatalog(
             JDBC_CATALOG,
-            ImmutableList.of(Privileges.UseCatalog.allow(), Privileges.UseSecrets.allow()));
+            ImmutableList.of(
+                Privileges.UseCatalog.allow(),
+                Privileges.UseSecrets.allow(),
+                Privileges.IncludeCredentialSecrets.allow()));
     SecurableObject schemaObject =
         SecurableObjects.ofSchema(
             catalogObject,
@@ -336,7 +383,8 @@ public abstract class SparkAuthorizationIT extends BaseIT {
                 Privileges.UseSchema.allow(),
                 Privileges.SelectTable.allow(),
                 Privileges.CreateTable.allow(),
-                Privileges.UseSecrets.allow()));
+                Privileges.UseSecrets.allow(),
+                Privileges.IncludeCredentialSecrets.allow()));
     gravitinoMetalake.createRole(testRole, new HashMap<>(), ImmutableList.of(catalogObject));
     gravitinoMetalake.grantRolesToUser(ImmutableList.of(testRole), NORMAL_USER);
 

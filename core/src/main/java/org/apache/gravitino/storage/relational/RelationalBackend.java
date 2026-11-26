@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import javax.annotation.Nullable;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.gravitino.Config;
 import org.apache.gravitino.Entity;
@@ -32,11 +33,97 @@ import org.apache.gravitino.EntityStore;
 import org.apache.gravitino.HasIdentifier;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Namespace;
+import org.apache.gravitino.SupportsDomainOperations;
 import org.apache.gravitino.SupportsRelationOperations;
+import org.apache.gravitino.SupportsTableIdLookup;
 import org.apache.gravitino.exceptions.NoSuchEntityException;
+import org.apache.gravitino.meta.SchemaEntity;
+import org.apache.gravitino.meta.SemanticModelEntity;
+import org.apache.gravitino.semantic.SemanticModelMetric;
+import org.apache.gravitino.semantic.SemanticModelRevision;
+import org.apache.gravitino.semantic.SemanticModelRevisionSelector;
 
 /** Interface defining the operations for a Relation Backend. */
-public interface RelationalBackend extends Closeable, SupportsRelationOperations {
+public interface RelationalBackend
+    extends Closeable, SupportsRelationOperations, SupportsDomainOperations, SupportsTableIdLookup {
+
+  /**
+   * Resolves a table ID, retaining full reads for backends without a lightweight implementation.
+   *
+   * @param identifier the full table identifier
+   * @return the active table ID
+   * @throws NoSuchEntityException if the table does not exist
+   * @throws IOException if the lookup fails
+   */
+  @Override
+  default long getTableId(NameIdentifier identifier) throws IOException {
+    return get(identifier, Entity.EntityType.TABLE).id();
+  }
+
+  /** Loads a retained Semantic Model snapshot or the latest saved revision. */
+  default SemanticModelEntity loadSemanticModelRevision(
+      NameIdentifier ident, SemanticModelRevisionSelector selector) throws IOException {
+    throw new UnsupportedOperationException("Loading Semantic Model revisions is not supported");
+  }
+
+  /** Lists retained Semantic Model revision metadata newest first. */
+  default SemanticModelRevision[] listSemanticModelRevisions(NameIdentifier ident)
+      throws IOException {
+    throw new UnsupportedOperationException("Listing Semantic Model revisions is not supported");
+  }
+
+  /** Publishes the latest Semantic Model revision. */
+  default SemanticModelEntity publishSemanticModelRevision(
+      NameIdentifier ident, int revision, String principal) throws IOException {
+    throw new UnsupportedOperationException("Publishing Semantic Model revisions is not supported");
+  }
+
+  /** Lists model identities for governance, irrespective of publication state. */
+  default List<NameIdentifier> listSemanticModelIdentifiers(Namespace namespace)
+      throws IOException {
+    return this.<SemanticModelEntity>list(namespace, Entity.EntityType.SEMANTIC_MODEL, false)
+        .stream()
+        .map(SemanticModelEntity::nameIdentifier)
+        .toList();
+  }
+
+  /** Applies a Semantic Model update with an optional revision precondition. */
+  default SemanticModelEntity updateSemanticModel(
+      NameIdentifier ident,
+      @Nullable Integer expectedRevision,
+      boolean rename,
+      Function<SemanticModelEntity, SemanticModelEntity> updater)
+      throws IOException {
+    return update(ident, Entity.EntityType.SEMANTIC_MODEL, updater);
+  }
+
+  /**
+   * Reads metric identifiers in a schema without loading complete Semantic Models.
+   *
+   * @param namespace The full schema namespace.
+   * @return Metric identifiers from one consistent statement or read snapshot.
+   * @throws NoSuchEntityException If the schema does not exist.
+   * @throws IOException If the read fails.
+   * @throws UnsupportedOperationException If metric discovery is not supported.
+   */
+  default List<NameIdentifier> listSemanticModelMetrics(Namespace namespace) throws IOException {
+    throw new UnsupportedOperationException("Metric listing is not supported");
+  }
+
+  /**
+   * Reads complete metrics in a schema without loading unrelated definition fields.
+   *
+   * @param namespace The full schema namespace.
+   * @return Decoded metrics from one consistent statement or read snapshot, without authorization
+   *     filtering.
+   * @throws NoSuchEntityException If the schema does not exist.
+   * @throws IOException If the read fails.
+   * @throws UnsupportedOperationException If metric discovery is not supported.
+   */
+  default List<SemanticModelMetric> listSemanticModelMetricInfos(Namespace namespace)
+      throws IOException {
+    throw new UnsupportedOperationException("Metric info listing is not supported");
+  }
 
   /**
    * Initializes the Relational Backend environment with the provided configuration.
@@ -44,6 +131,19 @@ public interface RelationalBackend extends Closeable, SupportsRelationOperations
    * @param config The configuration for the backend.
    */
   void initialize(Config config);
+
+  /**
+   * Lists all recorded descendant schemas of a schema, excluding the schema itself.
+   *
+   * @param identifier The schema identifier using the configured logical separator.
+   * @return The descendant schemas in logical form.
+   * @throws IOException If the schemas cannot be read.
+   * @throws NoSuchEntityException If the schema does not exist.
+   * @throws UnsupportedOperationException If descendant schema listing is not supported.
+   */
+  default List<SchemaEntity> listDescendantSchemas(NameIdentifier identifier) throws IOException {
+    throw new UnsupportedOperationException("This store cannot list descendant schemas");
+  }
 
   /**
    * Lists the entities associated with the given parent namespace and entityType
@@ -78,10 +178,15 @@ public interface RelationalBackend extends Closeable, SupportsRelationOperations
   /**
    * Stores the entity, possibly overwriting an existing entity if specified.
    *
+   * <p>A schema overwrite must not replace a different active identity at the same name or move an
+   * active identity from another catalog. Such conflicts require explicit reconciliation, even when
+   * {@code overwritten} is true; an overwrite must not cascade-delete the old schema metadata.
+   *
    * @param <E> The type of the entity returned.
    * @param e The entity which need be stored.
    * @param overwritten If true, overwrites the existing value.
-   * @throws EntityAlreadyExistsException If the entity already exists and overwrite is false.
+   * @throws EntityAlreadyExistsException If the entity already exists and overwrite is false, or a
+   *     schema overwrite conflicts with an active identity.
    * @throws IOException If the store operation fails
    */
   <E extends Entity & HasIdentifier> void insert(E e, boolean overwritten)
@@ -193,6 +298,26 @@ public interface RelationalBackend extends Closeable, SupportsRelationOperations
     } catch (NoSuchEntityException e) {
       return Optional.empty();
     }
+  }
+
+  /**
+   * Deletes a schema and optionally its functions, then runs an action before commit.
+   *
+   * <p>Remaining children, including filesets, must prevent deletion. Function cleanup, schema
+   * deletion, and the action share one metadata transaction.
+   *
+   * @param ident the schema identifier
+   * @param cascadeFunctions whether to delete functions in the same metadata transaction
+   * @param postDeleteAction the action to run against the deleted snapshot before commit
+   * @return the deleted schema, or empty when it did not exist
+   * @throws IOException if the store operation fails
+   * @throws UnsupportedOperationException if the backend cannot honor this transaction boundary
+   */
+  default Optional<SchemaEntity> deleteSchemaAndGet(
+      NameIdentifier ident, boolean cascadeFunctions, Consumer<SchemaEntity> postDeleteAction)
+      throws IOException {
+    throw new UnsupportedOperationException(
+        "This backend cannot delete a schema with a pre-commit action");
   }
 
   /**

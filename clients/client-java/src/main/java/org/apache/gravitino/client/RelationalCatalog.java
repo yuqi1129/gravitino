@@ -79,6 +79,8 @@ import org.apache.gravitino.semantic.SemanticModel;
 import org.apache.gravitino.semantic.SemanticModelCatalog;
 import org.apache.gravitino.semantic.SemanticModelChange;
 import org.apache.gravitino.semantic.SemanticModelDefinition;
+import org.apache.gravitino.semantic.SemanticModelMetric;
+import org.apache.gravitino.semantic.SemanticModelRevision;
 
 /**
  * Relational catalog is a catalog implementation that supports relational database like metadata
@@ -133,8 +135,38 @@ class RelationalCatalog extends BaseSchemaCatalog
 
   /** {@inheritDoc} */
   @Override
+  public NameIdentifier[] listMetrics(Namespace namespace) {
+    return semanticModelOperations.listMetrics(namespace);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public SemanticModelMetric[] listMetricInfos(Namespace namespace) {
+    return semanticModelOperations.listMetricInfos(namespace);
+  }
+
+  /** {@inheritDoc} */
+  @Override
   public SemanticModel loadSemanticModel(NameIdentifier ident) {
     return semanticModelOperations.loadSemanticModel(ident);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public SemanticModel loadSemanticModel(NameIdentifier ident, int revision) {
+    return semanticModelOperations.loadSemanticModel(ident, revision);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public SemanticModel loadSemanticModel(NameIdentifier ident, String alias) {
+    return semanticModelOperations.loadSemanticModel(ident, alias);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public SemanticModelRevision[] listSemanticModelRevisions(NameIdentifier ident) {
+    return semanticModelOperations.listSemanticModelRevisions(ident);
   }
 
   /** {@inheritDoc} */
@@ -161,8 +193,27 @@ class RelationalCatalog extends BaseSchemaCatalog
 
   /** {@inheritDoc} */
   @Override
+  public OssieDocument exportOssieDocument(NameIdentifier ident, int revision, OssieFormat format) {
+    return semanticModelOperations.exportOssieDocument(ident, revision, format);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public OssieDocument exportOssieDocument(NameIdentifier ident, String alias, OssieFormat format) {
+    return semanticModelOperations.exportOssieDocument(ident, alias, format);
+  }
+
+  /** {@inheritDoc} */
+  @Override
   public SemanticModel alterSemanticModel(NameIdentifier ident, SemanticModelChange... changes) {
     return semanticModelOperations.alterSemanticModel(ident, changes);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public SemanticModel alterSemanticModel(
+      NameIdentifier ident, int expectedRevision, SemanticModelChange... changes) {
+    return semanticModelOperations.alterSemanticModel(ident, expectedRevision, changes);
   }
 
   /** {@inheritDoc} */

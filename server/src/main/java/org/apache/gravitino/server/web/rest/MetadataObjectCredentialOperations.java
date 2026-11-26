@@ -22,6 +22,7 @@ package org.apache.gravitino.server.web.rest;
 import com.codahale.metrics.annotation.ResponseMetered;
 import com.codahale.metrics.annotation.Timed;
 import com.google.common.collect.ImmutableSet;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -29,7 +30,6 @@ import java.util.Set;
 import javax.inject.Inject;
 import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.GET;
-import javax.ws.rs.NotSupportedException;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
@@ -102,8 +102,9 @@ public class MetadataObjectCredentialOperations {
                 MetadataObjects.parse(
                     fullName, MetadataObject.Type.valueOf(type.toUpperCase(Locale.ROOT)));
             if (!supportsCredentialOperations(object)) {
-              throw new NotSupportedException(
-                  "Doesn't support credential operations for metadata object type");
+              throw new IllegalArgumentException(
+                  "Credential operations are not supported for metadata object type "
+                      + object.type());
             }
 
             NameIdentifier identifier = MetadataObjectUtil.toEntityIdent(metalake, object);
@@ -127,9 +128,17 @@ public class MetadataObjectCredentialOperations {
                             .FILTER_WRITE_FILESET_AUTHORIZATION_EXPRESSION)
                     ? CredentialPrivilege.WRITE
                     : CredentialPrivilege.READ;
+            // Catalog and fileset requests without static-secret privileges only invoke
+            // SupportsDynamicCredential providers so unmarked custom providers cannot return
+            // stored keys to metadata-only callers.
+            boolean dynamicProvidersOnly = !canIncludeStaticCredentials(identifier, entityType);
             List<Credential> credentials =
-                credentialOperationDispatcher.getCredentials(identifier, privilege);
+                credentialOperationDispatcher.getCredentials(
+                    identifier, privilege, dynamicProvidersOnly);
             if (credentials == null) {
+              credentials = Collections.emptyList();
+            }
+            if (credentials.isEmpty()) {
               return Utils.ok(new CredentialResponse(new CredentialDTO[0]));
             }
             return Utils.ok(
@@ -142,6 +151,23 @@ public class MetadataObjectCredentialOperations {
       // Clear the caller context
       CallerContext.CallerContextHolder.remove();
     }
+  }
+
+  /**
+   * Returns whether the caller may receive static credentials ({@code USE_SECRETS} and {@code
+   * INCLUDE_CREDENTIAL_SECRETS}, or metalake ownership).
+   */
+  private static boolean canIncludeStaticCredentials(
+      NameIdentifier identifier, Entity.EntityType entityType) {
+    return MetadataAuthzHelper.checkAccess(
+            identifier,
+            entityType,
+            AuthorizationExpressionConstants.FILTER_USE_SECRET_AUTHORIZATION_EXPRESSION)
+        && MetadataAuthzHelper.checkAccess(
+            identifier,
+            entityType,
+            AuthorizationExpressionConstants
+                .FILTER_INCLUDE_CREDENTIAL_SECRETS_AUTHORIZATION_EXPRESSION);
   }
 
   private static boolean supportsCredentialOperations(MetadataObject metadataObject) {

@@ -1,3 +1,4 @@
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import net.ltgt.gradle.errorprone.errorprone
 
 /*
@@ -22,12 +23,21 @@ plugins {
   `maven-publish`
   id("java")
   id("idea")
+  antlr
   alias(libs.plugins.jcstress)
   alias(libs.plugins.jmh)
   alias(libs.plugins.aspectj.post.compile.weaving)
+  alias(libs.plugins.shadow)
+}
+
+val shadedAntlr by configurations.creating {
+  isCanBeConsumed = false
 }
 
 dependencies {
+  antlr(libs.antlr.tool)
+  shadedAntlr(libs.antlr.runtime)
+  compileOnly(libs.antlr.runtime)
   implementation(project(":api"))
   implementation(project(":common"))
   implementation(project(":catalogs:catalog-common"))
@@ -45,6 +55,11 @@ dependencies {
   implementation(libs.h2db)
   implementation(libs.jackson.databind)
   implementation(libs.jackson.dataformat.yaml)
+  implementation(libs.json.schema.validator) {
+    // Use the Jackson versions already supplied by Gravitino's distribution.
+    exclude(group = "com.fasterxml.jackson.core", module = "jackson-databind")
+    exclude(group = "com.fasterxml.jackson.dataformat", module = "jackson-dataformat-yaml")
+  }
   implementation(libs.jackson.jaxrs.json.provider) // This is required by lance
   implementation(libs.lance) {
     exclude(group = "com.fasterxml.jackson.core", module = "*") // provided by gravitino
@@ -56,13 +71,19 @@ dependencies {
     exclude(group = "com.fasterxml.jackson.jaxrs", module = "jackson-jaxrs-json-provider") // using gravitino's version
     exclude(group = "org.apache.httpcomponents.client5", module = "*") // provided by gravitino
     exclude(group = "org.lance", module = "lance-namespace-core") // This is unnecessary in the core module
-    // Same rationale as lance-namespace-core: lance-core 6.0.0 declares
+    // Same rationale as lance-namespace-core: lance-core 12.0.0 declares
     // lance-namespace-apache-client as a transitive, but core never calls into it.
-    // Leaving it on the main classpath shadows the lance-rest aux service's own
-    // lance-namespace-apache-client (loaded via lance-rest-server/libs/), and
-    // because the aux classloader is parent-first, the older transitive wins
-    // on request deserialization (e.g. dropping fields like `check_declared`).
+    // The aux lance-rest service loads its own copy from lance-rest-server/libs/ and
+    // its classloader is parent-first, so whatever sits on the main classpath wins.
+    // lance-core 12.0.0 happens to pin the same 0.11.1 this build declares, so today
+    // that resolves to the same jar; keeping the exclusion means the aux service's
+    // version stays authoritative if the two ever drift apart again, which is what
+    // previously broke request deserialization (fields such as `check_declared`).
     exclude(group = "org.lance", module = "lance-namespace-apache-client")
+    // lance-core 12.0.0 added io.opentelemetry:opentelemetry-api as a compile
+    // dependency. Only org.lance.otel.* uses it and instrumentation is opt-in,
+    // which Gravitino never enables, so keep it out of the distribution.
+    exclude(group = "io.opentelemetry", module = "*")
   }
   implementation(libs.mybatis)
 
@@ -78,6 +99,7 @@ dependencies {
   testImplementation(project(":server-common"))
   testImplementation(project(":clients:client-java"))
   testImplementation(libs.awaitility)
+  testImplementation(libs.antlr.runtime)
   testImplementation(libs.junit.jupiter.api)
   testImplementation(libs.junit.jupiter.params)
   testImplementation(libs.junit.platform.testkit)
@@ -98,12 +120,27 @@ val testJar by tasks.registering(Jar::class) {
   from(sourceSets["test"].output)
 }
 
+// Modules weave MethodMonitorAspect into their own @Monitored methods from this jar. The shaded
+// jar cannot be used as the aspect path: relocation rewrites the constant pool of woven classes and
+// breaks their AspectJ attributes, which makes ajc fail. The jar is written outside build/libs so
+// that the distribution, which copies every jar in build/libs, does not ship a second copy of the
+// aspect.
+val aspectJar by tasks.registering(Jar::class) {
+  archiveClassifier.set("aspects")
+  destinationDirectory.set(layout.buildDirectory.dir("aspects"))
+  from(sourceSets["main"].output) {
+    include("org/apache/gravitino/metrics/MethodMonitorAspect.class")
+  }
+}
+
 configurations {
   create("testArtifacts")
+  create("aspects")
 }
 
 artifacts {
   add("testArtifacts", testJar)
+  add("aspects", aspectJar)
 }
 
 // Core's tests run in four lanes: coreUnitTest, plus coreH2Test/coreMySQLTest/corePostgreSQLTest.
@@ -202,11 +239,12 @@ tasks.named<JacocoReport>("jacocoTestReport") {
 
 // :core:test is kept for IDEs and local habit, and is deprecated: run a lane instead. CI skips it
 // (`build` passes `-x :core:test`) and runs each lane in its own `core-test` job.
-// TestRestrictedRegoGoldenFile reads docs/policies.md. It is a unit test, so only coreUnitTest and
+// TestRestrictedSqlGoldenFile reads docs/policies.md. It is a unit test, so only coreUnitTest and
 // the legacy :core:test run it; the database lanes don't need the input.
 listOf("coreUnitTest", "test").forEach {
   tasks.named<Test>(it) {
     inputs.file(rootProject.file("docs/policies.md"))
+    inputs.property("updateRestrictedSqlGolden", providers.environmentVariable("GRAVITINO_UPDATE_RESTRICTED_SQL_GOLDEN").orElse("false"))
     systemProperty("gravitino.repositoryRoot", rootProject.projectDir.path)
   }
 }
@@ -227,9 +265,50 @@ tasks.test {
 }
 
 tasks.withType<JavaCompile>().configureEach {
+  options.errorprone.excludedPaths.set(".*/generated-src/antlr/.*")
   if (name.contains("jcstress", ignoreCase = true)) {
-    options.errorprone.excludedPaths.set(".*/generated/.*")
+    options.errorprone.excludedPaths.set(".*/(generated|generated-src/antlr)/.*")
   }
+}
+
+// The generator is build tooling; only antlr4-runtime belongs on the server classpath.
+configurations.matching { it.name in setOf("api", "implementation") }.configureEach {
+  setExtendsFrom(extendsFrom.filterNot { it.name == "antlr" })
+}
+
+tasks.generateGrammarSource {
+  arguments = arguments + listOf("-visitor", "-no-listener", "-package", "org.apache.gravitino.policy.sql.antlr")
+}
+
+tasks.named<Jar>("sourcesJar") {
+  dependsOn(tasks.generateGrammarSource)
+}
+
+val shadedCoreJar = tasks.named<ShadowJar>("shadowJar") {
+  configurations = listOf(shadedAntlr)
+  archiveClassifier.set("")
+  relocate("org.antlr.v4.runtime", "org.apache.gravitino.shaded.org.antlr.v4.runtime")
+}
+
+tasks.jar {
+  enabled = false
+  dependsOn(shadedCoreJar)
+}
+
+// Every runtime consumer, including Spark test fixtures, must use the relocated parser classes.
+listOf("apiElements", "runtimeElements").forEach { name ->
+  configurations.named(name) {
+    outgoing.artifacts.clear()
+    outgoing.artifact(shadedCoreJar)
+  }
+}
+
+components.named<AdhocComponentWithVariants>("java") {
+  withVariantsFromConfiguration(configurations["shadowRuntimeElements"]) { skip() }
+}
+
+tasks.javadoc {
+  exclude("**/policy/sql/antlr/**")
 }
 
 tasks.named<JavaCompile>("jmhCompileGeneratedClasses").configure {

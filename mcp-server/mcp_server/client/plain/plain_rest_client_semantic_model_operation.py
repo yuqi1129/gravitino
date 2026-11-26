@@ -15,13 +15,14 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from typing import Optional
+from typing import Literal, Optional
 
 from httpx import AsyncClient
 
 from mcp_server.client.plain.utils import (
     encode_path_segment,
     extract_content_from_response,
+    extract_list_from_response,
 )
 from mcp_server.client.semantic_model_operation import SemanticModelOperation
 
@@ -41,13 +42,73 @@ class PlainRESTClientSemanticModelOperation(SemanticModelOperation):
         )
         return extract_content_from_response(response, "identifiers", [])
 
-    async def load_semantic_model(
-        self, catalog_name: str, schema_name: str, semantic_model_name: str
+    async def list_metrics(self, catalog_name: str, schema_name: str) -> str:
+        response = await self.rest_client.get(
+            self._metrics_path(catalog_name, schema_name),
+            params={"details": "false"},
+        )
+        return extract_list_from_response(response, "identifiers")
+
+    async def list_semantic_model_datasets(
+        self,
+        source_type: str,
+        catalog_name: str,
+        schema_name: str,
+        source_name: str,
+    ) -> str:
+        encoded_names = [
+            encode_path_segment(name)
+            for name in (catalog_name, schema_name, source_name)
+        ]
+        # The REST fullName format has no escape for dots within a component.
+        if any("." in name for name in encoded_names):
+            raise ValueError(
+                "Source lookup does not support dots in catalog, schema, or table/view names"
+            )
+        full_name = ".".join(encoded_names)
+        response = await self.rest_client.get(
+            f"/api/metalakes/{encode_path_segment(self.metalake_name)}"
+            f"/objects/{encode_path_segment(source_type)}/{full_name}"
+            "/semantic-model-datasets"
+        )
+        return extract_list_from_response(response, "identifiers")
+
+    async def list_metric_infos(
+        self, catalog_name: str, schema_name: str
     ) -> str:
         response = await self.rest_client.get(
-            self._model_path(catalog_name, schema_name, semantic_model_name)
+            self._metrics_path(catalog_name, schema_name),
+            params={"details": "true"},
         )
+        return extract_list_from_response(response, "metrics")
+
+    async def load_semantic_model(
+        self,
+        catalog_name: str,
+        schema_name: str,
+        semantic_model_name: str,
+        revision: Optional[int | Literal["latest"]] = None,
+    ) -> str:
+        path = self._model_path(catalog_name, schema_name, semantic_model_name)
+        if revision is not None:
+            if revision != "latest" and (
+                not isinstance(revision, int)
+                or isinstance(revision, bool)
+                or revision <= 0
+            ):
+                raise ValueError(
+                    "Revision must be a positive integer or 'latest'"
+                )
+            path += f"/revisions/{revision}"
+        response = await self.rest_client.get(path)
         return extract_content_from_response(response, "semanticModel", {})
+
+    async def list_semantic_model_revisions(
+        self, catalog_name: str, schema_name: str, semantic_model_name: str
+    ) -> str:
+        path = self._model_path(catalog_name, schema_name, semantic_model_name)
+        response = await self.rest_client.get(f"{path}/revisions")
+        return extract_list_from_response(response, "revisions")
 
     # pylint: disable=too-many-positional-arguments
     async def create_semantic_model(
@@ -75,10 +136,15 @@ class PlainRESTClientSemanticModelOperation(SemanticModelOperation):
         schema_name: str,
         semantic_model_name: str,
         updates: list[dict],
+        *,
+        expected_revision: Optional[int] = None,
     ) -> str:
+        body = {"updates": updates}
+        if expected_revision is not None:
+            body["expectedRevision"] = expected_revision
         response = await self.rest_client.put(
             self._model_path(catalog_name, schema_name, semantic_model_name),
-            json={"updates": updates},
+            json=body,
         )
         return extract_content_from_response(response, "semanticModel", {})
 
@@ -95,6 +161,13 @@ class PlainRESTClientSemanticModelOperation(SemanticModelOperation):
             f"/api/metalakes/{encode_path_segment(self.metalake_name)}"
             f"/catalogs/{encode_path_segment(catalog_name)}"
             f"/schemas/{encode_path_segment(schema_name)}/semantic-models"
+        )
+
+    def _metrics_path(self, catalog_name: str, schema_name: str) -> str:
+        return (
+            f"/api/metalakes/{encode_path_segment(self.metalake_name)}"
+            f"/catalogs/{encode_path_segment(catalog_name)}"
+            f"/schemas/{encode_path_segment(schema_name)}/semantic-model-metrics"
         )
 
     def _model_path(

@@ -54,6 +54,9 @@ dependencies {
   testCompileOnly(libs.lombok)
 
   testImplementation(libs.commons.io)
+  testImplementation(project(":clients:client-java"))
+  testImplementation(project(":core", "testArtifacts"))
+  testImplementation(project(":integration-test-common", "testArtifacts"))
   testImplementation(project(":server-common", "testArtifacts"))
   testImplementation(libs.jersey.test.framework.core) {
     exclude(group = "org.junit.jupiter")
@@ -70,28 +73,23 @@ dependencies {
   testRuntimeOnly(libs.junit.jupiter.engine)
 }
 
-fun getGitCommitId(): String {
-  var gitCommitId: String
-  try {
-    val gitFolder = rootDir.path + "/.git/"
-    val head = File(gitFolder + "HEAD").readText().split(":")
-    val isCommit = head.size == 1
-    gitCommitId = if (isCommit) {
-      head[0].trim()
-    } else {
-      val refHead = File(gitFolder + head[1].trim())
-      refHead.readText().trim()
-    }
-  } catch (e: Exception) {
-    println("WARN: Unable to get Git commit id : ${e.message}")
-    gitCommitId = ""
-  }
-  return gitCommitId
-}
-
 tasks {
   test {
     environment("GRAVITINO_HOME", rootDir.path)
     environment("GRAVITINO_TEST", "true")
+    useJUnitPlatform { excludeTags("server-tag-assignment-h2-test") }
   }
 }
+
+tasks.register<Test>("serverTagAssignmentH2Test") {
+  group = "verification"
+  description = "Runs tag assignment persistence tests against H2."
+  testClassesDirs = sourceSets["test"].output.classesDirs
+  classpath = sourceSets["test"].runtimeClasspath
+  useJUnitPlatform { includeTags("server-tag-assignment-h2-test") }
+  systemProperty("gravitino.core.test.backend", "h2")
+  systemProperty("junit.jupiter.execution.parallel.enabled", "false")
+  maxParallelForks = 1
+}
+
+tasks.named("check") { dependsOn("serverTagAssignmentH2Test") }

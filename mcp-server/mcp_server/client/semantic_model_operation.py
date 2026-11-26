@@ -16,11 +16,11 @@
 # under the License.
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Literal, Optional
 
 
 class SemanticModelOperation(ABC):
-    """Operations on schema-scoped Gravitino Semantic Models."""
+    """Operations on Gravitino Semantic Models and their source associations."""
 
     @abstractmethod
     async def list_of_semantic_models(
@@ -30,10 +30,44 @@ class SemanticModelOperation(ABC):
         pass
 
     @abstractmethod
+    async def list_semantic_model_datasets(
+        self,
+        source_type: str,
+        catalog_name: str,
+        schema_name: str,
+        source_name: str,
+    ) -> str:
+        """Return visible dataset identifiers associated with a table or view."""
+        pass
+
+    @abstractmethod
+    async def list_metrics(self, catalog_name: str, schema_name: str) -> str:
+        """Return visible metric identifiers with full REST namespaces as JSON."""
+        pass
+
+    @abstractmethod
+    async def list_metric_infos(
+        self, catalog_name: str, schema_name: str
+    ) -> str:
+        """Return complete visible metrics and their full namespaces as JSON."""
+        pass
+
+    @abstractmethod
     async def load_semantic_model(
+        self,
+        catalog_name: str,
+        schema_name: str,
+        semantic_model_name: str,
+        revision: Optional[int | Literal["latest"]] = None,
+    ) -> str:
+        """Return the selected Semantic Model revision and definition as JSON."""
+        pass
+
+    @abstractmethod
+    async def list_semantic_model_revisions(
         self, catalog_name: str, schema_name: str, semantic_model_name: str
     ) -> str:
-        """Return the Semantic Model's metadata and definition as JSON."""
+        """Return retained, visible revision summaries as JSON."""
         pass
 
     # pylint: disable=too-many-positional-arguments
@@ -57,6 +91,8 @@ class SemanticModelOperation(ABC):
         schema_name: str,
         semantic_model_name: str,
         updates: list[dict],
+        *,
+        expected_revision: Optional[int] = None,
     ) -> str:
         """Apply native REST update operations atomically and return JSON."""
         pass

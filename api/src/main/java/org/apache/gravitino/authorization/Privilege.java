@@ -161,15 +161,20 @@ public interface Privilege {
     /** The privilege to list configured secrets providers. */
     VIEW_SECRET_PROVIDERS(0L, 1L << 36),
     /**
-     * The privilege required to call {@code getSecrets}. Without {@link
-     * #INCLUDE_CREDENTIAL_SECRETS}, cloud access-key pairs are omitted from the result. Does not
-     * authorize {@code getCredentials}.
+     * Soft-authorizes {@code getSecrets}: without this privilege (and without metalake ownership)
+     * the API returns an empty map rather than {@code 403}. Without {@link
+     * #INCLUDE_CREDENTIAL_SECRETS}, canonical static credential keys are omitted from the result.
+     * For catalog and fileset {@code getCredentials}, metadata access is enough for token
+     * providers; static providers are omitted unless this privilege is held together with {@link
+     * #INCLUDE_CREDENTIAL_SECRETS} (or the caller owns the metalake).
      */
     USE_SECRETS(0L, 1L << 37),
     /**
-     * When held together with {@link #USE_SECRETS}, includes cloud access-key pairs and other
-     * credential secrets in the {@code getSecrets} result. Alone it does not authorize {@code
-     * getSecrets}. Does not authorize {@code getCredentials}.
+     * When held together with {@link #USE_SECRETS} (or metalake ownership), includes canonical
+     * static credential keys in the {@code getSecrets} result and allows static providers on
+     * catalog and fileset {@code getCredentials}. Alone it does not unlock {@code getSecrets}.
+     * Missing this privilege soft-filters static material (omit / dynamic-only); it does not return
+     * {@code 403} when metadata access is already granted.
      */
     INCLUDE_CREDENTIAL_SECRETS(0L, 1L << 38),
     /** The privilege to create a semantic model. */
@@ -177,7 +182,11 @@ public interface Privilege {
     /** The privilege to discover a semantic model and load its definition. */
     USE_SEMANTIC_MODEL(0L, 1L << 40),
     /** The privilege to rename a semantic model or alter its definition and metadata. */
-    MODIFY_SEMANTIC_MODEL(0L, 1L << 41);
+    MODIFY_SEMANTIC_MODEL(0L, 1L << 41),
+    /** The privilege to manage domains, including draft domains. */
+    MANAGE_DOMAIN(0L, 1L << 42),
+    /** The privilege to discover published domains and browse their members. */
+    USE_DOMAIN(0L, 1L << 43);
 
     private final long highBits;
     private final long lowBits;

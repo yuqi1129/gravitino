@@ -35,7 +35,13 @@ paths:
           $ref: "./openapi.yaml#/components/responses/EntityListResponse"
         "400":
           $ref: "./openapi.yaml#/components/responses/BadRequestErrorResponse"
-        "5xx":
+        "403":
+          $ref: "./openapi.yaml#/components/responses/ForbiddenErrorResponse"
+        "406":
+          $ref: "./openapi.yaml#/components/responses/NotAcceptableErrorResponse"
+        "501":
+          $ref: "#/components/responses/TableUnsupportedOperationErrorResponse"
+        "5XX":
           $ref: "./openapi.yaml#/components/responses/ServerErrorResponse"
 
     post:
@@ -62,6 +68,10 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/TableResponse"
+        "403":
+          $ref: "./openapi.yaml#/components/responses/ForbiddenErrorResponse"
+        "406":
+          $ref: "./openapi.yaml#/components/responses/NotAcceptableErrorResponse"
         "409":
           description: Conflict - The target table already exists
           content:
@@ -71,7 +81,9 @@ paths:
               examples:
                 TableAlreadyExistsErrorResponse:
                   $ref: "#/components/examples/TableAlreadyExistsException"
-        "5xx":
+        "501":
+          $ref: "#/components/responses/TableUnsupportedOperationErrorResponse"
+        "5XX":
           $ref: "./openapi.yaml#/components/responses/ServerErrorResponse"
 
 
@@ -91,10 +103,14 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/TableResponse"
+        "403":
+          $ref: "./openapi.yaml#/components/responses/ForbiddenErrorResponse"
         "404":
-          description: Not Found - The target table does not exist
+          description: >-
+            Not Found - The table or its parent resource does not exist. When authorization
+            is enabled, a missing metalake returns 403 instead.
           content:
-            application/vnd.gravitino.v1+json:
+            application/json:
               schema:
                 $ref: "./openapi.yaml#/components/schemas/ErrorModel"
               examples:
@@ -106,7 +122,11 @@ paths:
                   $ref: "./schemas.yaml#/components/examples/NoSuchSchemaException"
                 NoSuchTableException:
                   $ref: "#/components/examples/NoSuchTableException"
-        "5xx":
+        "406":
+          $ref: "./openapi.yaml#/components/responses/NotAcceptableErrorResponse"
+        "501":
+          $ref: "#/components/responses/TableUnsupportedOperationErrorResponse"
+        "5XX":
           $ref: "./openapi.yaml#/components/responses/ServerErrorResponse"
 
     put:
@@ -125,10 +145,14 @@ paths:
           $ref: "#/components/responses/TableResponse"
         "400":
           $ref: "./openapi.yaml#/components/responses/BadRequestErrorResponse"
+        "403":
+          $ref: "./openapi.yaml#/components/responses/ForbiddenErrorResponse"
         "404":
-          description: Not Found - The target table does not exist
+          description: >-
+            Not Found - The table or its parent resource does not exist. When authorization
+            is enabled, a missing metalake returns 403 instead.
           content:
-            application/vnd.gravitino.v1+json:
+            application/json:
               schema:
                 $ref: "./openapi.yaml#/components/schemas/ErrorModel"
               examples:
@@ -140,6 +164,8 @@ paths:
                   $ref: "./schemas.yaml#/components/examples/NoSuchSchemaException"
                 NoSuchTableException:
                   $ref: "#/components/examples/NoSuchTableException"
+        "406":
+          $ref: "./openapi.yaml#/components/responses/NotAcceptableErrorResponse"
         "409":
           description: Conflict - The target table already exists
           content:
@@ -149,7 +175,9 @@ paths:
               examples:
                 TableAlreadyExistsErrorResponse:
                   $ref: "#/components/examples/TableAlreadyExistsException"
-        "5xx":
+        "501":
+          $ref: "#/components/responses/TableUnsupportedOperationErrorResponse"
+        "5XX":
           $ref: "./openapi.yaml#/components/responses/ServerErrorResponse"
 
     delete:
@@ -164,7 +192,13 @@ paths:
           $ref: "./openapi.yaml#/components/responses/DropResponse"
         "400":
           $ref: "./openapi.yaml#/components/responses/BadRequestErrorResponse"
-        "5xx":
+        "403":
+          $ref: "./openapi.yaml#/components/responses/ForbiddenErrorResponse"
+        "406":
+          $ref: "./openapi.yaml#/components/responses/NotAcceptableErrorResponse"
+        "501":
+          $ref: "#/components/responses/TableUnsupportedOperationErrorResponse"
+        "5XX":
           $ref: "./openapi.yaml#/components/responses/ServerErrorResponse"
 
 
@@ -193,7 +227,7 @@ components:
           type: array
           description: A list of columns
           items:
-            $ref: "#/components/schemas/Column"
+            $ref: "#/components/schemas/WritableColumn"
         comment:
           type: string
           description: The comment of the table
@@ -211,16 +245,16 @@ components:
           nullable: true
           default: [ ]
           items:
-            $ref: "#/components/schemas/SortOrder"
+            $ref: "#/components/schemas/WritableSortOrder"
         distribution:
-          $ref: "#/components/schemas/Distribution"
+          $ref: "#/components/schemas/WritableDistribution"
         partitioning:
           type: array
           description: partitioning of the table data
           nullable: true
           default: [ ]
           items:
-            $ref: "./partitioning.yaml#/components/schemas/PartitioningSpec"
+            $ref: "./partitioning.yaml#/components/schemas/WritablePartitioningSpec"
         indexes:
           type: array
           description: Indexes of the table
@@ -228,6 +262,22 @@ components:
           default: [ ]
           items:
             $ref: "./indexes.yaml#/components/schemas/IndexSpec"
+
+      example:
+        name: events
+        columns:
+          - name: id
+            type: integer
+            defaultValue:
+              type: literal
+              dataType: integer
+              value: null
+          - name: created_at
+            type: timestamp
+            defaultValue:
+              type: unparsed
+              unparsedExpression: CURRENT_TIMESTAMP
+        distribution: null
 
     Table:
       type: object
@@ -350,7 +400,9 @@ components:
     ColumnDefaultValue:
       allOf:
         - $ref: "./expression.yaml#/components/schemas/FunctionArg"
-      description: The default value of the column
+      description: >
+        A column default expression. See Column.defaultValue and
+        Column.initialDefaultValue for the two public meanings.
 
     Column:
       type: object
@@ -373,12 +425,67 @@ components:
           nullable: true
           default: true
         defaultValue:
-          $ref: "#/components/schemas/ColumnDefaultValue"
+          allOf:
+            - $ref: "#/components/schemas/ColumnDefaultValue"
+          description: >
+            Default used for new records that omit this column. Unset when the
+            catalog does not support column defaults. For example, for Iceberg
+            format-version 3 this maps to write-default.
+        initialDefaultValue:
+          allOf:
+            - $ref: "#/components/schemas/ColumnDefaultValue"
+          description: >
+            Default used when reading stored records that lack this column, such
+            as records written before the column was added. Unset when the catalog
+            does not distinguish an initial default. Setting this through create
+            or alter is not supported yet; it is exposed on load when the catalog
+            provides it. For example, for Iceberg format-version 3 this maps to
+            initial-default.
         autoIncrement:
           type: boolean
           description: Whether the column is auto increment
           nullable: true
           default: false
+
+    WritableColumn:
+      allOf:
+        - $ref: "#/components/schemas/Column"
+        - type: object
+          properties:
+            type:
+              $ref: "./datatype.yaml#/components/schemas/WritableDataType"
+            defaultValue:
+              $ref: "#/components/schemas/WritableColumnDefaultValue"
+
+    WritableColumnDefaultValue:
+      allOf:
+        - $ref: "./expression.yaml#/components/schemas/WritableFunctionArg"
+      description: The default value of a new or updated column, with writable literal types
+
+    WritableDistribution:
+      allOf:
+        - $ref: "#/components/schemas/Distribution"
+        - type: object
+          nullable: true
+          properties:
+            funcArgs:
+              type: array
+              nullable: true
+              items:
+                $ref: "./expression.yaml#/components/schemas/WritableFunctionArg"
+
+      example:
+        strategy: even
+        number: 0
+        funcArgs: null
+
+    WritableSortOrder:
+      allOf:
+        - $ref: "#/components/schemas/SortOrder"
+        - type: object
+          properties:
+            sortTerm:
+              $ref: "./expression.yaml#/components/schemas/WritableFunctionArg"
 
     TableUpdatesRequest:
       type: object
@@ -517,7 +624,7 @@ components:
           $ref: "#/components/schemas/FieldName"
           description: The name of the column to add
         type:
-          $ref: "./datatype.yaml#/components/schemas/DataType"
+          $ref: "./datatype.yaml#/components/schemas/WritableDataType"
           description: The type of the column to add
         comment:
           type: string
@@ -539,7 +646,7 @@ components:
           default: false
         defaultValue:
           allOf:
-            - $ref: "#/components/schemas/ColumnDefaultValue"
+            - $ref: "#/components/schemas/WritableColumnDefaultValue"
           description: The default value of the column to add
       example: {
         "@type": "addColumn",
@@ -594,7 +701,7 @@ components:
           $ref: "#/components/schemas/FieldName"
           description: The name of the column to update
         newType:
-          $ref: "./datatype.yaml#/components/schemas/DataType"
+          $ref: "./datatype.yaml#/components/schemas/WritableDataType"
           description: The new type of the column
       example: {
         "@type": "updateColumnType",
@@ -688,7 +795,7 @@ components:
           $ref: "#/components/schemas/FieldName"
           description: The name of the column to update
         newDefaultValue:
-          $ref: "#/components/schemas/ColumnDefaultValue"
+          $ref: "#/components/schemas/WritableColumnDefaultValue"
           description: The new default value of the column 
       example: {
         "@type": "updateColumnDefaultValue",
@@ -750,6 +857,17 @@ components:
 
 
   responses:
+    TableUnsupportedOperationErrorResponse:
+      description: Not Implemented - The catalog does not support table operations or the requested table operation
+      content:
+        application/json:
+          schema:
+            $ref: "./openapi.yaml#/components/schemas/ErrorModel"
+          example:
+            code: 1006
+            type: UnsupportedOperationException
+            message: Catalog does not support table operations
+
     TableResponse:
       description: Returns include the table object
       content:

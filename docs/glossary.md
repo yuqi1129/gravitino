@@ -16,6 +16,11 @@ license: "This software is licensed under the Apache License version 2."
 
 - A compatible implementation of the Hive Metastore Service (HMS).
 
+## Domain
+
+- A business grouping of metadata within a metalake, derived from an explicit backing tag and
+  optionally one level of subdomains. See [Domains](./domains.md).
+
 ## GPG/GnuPG
 
 - Gnu Privacy Guard or GnuPG is an open-source implementation of the OpenPGP standard.
@@ -455,5 +460,3 @@ license: "This software is licensed under the Apache License version 2."
 - A graphical interface accessible through a web browser.
 
 
-
-<!-- [SANDBOX] cherry-pick test -->

@@ -260,7 +260,8 @@ public class OceanBaseTableOperations extends JdbcTableOperations {
         TableChange.UpdateColumnDefaultValue updateColumnDefaultValue =
             (TableChange.UpdateColumnDefaultValue) change;
         alterSql.add(
-            updateColumnDefaultValueFieldDefinition(updateColumnDefaultValue, lazyLoadTable));
+            updateColumnDefaultValueFieldDefinition(
+                updateColumnDefaultValue, lazyLoadTable, changes));
       } else if (change instanceof TableChange.UpdateColumnType) {
         lazyLoadTable = getOrCreateTable(databaseName, tableName, lazyLoadTable);
         TableChange.UpdateColumnType updateColumnType = (TableChange.UpdateColumnType) change;
@@ -286,12 +287,16 @@ public class OceanBaseTableOperations extends JdbcTableOperations {
         lazyLoadTable = getOrCreateTable(databaseName, tableName, lazyLoadTable);
         alterSql.add(
             updateColumnNullabilityDefinition(
-                (TableChange.UpdateColumnNullability) change, lazyLoadTable));
+                (TableChange.UpdateColumnNullability) change, lazyLoadTable, changes));
       } else if (change instanceof TableChange.AddIndex) {
         alterSql.add(addIndexDefinition((TableChange.AddIndex) change));
       } else if (change instanceof TableChange.DeleteIndex) {
         lazyLoadTable = getOrCreateTable(databaseName, tableName, lazyLoadTable);
-        alterSql.add(deleteIndexDefinition(lazyLoadTable, (TableChange.DeleteIndex) change));
+        String deleteIndexSql =
+            deleteIndexDefinition(lazyLoadTable, (TableChange.DeleteIndex) change);
+        if (StringUtils.isNotEmpty(deleteIndexSql)) {
+          alterSql.add(deleteIndexSql);
+        }
       } else if (change instanceof TableChange.UpdateColumnAutoIncrement) {
         lazyLoadTable = getOrCreateTable(databaseName, tableName, lazyLoadTable);
         alterSql.add(
@@ -361,29 +366,23 @@ public class OceanBaseTableOperations extends JdbcTableOperations {
   @VisibleForTesting
   static String deleteIndexDefinition(
       JdbcTable lazyLoadTable, TableChange.DeleteIndex deleteIndex) {
-    if (!deleteIndex.isIfExists()) {
-      Preconditions.checkArgument(
-          Arrays.stream(lazyLoadTable.index())
-              .anyMatch(index -> index.name().equals(deleteIndex.getName())),
-          "Index does not exist");
+    // Index names are case-insensitive in MySQL.
+    boolean indexExists =
+        Arrays.stream(lazyLoadTable.index())
+            .anyMatch(index -> index.name().equalsIgnoreCase(deleteIndex.getName()));
+    if (!indexExists) {
+      // A missing index is a no-op when ifExists is set; return empty SQL to skip it.
+      Preconditions.checkArgument(deleteIndex.isIfExists(), "Index does not exist");
+      return "";
     }
     return "DROP INDEX " + BACK_QUOTE + deleteIndex.getName() + BACK_QUOTE;
   }
 
   private String updateColumnNullabilityDefinition(
-      TableChange.UpdateColumnNullability change, JdbcTable table) {
-    validateUpdateColumnNullable(change, table);
+      TableChange.UpdateColumnNullability change, JdbcTable table, TableChange... changes) {
+    JdbcColumn column = validateUpdateColumnNullable(change, table);
     String col = change.fieldName()[0];
-    JdbcColumn column = getJdbcColumnFromTable(table, col);
-    JdbcColumn updateColumn =
-        JdbcColumn.builder()
-            .withName(col)
-            .withDefaultValue(column.defaultValue())
-            .withNullable(change.nullable())
-            .withType(column.dataType())
-            .withComment(column.comment())
-            .withAutoIncrement(column.autoIncrement())
-            .build();
+    JdbcColumn updateColumn = withPendingDefaultValueAndNullability(column, changes);
     return MODIFY_COLUMN
         + BACK_QUOTE
         + col
@@ -594,22 +593,16 @@ public class OceanBaseTableOperations extends JdbcTableOperations {
   }
 
   private String updateColumnDefaultValueFieldDefinition(
-      TableChange.UpdateColumnDefaultValue updateColumnDefaultValue, JdbcTable jdbcTable) {
+      TableChange.UpdateColumnDefaultValue updateColumnDefaultValue,
+      JdbcTable jdbcTable,
+      TableChange... changes) {
     if (updateColumnDefaultValue.fieldName().length > 1) {
       throw new UnsupportedOperationException(OCEANBASE_NOT_SUPPORT_NESTED_COLUMN_MSG);
     }
     String col = updateColumnDefaultValue.fieldName()[0];
     JdbcColumn column = getJdbcColumnFromTable(jdbcTable, col);
     StringBuilder sqlBuilder = new StringBuilder(MODIFY_COLUMN + BACK_QUOTE + col + BACK_QUOTE);
-    JdbcColumn newColumn =
-        JdbcColumn.builder()
-            .withName(col)
-            .withType(column.dataType())
-            .withNullable(column.nullable())
-            .withComment(column.comment())
-            .withAutoIncrement(column.autoIncrement())
-            .withDefaultValue(updateColumnDefaultValue.getNewDefaultValue())
-            .build();
+    JdbcColumn newColumn = withPendingDefaultValueAndNullability(column, changes);
     return appendColumnDefinition(newColumn, sqlBuilder).toString();
   }
 

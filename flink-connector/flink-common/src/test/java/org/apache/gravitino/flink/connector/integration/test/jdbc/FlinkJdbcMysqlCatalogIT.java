@@ -23,8 +23,13 @@ import static org.apache.gravitino.integration.test.util.TestDatabaseName.MYSQL_
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
 import java.util.Map;
 import org.apache.flink.table.api.ValidationException;
+import org.apache.flink.types.Row;
+import org.apache.flink.util.CloseableIterator;
 import org.apache.gravitino.Catalog;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.credential.CredentialConstants;
@@ -194,6 +199,55 @@ public abstract class FlinkJdbcMysqlCatalogIT extends FlinkCommonIT {
     org.apache.gravitino.Catalog gravitinoCatalog = metalake.loadCatalog(catalogName);
     Map<String, String> properties = gravitinoCatalog.properties();
     Assertions.assertEquals(driver, properties.get(JdbcPropertiesConstants.GRAVITINO_JDBC_DRIVER));
+  }
+
+  @Test
+  public void testSelectFullyQualifiedTableWithoutDefaultDatabase() throws Exception {
+    String catalogName = "gravitino_mysql_jdbc_catalog_without_default_database";
+    String schemaName = "test_no_default_database";
+    String tableName = "test_fully_qualified_table";
+    Catalog catalogWithoutDefaultDatabase = null;
+    try {
+      catalog.asSchemas().createSchema(schemaName, null, ImmutableMap.of());
+      tableEnv.useCatalog(CATALOG_NAME);
+      // Prepare an external table without registering its ID under a different Gravitino catalog.
+      try (Connection connection =
+              DriverManager.getConnection(mysqlUrl, mysqlUsername, mysqlPassword);
+          Statement statement = connection.createStatement()) {
+        String mysqlTableName = schemaName + "." + tableName;
+        statement.execute("CREATE TABLE " + mysqlTableName + " (id INT)");
+        statement.executeUpdate("INSERT INTO " + mysqlTableName + " VALUES (1)");
+      }
+
+      catalogWithoutDefaultDatabase =
+          metalake.createCatalog(
+              catalogName,
+              org.apache.gravitino.Catalog.Type.RELATIONAL,
+              getProvider(),
+              null,
+              ImmutableMap.of(
+                  JdbcPropertiesConstants.GRAVITINO_JDBC_USER,
+                  mysqlUsername,
+                  JdbcPropertiesConstants.GRAVITINO_JDBC_PASSWORD,
+                  mysqlPassword,
+                  JdbcPropertiesConstants.GRAVITINO_JDBC_URL,
+                  mysqlUrl,
+                  JdbcPropertiesConstants.GRAVITINO_JDBC_DRIVER,
+                  mysqlDriver));
+
+      try (CloseableIterator<Row> rows =
+          tableEnv
+              .executeSql("SELECT * FROM " + catalogName + "." + schemaName + "." + tableName)
+              .collect()) {
+        Assertions.assertEquals(Row.of(1), rows.next());
+        Assertions.assertFalse(rows.hasNext());
+      }
+    } finally {
+      if (catalogWithoutDefaultDatabase != null) {
+        metalake.dropCatalog(catalogName, true);
+      }
+      catalog.asSchemas().dropSchema(schemaName, true);
+    }
   }
 
   @Test

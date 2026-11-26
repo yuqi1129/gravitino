@@ -16,6 +16,9 @@ resolves, and how to work with tags in the UI, see [Tags](./tags.md).
 Policies can be associated with tags to govern objects carrying those tags. See
 [Policy-to-Tag Associations](./manage-policies-in-gravitino.md#policy-to-tag-associations).
 
+Domains derive membership from explicit backing tags and existing assignments. See
+[Manage domains](./manage-domains-in-gravitino.md) for binding, ownership and conflict rules.
+
 ## Tag Operations
 
 ### Create a Tag
@@ -249,6 +252,10 @@ Both happen in one request, and either list can be omitted. The object type and 
 path, so the same call covers catalogs, schemas, tables, views, columns, filesets, topics, models,
 functions, and [Semantic Models](./manage-semantic-model-metadata-using-gravitino.md#tags-and-policies).
 
+Tag names that do not exist in the metalake are ignored instead of failing the request, in either
+list. The call returns the tags attached to the object after the change, so compare it with the
+names you sent to catch a typo or a tag that was dropped in the meantime.
+
 <Tabs groupId='language' queryString>
 <TabItem value="shell" label="REST">
 
@@ -291,6 +298,14 @@ raw_events.supports_tags().associate_tags(["pii"], None)
 
 </TabItem>
 </Tabs>
+
+:::note
+Column tags follow the column's internal id. For tables whose metadata is kept by an external
+catalog, such as Hive, Iceberg or JDBC catalogs, a column rename that runs concurrently with a load
+or another alter of the same table, on any Gravitino server, can be stored as a dropped column plus
+a new one. The renamed column then loses its tags. Avoid loading or altering a table while one of
+its columns is being renamed, and check the column's tags after the rename.
+:::
 
 ### Assign and Remove Tag Values
 

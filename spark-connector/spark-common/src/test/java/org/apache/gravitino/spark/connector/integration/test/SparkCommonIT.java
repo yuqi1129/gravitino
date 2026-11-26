@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -37,6 +38,7 @@ import org.apache.gravitino.spark.connector.integration.test.util.SparkUtilIT;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
+import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
@@ -135,6 +137,11 @@ public abstract class SparkCommonIT extends SparkEnvIT {
     return false;
   }
 
+  /** Returns the exception a rename onto an existing table name raises in this catalog. */
+  protected Class<? extends Exception> renameToExistingTableException() {
+    return TableAlreadyExistsException.class;
+  }
+
   protected SparkTableInfoChecker getTableInfoChecker() {
     return SparkTableInfoChecker.create();
   }
@@ -179,11 +186,11 @@ public abstract class SparkCommonIT extends SparkEnvIT {
 
   @AfterAll
   void cleanUp() {
-    getDatabases().stream()
-        .filter(database -> !database.equals("default"))
+    getDatabases(getCatalogName()).stream()
+        .filter(this::ownsTestDatabase)
         .forEach(
             database -> {
-              sql("USE " + database);
+              sql("USE " + getCatalogName() + "." + database);
               listTableNames().forEach(table -> dropTableIfExists(table));
               dropDatabaseIfExists(database);
             });
@@ -236,7 +243,7 @@ public abstract class SparkCommonIT extends SparkEnvIT {
   @Test
   @EnabledIf("supportsSchemaAndTableProperties")
   protected void testCreateAndLoadSchema() {
-    String testDatabaseName = "t_create1";
+    String testDatabaseName = suiteDatabaseName("t_create1");
     dropDatabaseIfExists(testDatabaseName);
     sql("CREATE DATABASE " + testDatabaseName + " WITH DBPROPERTIES (ID=001);");
     Map<String, String> databaseMeta = getDatabaseMetadata(testDatabaseName);
@@ -246,7 +253,7 @@ public abstract class SparkCommonIT extends SparkEnvIT {
     String properties = databaseMeta.get("Properties");
     Assertions.assertTrue(properties.contains("(ID,001)"));
 
-    testDatabaseName = "t_create2";
+    testDatabaseName = suiteDatabaseName("t_create2");
     dropDatabaseIfExists(testDatabaseName);
     String testDatabaseLocation = "/tmp/" + testDatabaseName;
     sql(
@@ -266,7 +273,7 @@ public abstract class SparkCommonIT extends SparkEnvIT {
   @Test
   @EnabledIf("supportsSchemaAndTableProperties")
   protected void testAlterSchema() {
-    String testDatabaseName = "t_alter";
+    String testDatabaseName = suiteDatabaseName("t_alter");
     dropDatabaseIfExists(testDatabaseName);
     sql("CREATE DATABASE " + testDatabaseName + " WITH DBPROPERTIES (ID=001);");
     Assertions.assertTrue(
@@ -288,7 +295,7 @@ public abstract class SparkCommonIT extends SparkEnvIT {
 
   @Test
   protected void testDropSchema() {
-    String testDatabaseName = "t_drop";
+    String testDatabaseName = suiteDatabaseName("t_drop");
     dropDatabaseIfExists(testDatabaseName);
     Set<String> databases = getDatabases();
     Assertions.assertFalse(databases.contains(testDatabaseName));
@@ -325,7 +332,7 @@ public abstract class SparkCommonIT extends SparkEnvIT {
   @Test
   void testCreateTableWithDatabase() {
     // test db.table as table identifier
-    String databaseName = "db1";
+    String databaseName = suiteDatabaseName("db1");
     String tableName = "table1";
     createDatabaseIfNotExists(databaseName, getProvider());
     String tableIdentifier = String.join(".", databaseName, tableName);
@@ -339,7 +346,7 @@ public abstract class SparkCommonIT extends SparkEnvIT {
     checkTableReadWrite(tableInfo);
 
     // use db then create table with table name
-    databaseName = "db2";
+    databaseName = suiteDatabaseName("db2");
     tableName = "table2";
     createDatabaseIfNotExists(databaseName, getProvider());
 
@@ -404,7 +411,7 @@ public abstract class SparkCommonIT extends SparkEnvIT {
     // rename to an existing table
     createSimpleTable(tableName);
     Assertions.assertThrows(
-        RuntimeException.class,
+        renameToExistingTableException(),
         () -> sql(String.format("ALTER TABLE %s RENAME TO %s", tableName, newTableName)));
 
     // rename a not existing tables
@@ -426,7 +433,7 @@ public abstract class SparkCommonIT extends SparkEnvIT {
     Assertions.assertTrue(tables.contains(table2));
 
     // show tables from not current db
-    String database = "db_list";
+    String database = suiteDatabaseName("db_list");
     String table3 = "list3";
     String table4 = "list4";
     createDatabaseIfNotExists(database, getProvider());
@@ -606,7 +613,17 @@ public abstract class SparkCommonIT extends SparkEnvIT {
   @Test
   @EnabledIf("supportsReplaceColumns")
   protected void testAlterTableReplaceColumns() {
+    runAlterTableReplaceColumnsTest(true);
+  }
+
+  /**
+   * Tests replacing columns and accessing the resulting table.
+   *
+   * @param useUppercaseTableName whether to use an uppercase table name after replacing columns
+   */
+  protected void runAlterTableReplaceColumnsTest(boolean useUppercaseTableName) {
     String tableName = "test_replace_columns_table";
+    String accessTableName = useUppercaseTableName ? tableName.toUpperCase(Locale.ROOT) : tableName;
     dropTableIfExists(tableName);
 
     createSimpleTable(tableName);
@@ -630,7 +647,10 @@ public abstract class SparkCommonIT extends SparkEnvIT {
 
     tableInfo = getTableInfo(tableName);
     checkTableColumns(tableName, updateColumns, tableInfo);
-    sql(String.format("INSERT INTO %S VALUES(3, 'name2', 10)", tableName));
+    sql(
+        String.format(
+            "CREATE TABLE IF NOT EXISTS %s (id int, name2 string, age long)", accessTableName));
+    sql(String.format("INSERT INTO %s VALUES(3, 'name2', 10)", accessTableName));
     List<String> data = getQueryData(String.format("SELECT * from %s ORDER BY id", tableName));
     Assertions.assertEquals(2, data.size());
     if (supportsSchemaEvolution()) {
@@ -675,7 +695,7 @@ public abstract class SparkCommonIT extends SparkEnvIT {
 
   @Test
   @EnabledIf("supportsPartition")
-  void testCreateDatasourceFormatPartitionTable() {
+  protected void testCreateDatasourceFormatPartitionTable() {
     String tableName = "datasource_partition_table";
 
     dropTableIfExists(tableName);
@@ -1024,7 +1044,7 @@ public abstract class SparkCommonIT extends SparkEnvIT {
   }
 
   protected String getDefaultDatabase() {
-    return "default_db";
+    return suiteDatabaseName("default_db");
   }
 
   // Helper method to create a simple table, and could use corresponding

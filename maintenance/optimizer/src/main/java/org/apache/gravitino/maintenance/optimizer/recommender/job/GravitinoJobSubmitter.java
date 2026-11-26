@@ -21,7 +21,6 @@ package org.apache.gravitino.maintenance.optimizer.recommender.job;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.gravitino.client.GravitinoClient;
@@ -32,6 +31,8 @@ import org.apache.gravitino.maintenance.optimizer.common.conf.OptimizerConfig;
 import org.apache.gravitino.maintenance.optimizer.common.util.GravitinoClientUtils;
 import org.apache.gravitino.policy.IcebergDataCompactionContent;
 import org.apache.gravitino.policy.IcebergOrphanFileRemovalContent;
+import org.apache.gravitino.policy.IcebergRewriteManifestsContent;
+import org.apache.gravitino.policy.IcebergSnapshotExpirationContent;
 
 /** Submits optimizer jobs to Gravitino using job template adapters. */
 public class GravitinoJobSubmitter implements JobSubmitter {
@@ -51,8 +52,12 @@ public class GravitinoJobSubmitter implements JobSubmitter {
       ImmutableMap.of(
           IcebergDataCompactionContent.JOB_TEMPLATE_NAME_VALUE,
           GravitinoCompactionJobAdapter.class,
+          IcebergRewriteManifestsContent.JOB_TEMPLATE_NAME_VALUE,
+          GravitinoManifestRewriteJobAdapter.class,
           IcebergOrphanFileRemovalContent.JOB_TEMPLATE_NAME_VALUE,
-          GravitinoOrphanFileRemovalJobAdapter.class);
+          GravitinoOrphanFileRemovalJobAdapter.class,
+          IcebergSnapshotExpirationContent.JOB_TEMPLATE_NAME_VALUE,
+          GravitinoSnapshotExpirationJobAdapter.class);
 
   @Override
   public String name() {
@@ -104,30 +109,42 @@ public class GravitinoJobSubmitter implements JobSubmitter {
   }
 
   /**
-   * Merge job configs with precedence: optimizer config < adapter config.
+   * Builds the {@code runJob} configuration from the adapter only.
    *
-   * <p>Typical use cases:
-   *
-   * <ul>
-   *   <li>Optimizer config: shared engine/runtime defaults (for example, Spark settings).
-   *   <li>Adapter config: adapter-specific parameters (for example, WHERE filters) required by the
-   *       job template.
-   * </ul>
+   * <p>{@code gravitino.optimizer.jobSubmitterConfig.*} is passed into the adapter as raw material
+   * (for example Spark resources and catalog connection). The adapter must emit only keys the job
+   * template declares. Forwarding the submitter map wholesale would fail once unused configuration
+   * keys are rejected.
    */
   @VisibleForTesting
   static Map<String, String> buildJobConfig(
       OptimizerConfig optimizerConfig,
       JobExecutionContext jobExecutionContext,
       GravitinoJobAdapter jobAdapter) {
+    String schemaSeparator =
+        GravitinoClientUtils.fetchSchemaSeparator(
+            optimizerConfig == null
+                ? null
+                : optimizerConfig.get(OptimizerConfig.GRAVITINO_URI_CONFIG));
+    return buildJobConfig(optimizerConfig, jobExecutionContext, jobAdapter, schemaSeparator);
+  }
+
+  /**
+   * Same as {@link #buildJobConfig(OptimizerConfig, JobExecutionContext, GravitinoJobAdapter)} with
+   * an already-resolved schema separator (for tests that do not hit {@code GET /configs}).
+   */
+  @VisibleForTesting
+  static Map<String, String> buildJobConfig(
+      OptimizerConfig optimizerConfig,
+      JobExecutionContext jobExecutionContext,
+      GravitinoJobAdapter jobAdapter,
+      String schemaSeparator) {
     Map<String, String> submitterConfigs =
         optimizerConfig == null ? Map.of() : optimizerConfig.jobSubmitterConfigs();
-    Map<String, String> adapterConfigs =
-        jobAdapter == null ? Map.of() : jobAdapter.jobConfig(jobExecutionContext);
-
-    Map<String, String> mergedConfigs = new LinkedHashMap<>();
-    mergedConfigs.putAll(submitterConfigs);
-    mergedConfigs.putAll(adapterConfigs);
-    return mergedConfigs;
+    if (jobAdapter == null) {
+      return Map.of();
+    }
+    return Map.copyOf(jobAdapter.jobConfig(jobExecutionContext, submitterConfigs, schemaSeparator));
   }
 
   @VisibleForTesting

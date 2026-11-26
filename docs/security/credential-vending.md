@@ -14,13 +14,15 @@ Gravitino credential vending is used to generate temporary or static credentials
 | Catalog type | Vends                           |
 |--------------|---------------------------------|
 | Fileset      | S3, OSS, GCS, ADLS, COS         |
-| Hive         | S3, OSS, GCS, ADLS              |
+| Hive         | S3, OSS, ADLS                   |
 | Iceberg      | S3, OSS, GCS, ADLS              |
 | Glue         | S3                              |
 | JDBC         | JDBC user and password          |
 | Paimon       | S3, OSS, JDBC user and password |
 
-S3 is Amazon S3, OSS is Alibaba Cloud OSS, GCS is Google Cloud Storage, ADLS is Azure Data Lake Storage, and COS is Tencent Cloud COS. The Gravitino Spark, Flink, and Trino connectors consume vended credentials automatically for these catalogs. For Iceberg catalogs without a `REST` backend that vends credentials, the Flink connector receives only static credentials, see [Flink Iceberg credential vending](../flink-connector/flink-catalog-iceberg.md#credential-vending).
+S3 is Amazon S3, OSS is Alibaba Cloud OSS, GCS is Google Cloud Storage, ADLS is Azure Data Lake Storage, and COS is Tencent Cloud COS. The Gravitino Spark, Flink, and Trino connectors consume vended credentials automatically for these catalogs, except that the Trino Hive connector does not consume OSS credentials. For Iceberg catalogs without a `REST` backend that vends credentials, the Flink connector receives only static credentials, see [Flink Iceberg credential vending](../flink-connector/flink-catalog-iceberg.md#credential-vending).
+
+Token providers (`s3-token`, `oss-token`, `gcs-token`, `adls-token`, and `cos-token`) and `aws-irsa` scope credentials to a path, so only Fileset and Iceberg catalogs support them. Other catalogs vend static keys only, such as `s3-secret-key`, `oss-secret-key`, and `azure-account-key`. Creating or altering such a catalog with one of these providers fails.
 
 ## Quick Start
 
@@ -131,7 +133,7 @@ If a catalog does not set `credential-providers`, Gravitino infers providers fro
 | `oss-access-key-id` and `oss-secret-access-key`              | `oss-secret-key`    |
 | `azure-storage-account-name` and `azure-storage-account-key` | `azure-account-key` |
 | `cos-access-key-id` and `cos-secret-access-key`              | `cos-secret-key`    |
-| `gcs-service-account-file`                                   | `gcs-token`         |
+| `gcs-service-account-file` (Fileset and Iceberg only)        | `gcs-token`         |
 | `aws-access-key-id` and `aws-secret-access-key`              | `aws-secret-key`    |
 | `dlf-access-key-id` and `dlf-access-key-secret`              | `dlf-secret-key`    |
 
@@ -141,30 +143,31 @@ The inferred provider list is returned as the catalog's `credential-providers` p
 
 Four providers have no inference rule and must always be set explicitly: `s3-token`, `oss-token`, `adls-token`, and `aws-irsa`. In particular, setting `s3-role-arn` without `credential-providers` does not enable `s3-token`. The catalog falls back to `s3-secret-key` and vends the static access key instead, which is long-lived and not scoped to the table path. Set `credential-providers` explicitly whenever you want token-based vending.
 
-### Static providers and `getCredentials` privilege risk
+### Catalog and fileset `getCredentials` privileges (token vs static)
 
-Static providers such as `s3-secret-key`, `oss-secret-key`, `cos-secret-key`, `azure-account-key`,
-`jdbc-user-password`, `aws-secret-key`, and `dlf-secret-key` return the configured long-lived
-plaintext keys from `getCredentials` / `GET .../credentials`. That endpoint does **not** require a
-dedicated privilege beyond being able to load the metadata object (unlike `getSecrets`, which
-requires `USE_SECRETS`, with cloud access-key pairs gated by `INCLUDE_CREDENTIAL_SECRETS`).
+Catalog and fileset `getCredentials` always require metadata access (for filesets, that is the
+usual path-based read/write fileset check). Privilege rules then depend on provider kind:
 
-**Risk:** any principal that can load a catalog (or fileset) configured with these static providers
-can retrieve the same static AK/SK or JDBC password that Gravitino uses server-side.
+| Provider kind | Examples | Privileges |
+|---------------|----------|------------|
+| **Token** (short-lived / scoped) | `s3-token`, `oss-token`, `cos-token`, `adls-token`, `gcs-token`, `aws-irsa` | Metadata access is enough |
+| **Static** (long-lived account) | `s3-secret-key`, `oss-secret-key`, `cos-secret-key`, `azure-account-key`, `aws-secret-key`, `dlf-secret-key`, `jdbc-user-password` | Also need `USE_SECRETS` and `INCLUDE_CREDENTIAL_SECRETS`, or metalake ownership |
 
-**Temporary mitigation** until provider-level authorization is tightened:
+When the caller lacks the static privileges, the response contains **only** token credentials
+(possibly none). With both privileges (or metalake ownership), token and static credentials are
+returned together. The same soft-filter applies to catalog and fileset requests.
 
-- Prefer short-lived token providers (`s3-token`, `oss-token`, `adls-token`, `gcs-token`,
-  `cos-token`, `aws-irsa`) over static `*-secret-key` / `azure-account-key` / `jdbc-user-password`
-  whenever possible.
-- When static providers are unavoidable, grant load / use privileges only to trusted principals
-  (connectors and operators that must recover credentials).
-- Do not treat `getCredentials` as a secrets-protected API for static keys; use `USE_SECRETS` /
-  `INCLUDE_CREDENTIAL_SECRETS` and `getSecrets` when you need privilege-gated plaintext access.
+Catalog `getCredentials` has no storage path. Path-scoped token providers such as `s3-token`
+need a fileset or table location to mint a short-lived credential, so a catalog request with
+`credential-providers` like `s3-token,s3-secret-key` typically returns only the static key even
+when the caller holds both privileges. Callers that need a path-scoped token should use the
+fileset credential API or the Iceberg REST credential endpoint instead.
 
-A follow-up should track a lasting fix (for example privilege checks specific to static
-credentials, or refusing to vend static secret-key credentials through `getCredentials` when
-authorization is enabled).
+Grant static privileges only to trusted connectors/operators: static credentials carry all
+source-account permissions and do not enforce Gravitino table-level grants or denies when used
+directly against the source. Prefer short-lived scoped providers for filesets when available —
+even with static privileges, a static account may still have broader source access than the
+requested path.
 
 ## S3
 
@@ -475,7 +478,7 @@ For a catalog, `{type}` is `catalog` and `{full_name}` is the catalog name:
 GET /api/metalakes/{metalake}/objects/catalog/{catalog}/credentials
 ```
 
-The Gravitino Spark and Flink connectors call this for you and inject the returned credentials, so no client configuration is needed. These credentials are catalog-level and are not refreshed: token providers such as `s3-token` vend nothing at catalog level, and `aws-irsa` credentials expire after `s3-token-expire-in-secs`.
+The Gravitino Spark and Flink connectors call this for you and inject the returned credentials, so no client configuration is needed. These credentials are catalog-level and are not refreshed. Path-based providers such as `s3-token` and `aws-irsa` vend nothing at catalog level.
 
 ### Read or Write Scope
 
@@ -512,7 +515,7 @@ Bundle jars on Maven Central:
 
 ## Upgrading From a Release Earlier Than 1.3.0
 
-Sensitive catalog properties such as `s3-access-key-id`, `s3-secret-access-key`, `jdbc-password`, `aws-access-key-id` / `aws-secret-access-key` (Glue), and `dlf-access-key-id` / `dlf-access-key-secret` / `dlf-security-token` (Paimon DLF) are masked or excluded from the default `GET /api/metalakes/{metalake}/catalogs/{catalog}` response (`jdbc-user` and `azure-storage-account-name` are returned in plaintext when not hidden). Plaintext secrets are available via `getSecrets` when the caller holds `USE_SECRETS` (or is metalake owner); cloud access-key pairs are included only with `INCLUDE_CREDENTIAL_SECRETS` (or metalake owner). Connectors typically use `USE_SECRETS` plus `getCredentials` / `GET .../credentials` (no dedicated privilege) to recover S3/OSS/COS/Azure/JDBC cloud keys, as well as Glue AWS API keys (`AwsSecretKeyCredential`) and Paimon DLF pairs (`DlfSecretKeyCredential`). Vended-only fields such as `s3-session-token` are not catalog properties. Clients written against earlier releases that read those properties directly from the default load lose access to them.
+Sensitive catalog properties such as `s3-access-key-id`, `s3-secret-access-key`, `jdbc-password`, `aws-access-key-id` / `aws-secret-access-key` (Glue), and `dlf-access-key-id` / `dlf-access-key-secret` / `dlf-security-token` (Paimon DLF) are masked or excluded from the default `GET /api/metalakes/{metalake}/catalogs/{catalog}` response (`jdbc-user` and `azure-storage-account-name` are returned in plaintext when not hidden). Plaintext non-static secrets are available via `getSecrets` when the caller holds `USE_SECRETS` (or is metalake owner). Static credential properties that apply to the metadata object — keys declared in that object's properties metadata, used by an enabled static `credential-providers` entry (`jdbc-user-password`, `s3-secret-key`, and similar), **or present on the object's own property map under a canonical static-credential key name** — are included in `getSecrets` only with `INCLUDE_CREDENTIAL_SECRETS` (or metalake owner). Catalog omit uses the effective provider list (including inferred providers). Schema, fileset, and other child objects are filtered from **their own** properties only; they do not inherit the parent catalog's inferred provider list. Only **canonical** key names (for example `s3-access-key-id`, not typos or aliases) participate in static omit. Other sensitive-named custom secrets remain visible with `USE_SECRETS` alone. Connectors use catalog-level `getCredentials` / `GET .../credentials` for vending. Static credentials (S3/OSS/COS/Azure/JDBC, Glue AWS API keys, Paimon DLF) need both `USE_SECRETS` and `INCLUDE_CREDENTIAL_SECRETS` (or metalake ownership); short-lived token providers need only metadata access. Vended-only fields such as `s3-session-token` are not catalog properties. Clients written against earlier releases that read those properties directly from the default load lose access to them.
 
 
 For a zero-downtime migration, set the following in `gravitino.conf`:
@@ -522,3 +525,28 @@ gravitino.catalog.credential.backfillToProperties = true
 ```
 
 The Gravitino server then re-includes the hidden properties in its catalog GET responses. Turn it off once all clients use the Gravitino credential endpoint, since it exposes credentials in plaintext.
+
+### Catalog and fileset credential access
+
+With authorization enabled, catalog and fileset credential vending always require metadata
+access (for filesets, the usual path-based read/write fileset check). **Token** providers
+(short-lived scoped credentials) need only that metadata access. **Static** providers are
+included only with both `USE_SECRETS` and `INCLUDE_CREDENTIAL_SECRETS`, or metalake ownership
+— without them the response is still `200` with token-only or empty credentials (soft-filter,
+not `403`). Engine users that need static credentials must receive the secrets privileges
+explicitly. Static credentials are unscoped: they carry the source account's privileges,
+including access beyond a single Gravitino table or fileset path. GVFS skips an optional
+catalog credential lookup when metadata access is denied, then uses the fileset credential
+endpoint; denial at that fileset endpoint still prevents access.
+
+For relational JDBC catalogs, `jdbc-url` must not contain passwords, tokens, or inline user
+information. Move login credentials to `jdbc-user` and `jdbc-password` (or secret references)
+**before upgrading**. Legacy credential-bearing `jdbc-url` properties are masked when they
+reach the property read path, but loading a catalog can fail earlier during configuration
+validation. PostgreSQL catalog ALTER also loads the old configuration first, so it cannot
+repair such a URL after upgrading. If already upgraded, use the previous server version to
+migrate the catalog configuration before upgrading again.
+
+This URL validation and masking apply to relational JDBC catalogs' `jdbc-url` property;
+JDBC-backed Iceberg/Paimon `uri` properties are outside this change. Class-loader diagnostics
+show property names only.

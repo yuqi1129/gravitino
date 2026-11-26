@@ -20,6 +20,7 @@
 package org.apache.gravitino.hook;
 
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
 import org.apache.gravitino.Entity;
@@ -33,11 +34,14 @@ import org.apache.gravitino.exceptions.IllegalSemanticModelException;
 import org.apache.gravitino.exceptions.NoSuchSchemaException;
 import org.apache.gravitino.exceptions.NoSuchSemanticModelException;
 import org.apache.gravitino.exceptions.SemanticModelAlreadyExistsException;
-import org.apache.gravitino.semantic.OssieDocument;
 import org.apache.gravitino.semantic.OssieFormat;
 import org.apache.gravitino.semantic.SemanticModel;
 import org.apache.gravitino.semantic.SemanticModelChange;
 import org.apache.gravitino.semantic.SemanticModelDefinition;
+import org.apache.gravitino.semantic.SemanticModelMetric;
+import org.apache.gravitino.semantic.SemanticModelRevision;
+import org.apache.gravitino.semantic.SemanticModelRevisionSelector;
+import org.apache.gravitino.semantic.SemanticModelSourceUpdate;
 import org.apache.gravitino.utils.NameIdentifierUtil;
 import org.apache.gravitino.utils.PrincipalUtils;
 
@@ -64,8 +68,24 @@ public class SemanticModelHookDispatcher implements SemanticModelDispatcher {
   }
 
   @Override
+  public NameIdentifier[] listSemanticModelDatasets(
+      NameIdentifier source, Entity.EntityType sourceType) {
+    return dispatcher.listSemanticModelDatasets(source, sourceType);
+  }
+
+  @Override
   public NameIdentifier[] listSemanticModels(Namespace namespace) throws NoSuchSchemaException {
     return dispatcher.listSemanticModels(namespace);
+  }
+
+  @Override
+  public NameIdentifier[] listMetrics(Namespace namespace) throws NoSuchSchemaException {
+    return dispatcher.listMetrics(namespace);
+  }
+
+  @Override
+  public SemanticModelMetric[] listMetricInfos(Namespace namespace) throws NoSuchSchemaException {
+    return dispatcher.listMetricInfos(namespace);
   }
 
   @Override
@@ -79,15 +99,35 @@ public class SemanticModelHookDispatcher implements SemanticModelDispatcher {
   }
 
   @Override
+  public SemanticModel loadSemanticModelRevision(
+      NameIdentifier ident,
+      SemanticModelRevisionSelector selector,
+      Consumer<SemanticModelRevision> checkVisibility) {
+    return dispatcher.loadSemanticModelRevision(ident, selector, checkVisibility);
+  }
+
+  @Override
+  public SemanticModelRevision[] listSemanticModelRevisions(NameIdentifier ident) {
+    return dispatcher.listSemanticModelRevisions(ident);
+  }
+
+  @Override
+  public SemanticModel publishSemanticModelRevision(
+      NameIdentifier ident, int revision, String principal) {
+    return dispatcher.publishSemanticModelRevision(ident, revision, principal);
+  }
+
+  @Override
   public SemanticModel createSemanticModel(
       NameIdentifier ident,
       @Nullable String comment,
       SemanticModelDefinition definition,
-      Map<String, String> properties)
+      Map<String, String> properties,
+      SemanticModelSourceUpdate sourceUpdate)
       throws NoSuchSchemaException, SemanticModelAlreadyExistsException,
           IllegalSemanticModelException {
     SemanticModel semanticModel =
-        dispatcher.createSemanticModel(ident, comment, definition, properties);
+        dispatcher.createSemanticModel(ident, comment, definition, properties, sourceUpdate);
     setCreatorAsOwner(ident);
     return semanticModel;
   }
@@ -97,23 +137,33 @@ public class SemanticModelHookDispatcher implements SemanticModelDispatcher {
       NameIdentifier ident,
       @Nullable String comment,
       SemanticModelDefinition definition,
-      Map<String, String> properties) {
+      Map<String, String> properties,
+      SemanticModelSourceUpdate sourceUpdate) {
     SemanticModel semanticModel =
-        dispatcher.importSemanticModel(ident, comment, definition, properties);
+        dispatcher.importSemanticModel(ident, comment, definition, properties, sourceUpdate);
     setCreatorAsOwner(ident);
     return semanticModel;
   }
 
   @Override
-  public OssieDocument exportOssieDocument(NameIdentifier ident, OssieFormat format) {
-    return dispatcher.exportOssieDocument(ident, format);
+  public SemanticModelExport exportSemanticModel(
+      NameIdentifier ident,
+      SemanticModelRevisionSelector selector,
+      OssieFormat format,
+      Consumer<SemanticModelRevision> checkVisibility) {
+    return dispatcher.exportSemanticModel(ident, selector, format, checkVisibility);
   }
 
   @Override
-  public SemanticModel alterSemanticModel(NameIdentifier ident, SemanticModelChange... changes)
+  public SemanticModel alterSemanticModel(
+      NameIdentifier ident,
+      @Nullable Integer expectedRevision,
+      SemanticModelSourceUpdate sourceUpdate,
+      SemanticModelChange... changes)
       throws NoSuchSemanticModelException, SemanticModelAlreadyExistsException,
           IllegalSemanticModelException {
-    SemanticModel model = dispatcher.alterSemanticModel(ident, changes);
+    SemanticModel model =
+        dispatcher.alterSemanticModel(ident, expectedRevision, sourceUpdate, changes);
     for (SemanticModelChange change : changes) {
       if (change instanceof SemanticModelChange.RenameSemanticModel) {
         AuthorizationUtils.notifyEntityNameIdMappingChange(ident, Entity.EntityType.SEMANTIC_MODEL);

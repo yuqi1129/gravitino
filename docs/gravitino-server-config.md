@@ -154,7 +154,9 @@ health check at `GET /health/ready` so a server that has lost its database stops
 Jobs run by the default `local` job executor keep their output in `gravitino.job.stagingDir`. Put
 that directory on storage shared by all servers, for example an NFS mount, so that a request for a
 job's output can be served by any server. Otherwise only the server that ran the job can return
-it, and the others return empty output. See [Manage Jobs](manage-jobs-in-gravitino.md).
+it, and the others return empty output. See [Local Job Executor](local-job-executor.md). The
+[Kubernetes job executor](k8s-job-executor.md) keeps no job state on the servers, so any server can
+return a job's output.
 
 ## Server Configuration
 
@@ -180,6 +182,7 @@ empty string or list; `(none)` means it has no default at all.
 | `gravitino.server.webserver.requestHeaderSize`       | Maximum size in bytes of an HTTP request header.                                                                                                                                             | `131072`                                |
 | `gravitino.server.webserver.responseHeaderSize`      | Maximum size in bytes of an HTTP response header.                                                                                                                                            | `131072`                                |
 | `gravitino.server.webserver.customFilters`           | Comma-separated list of servlet filter class names to apply to the API.                                                                                                                      | (empty)                                 |
+| `gravitino.server.webserver.trustedProxies`          | Comma-separated list of IP addresses or CIDR blocks (IPv4 or IPv6) of reverse proxies whose `X-Forwarded-For` header is trusted when recording the client address. Host names are not allowed.             | (empty)                                 |
 | `gravitino.server.rest.extensionPackages`            | Comma-separated list of packages to scan for additional REST resources.                                                                                                                      | (empty)                                 |
 | `gravitino.server.visibleConfigs`                    | Comma-separated list of extra properties to expose on the unauthenticated `GET /configs` endpoint, on top of the fixed set it always returns. Additive, so each entry widens what is public. | (empty)                                 |
 | `gravitino.server.bulk.maxItems`                     | Maximum number of items allowed in a single bulk request.                                                                                                                                    | `100`                                   |
@@ -189,11 +192,51 @@ Filters named in `customFilters` must be standard `javax.servlet` filters. Pass 
 filter with properties of the form
 `gravitino.server.webserver.{filter_class_name}.param.{param_name} = {value}`.
 
+`trustedProxies` controls the client address recorded in audit events. A caller can set
+`X-Forwarded-For` to any value, so the server honors it only when the TCP peer is a trusted proxy.
+In that case the server reads every `X-Forwarded-For` header from right to left, skips trusted
+proxies, and records the first address that is not one. Entries to the left of that address were
+supplied by the client and are ignored. Empty list elements are skipped. If an entry is not an IP address, the server
+stops and records the last trusted hop. When `trustedProxies` is empty, the default, `X-Forwarded-For` is
+ignored and the TCP peer address is recorded. Recorded addresses are in canonical form, with IPv6
+compressed and without brackets, for example `::1`. An entry that is not an IP address or CIDR
+block fails server startup. IPv6 link-local addresses (`fe80::/10`) cannot be trusted proxies: the
+same link-local address can name different hosts on different network links, so an entry inside
+`fe80::/10` also fails startup, and a link-local peer is never trusted even when a wider entry such
+as `::/0` covers it. Use a global or unique local address (for example `fd00::/8`) for the proxy.
+
+If Gravitino runs behind a load balancer, ingress controller, or other reverse proxy, list their
+addresses here. Otherwise the audit log records the proxy address for every request. List only
+the proxies themselves: trusting a range that untrusted clients can connect from, such as a whole
+Kubernetes pod CIDR, lets those clients choose the recorded address again.
+
+```properties
+gravitino.server.webserver.trustedProxies = 10.0.0.10, 10.0.1.0/24, fd00:10::/64
+```
+
 `GET /configs` backs the Web UI, so it answers without authentication and always returns
 `gravitino.authenticators`, `gravitino.authorization.enable`, and `gravitino.schema.separator`.
 It adds the OAuth client settings when `oauth` is among the authenticators. Treat anything you add
 through `visibleConfigs` as public, and only add properties that a client needs before it can
 authenticate.
+
+Set `gravitino.server.visibleConfigs` when a Web UI or another client needs extra server
+configuration, for example to use the server's session timeout settings rather than local UI
+defaults. Set both the property values and the comma-separated list of keys in
+`conf/gravitino.conf`, then restart the server:
+
+```properties
+gravitino.ui.sessionIdleTimeoutMs = 1800000
+gravitino.ui.sessionMaxDurationMs = 28800000
+gravitino.server.visibleConfigs = gravitino.ui.sessionIdleTimeoutMs,gravitino.ui.sessionMaxDurationMs
+```
+
+Clients can then read those values from `GET http://localhost:8090/configs`. A key with no
+explicitly configured value is omitted. Leave the list empty when clients do not need additional
+settings; the fixed configuration keys are still returned. This setting controls configuration
+visibility, not access to catalogs or other metadata. Never include passwords, tokens, client
+secrets, or administrator lists. See [Web UI session settings](webui-v2.md#session-timeout-configuration) for the
+UI's configuration lookup order.
 
 Two further groups of `gravitino.server.webserver.*` properties are documented elsewhere, because
 they belong to features rather than to the web server itself. TLS, key stores, trust stores, and
@@ -590,9 +633,11 @@ Each operation emits up to three events: a pre-event before it runs, a post-even
 succeeds, and a failure event after it throws. The names follow the operation, so `createTable`
 produces `CreateTablePreEvent`, `CreateTableEvent`, and `CreateTableFailureEvent`. Operations
 served by the Gravitino IRC endpoint carry an `Iceberg` prefix, as in `IcebergCreateTableEvent`.
-Not every operation defines all three. The full set of classes lives in the
+Not every operation defines all three. Core metadata events live in the
 [`org.apache.gravitino.listener.api.event`](https://github.com/apache/gravitino/tree/main/core/src/main/java/org/apache/gravitino/listener/api/event)
-package.
+package. Built-in IdP (`idp-basic`) user and group mutations additionally emit events from
+`org.apache.gravitino.idp.listener.event`, with object identifiers `basic.user.<name>` /
+`basic.group.<name>`; see [Local Users and Groups](./security/local-users-and-groups.md#audit-and-events).
 
 Throwing a `ForbiddenException` from a pre-event handler stops the operation before it runs, which
 makes pre-events a veto point rather than a notification.
@@ -634,7 +679,19 @@ server, are documented with those services. See
 | `gravitino.job.stagingDirKeepTimeInMs` | How long in milliseconds a finished job's staging files are kept. Use at least 10 minutes outside testing.                                                     | `604800000` (7 days)          |
 | `gravitino.job.statusPullIntervalInMs` | Interval in milliseconds between job status polls. Use at least 1 minute outside testing.                                                                      | `300000` (5 minutes)          |
 | `gravitino.job.outputMaxLines`         | Maximum number of lines returned when fetching a job's stdout/stderr output.                                                                                   | `1000`                        |
-| `gravitino.job.outputMaxBytes`         | Maximum number of bytes read from the tail of a job's stdout/stderr when fetching its output.                                                                  | `262144` (256KB)              |
+| `gravitino.job.outputMaxBytes`         | Maximum number of bytes returned from the tail of a job's stdout/stderr when fetching its output.                                                              | `262144` (256KB)              |
+
+#### Table maintenance cooldowns
+
+When a table-maintenance policy omits `minIntervalMs`, the server uses these per-type keys, then
+the code defaults below. Policy content always wins when set.
+
+| Configuration Item                                     | Description                                     | Default Value   |
+|--------------------------------------------------------|-------------------------------------------------|-----------------|
+| `gravitino.maintenance.compaction.minIntervalMs`       | Cooldown between finished compaction runs       | `3600000` (1h)  |
+| `gravitino.maintenance.manifest-rewrite.minIntervalMs` | Cooldown between finished manifest-rewrite runs | `3600000` (1h)  |
+| `gravitino.maintenance.snapshot-expiry.minIntervalMs`  | Cooldown between finished snapshot-expiry runs  | `3600000` (1h)  |
+| `gravitino.maintenance.orphan-cleanup.minIntervalMs`   | Cooldown between finished orphan-cleanup runs   | `86400000` (1d) |
 
 ### Key Management
 
@@ -683,8 +740,10 @@ catalog configuration file supplies defaults for every catalog of that provider,
 wins. Neither affects schema or table properties.
 
 A catalog property is one of three kinds. Gravitino defines some itself, as the settings a catalog
-needs to work. Anything prefixed `gravitino.bypass.` passes straight through to the underlying
-system untouched. Anything else Gravitino simply stores for you to use as you like.
+needs to work. Gravitino forwards `gravitino.bypass.` properties to the underlying system unless
+the catalog rejects them. Anything else Gravitino simply stores for you to use as you like. For
+example, the Kafka catalog rejects the Kafka config provider properties, see
+[Kafka catalog properties](kafka-catalog.md#catalog-properties).
 
 Passing credentials, tokens, or access keys through `gravitino.bypass.` exposes them: bypassed
 properties are not managed by Gravitino and can come back in plaintext from the REST API. Where an

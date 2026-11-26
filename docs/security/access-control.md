@@ -105,6 +105,8 @@ Metalake (top level)
 │       ├── Model
 │       ├── Function
 │       └── Semantic Model
+├── Domain
+│   └── Subdomain
 ├── Tag
 ├── Policy
 ├── Job Template
@@ -142,7 +144,7 @@ catalog, or schema, never to a table. Whoever creates a role owns it, and can al
 
 Ownership can be held by a group as well as a user, in which case every member of that group holds
 it, and it can be transferred at any time. It applies to metalakes, catalogs, schemas, tables, views,
-topics, filesets, models, semantic models, functions, roles, tags, policies, job templates, and jobs.
+topics, filesets, models, semantic models, functions, domains, roles, tags, policies, job templates, and jobs.
 
 ### Resolution
 
@@ -203,8 +205,8 @@ sets the scope of the grant. Binding a privilege to a type not listed for it is 
 | `REGISTER_MODEL`     | Metalake, Catalog, Schema                                                   | Register models in any schema in scope                               |
 | `LINK_MODEL_VERSION` | Metalake, Catalog, Schema, Model                                            | Link versions to any model in scope                                  |
 | `USE_MODEL`          | Metalake, Catalog, Schema, Model                                            | Read the metadata of, and download versions of, any model in scope   |
-| `USE_SECRETS`                   | Metalake, Catalog, Schema, Table, View, Topic, Fileset, Model | Call `getSecrets` (cloud access-key pairs omitted unless also granted `INCLUDE_CREDENTIAL_SECRETS`) |
-| `INCLUDE_CREDENTIAL_SECRETS`    | Metalake, Catalog, Schema, Table, View, Topic, Fileset, Model | With `USE_SECRETS`, include cloud access-key pairs in the `getSecrets` result |
+| `USE_SECRETS`                   | Metalake, Catalog, Schema, Table, View, Topic, Fileset, Model | Soft-unlock `getSecrets` (empty map without it, not 403); static credential keys still omitted unless also granted `INCLUDE_CREDENTIAL_SECRETS`; with `INCLUDE_CREDENTIAL_SECRETS`, include static providers on catalog/fileset `getCredentials` |
+| `INCLUDE_CREDENTIAL_SECRETS`    | Metalake, Catalog, Schema, Table, View, Topic, Fileset, Model | With `USE_SECRETS`, include static credential properties in `getSecrets` and static providers on catalog/fileset `getCredentials` (token providers need only metadata access; missing privileges soft-filter, not 403) |
 | `REGISTER_FUNCTION`  | Metalake, Catalog, Schema                                                   | Register functions in any schema in scope                            |
 | `EXECUTE_FUNCTION`   | Metalake, Catalog, Schema, Function                                         | Read the metadata of, and execute, any function in scope             |
 | `MODIFY_FUNCTION`    | Metalake, Catalog, Schema, Function                                         | Alter or drop any function in scope                                  |
@@ -250,8 +252,13 @@ policy with tags, provided they also have `APPLY_TAG` on each tag. Granting it o
 covers any policy in that metalake.
 
 Assigning a tag to a metadata object requires `APPLY_TAG` on the tag and access to the object.
+For a tag bound to an access-control policy, adding or removing the tag instead requires an explicit
+`APPLY_TAG` grant on that tag and ownership or `MANAGE_GRANTS` on the object or an ancestor.
+Tag ownership or a metalake-level `APPLY_TAG` grant alone is not sufficient. The metalake owner
+can still assign or remove the tag.
 Associating a policy with a tag requires access to both: `APPLY_POLICY` on the policy and
-`APPLY_TAG` on the tag. Ownership can satisfy either check.
+`APPLY_TAG` on the tag. For descriptive tags and policy association, ownership can satisfy the
+corresponding check.
 
 Reading a tag requires `VIEW_TAG` or `APPLY_TAG`; reading a policy requires `VIEW_POLICY` or
 `APPLY_POLICY`. The view privileges do not allow tag assignment or policy-to-tag association.
@@ -291,10 +298,15 @@ ownership, the same as altering it, because the caller chooses what the server c
 Table statistics follow the table itself: reading them takes `SELECT_TABLE` or `MODIFY_TABLE`,
 writing them takes `MODIFY_TABLE`. Model versions follow the model: `USE_MODEL` to read, owner to
 alter or delete. Fetching plaintext secrets (`getSecrets`) requires owning the metalake or holding
-`USE_SECRETS`. Cloud access-key pairs are included only when the caller is the metalake owner or also
-holds `INCLUDE_CREDENTIAL_SECRETS`. Vend credentials (`getCredentials`) requires no dedicated
-privilege beyond being able to load the object. Callers who can load the object but lack
-`USE_SECRETS` receive an empty `getSecrets` result rather than a forbidden error.
+`USE_SECRETS`. Canonical static credential keys on that object (and catalog keys implied by
+its effective providers) are included only when the caller is the metalake owner or also holds
+`INCLUDE_CREDENTIAL_SECRETS`. Typos and non-canonical aliases are not treated as static
+credential keys for this filter. Catalog and fileset credential vending (`getCredentials`)
+always require metadata access (filesets keep path-based read/write checks). Static providers
+also need both `USE_SECRETS` and `INCLUDE_CREDENTIAL_SECRETS`, or metalake ownership; token
+providers do not. Without those privileges, the response includes only token credentials
+(static ones are omitted). Callers who can load the object but lack `USE_SECRETS` receive an
+empty `getSecrets` result rather than a forbidden error.
 
 The View row applies to metadata operations through both the native Gravitino REST API and the
 Iceberg REST Catalog when authorization is enabled. Listing first requires access to the schema and
@@ -458,6 +470,26 @@ X-Gravitino-Active-Roles: analyst,reader
 Role names are matched exactly, and `ALL` and `NONE` are recognized only in upper case, so `all` is
 read as the name of a role. Surrounding whitespace is trimmed and repeated names collapse.
 
+### Role Names Outside ASCII
+
+Many HTTP clients cannot send non-ASCII header values: the Apache HttpClient used by Spark, Trino and
+the Gravitino Java client replaces such characters with `?`. To activate a role whose name contains
+non-ASCII characters, a comma, or `%`, percent-encode the UTF-8 bytes of the name:
+
+```text
+X-Gravitino-Active-Roles: vrf_%E8%A7%92%E8%89%B2
+```
+
+This activates the role `vrf_角色`. Each comma-separated entry is decoded on its own, so `a%2Cb`
+names the single role `a,b`, and a literal `%` is sent as `%25`. `+` is not decoded as a space, and
+whitespace is trimmed before decoding, so an encoded space such as `%20` is part of the name. `ALL`
+and `NONE` are matched before decoding, so `%41LL` and `%4EONE` name roles literally called `ALL` and
+`NONE`.
+
+A client that sends raw UTF-8 bytes, such as `curl`, can also send the name unencoded, as long as it
+contains no `,` or `%`. A header value is always read as UTF-8, so bytes in another encoding, such as
+ISO-8859-1, are rejected.
+
 ### What Narrowing Changes
 
 Narrowing only ever subtracts. The server validates the declaration against the roles the caller
@@ -479,6 +511,8 @@ as before.
 |--------------------------------------------------------------------|-------------------|
 | An empty entry, such as the trailing comma in `analyst,`           | `400 Bad Request` |
 | `ALL` or `NONE` combined with anything else, such as `ALL,analyst` | `400 Bad Request` |
+| A malformed escape, such as `%G1`, or a value that is not UTF-8    | `400 Bad Request` |
+| A name that is blank or has a control character after decoding     | `400 Bad Request` |
 | A well-formed value naming a role the caller does not hold         | `403 Forbidden`   |
 
 A role that does not exist and a role the caller was never granted both return `403`, so the response
@@ -830,3 +864,60 @@ client.setOwner(schema, "analyst", Owner.Type.USER);
   data source or to an external system such as Apache Ranger
 - [How to Authenticate](how-to-authenticate.md), for establishing who the caller is
 - [Local users and groups](local-users-and-groups.md)
+
+
+## Domain permissions
+
+Domains have two privileges, bindable to a metalake or a domain:
+
+| Privilege | Operations |
+| --- | --- |
+| `USE_DOMAIN` | Read published domains, list their visible subdomains and accessible members, and discover them from accessible leaf metadata. |
+| `MANAGE_DOMAIN` | Create, alter, delete, publish/unpublish, change parent and change backing tag; also use domains and see drafts. |
+
+A top-level domain is created with `MANAGE_DOMAIN` on the metalake. Creating a subdomain requires
+management on both the metalake and parent. Attaching/moving requires management on the child
+(using its current scopes) and the new parent. Other mutations require management on the domain.
+Privileges are evaluated over the metalake, current parent (if any), and domain. An allow on any
+scope suffices only when no scope denies that privilege. An explicit `USE_DOMAIN` deny prevents
+use even with an allowed `MANAGE_DOMAIN`. Owners of the domain, current parent or metalake bypass
+these privilege denies. Service administrators retain administrative access.
+
+A draft is omitted from lists for callers who cannot manage it; direct access returns
+`NoSuchDomainException` (404). A published domain without use permission is omitted from lists,
+but direct access returns `ForbiddenException` (403). A child snapshot can still name a hidden
+draft parent; this does not authorize loading the parent. Moving/detaching changes the inherited
+scopes immediately, without rewriting grants: former parent permissions stop applying.
+
+Domain visibility and data visibility are separate. Member lists filter out leaf objects the caller
+cannot access under ordinary metadata authorization. Reverse lookup of an inaccessible object
+returns 403. `USE_DOMAIN` and `MANAGE_DOMAIN` do not grant catalog/schema use, table selection,
+fileset access, model access or any backend data permission. A hidden child contributes no
+`VIA_SUBDOMAIN` relation, in either query direction. Relations with no visible membership path
+are removed. An `INHERITED` relation for an accessible leaf retains the complete source catalog or
+schema name; the source is explanatory metadata and is not separately authorized by this query.
+
+Tag privileges are also separate. Creating a new backing tag requires `CREATE_TAG` on the metalake
+in addition to Domain management. Binding an existing tag requires ownership of that tag or the
+metalake; Domain ownership alone does not confer tag ownership. Removing a binding requires no tag
+privilege. Assigning/removing tags on member metadata uses the existing tag authorization rules;
+Domain management does not confer assignment rights. Reading Domain membership does not require
+`VIEW_TAG`, `APPLY_TAG` or tag ownership.
+
+For example, after creating user `domain_reader`, grant a role over a published Finance domain:
+
+```shell
+curl --fail-with-body -u anonymous:dummy -H 'Content-Type: application/json' \
+  -d '{"name":"finance_reader","properties":{},"securableObjects":[{"fullName":"Finance","type":"domain","privileges":[{"name":"USE_DOMAIN","condition":"ALLOW"}]}]}' \
+  http://127.0.0.1:8090/api/metalakes/test/roles
+curl --fail-with-body -u anonymous:dummy -X PUT -H 'Content-Type: application/json' \
+  -d '{"roleNames":["finance_reader"]}' \
+  http://127.0.0.1:8090/api/metalakes/test/permissions/users/domain_reader/grant
+```
+
+Use the role/user APIs from the walkthrough above to create the user first. This role permits
+published Finance discovery and inherited use of its published children, but a member list can
+still be empty until the user has ordinary access to member objects. Replacing `USE_DOMAIN` with
+`MANAGE_DOMAIN` grants management and draft visibility. A child `USE_DOMAIN` deny can exclude that
+child from the reader's inherited access. See the [Domain guide](../manage-domains-in-gravitino.md)
+for executable SDK examples, lifecycle constraints, tag rules and REST errors.

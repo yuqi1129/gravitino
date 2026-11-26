@@ -18,13 +18,17 @@
  */
 package org.apache.gravitino.catalog;
 
+import com.google.common.base.Preconditions;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import javax.annotation.Nullable;
+import org.apache.gravitino.Entity;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Namespace;
 import org.apache.gravitino.exceptions.IllegalSemanticModelException;
+import org.apache.gravitino.exceptions.NoSuchMetadataObjectException;
 import org.apache.gravitino.exceptions.NoSuchSchemaException;
 import org.apache.gravitino.exceptions.NoSuchSemanticModelException;
 import org.apache.gravitino.exceptions.SemanticModelAlreadyExistsException;
@@ -35,9 +39,23 @@ import org.apache.gravitino.semantic.OssieFormat;
 import org.apache.gravitino.semantic.SemanticModel;
 import org.apache.gravitino.semantic.SemanticModelChange;
 import org.apache.gravitino.semantic.SemanticModelDefinition;
+import org.apache.gravitino.semantic.SemanticModelMetric;
+import org.apache.gravitino.semantic.SemanticModelRevision;
+import org.apache.gravitino.semantic.SemanticModelRevisionSelector;
+import org.apache.gravitino.semantic.SemanticModelSourceUpdate;
 
-/** Dispatches schema-scoped Semantic Model operations through the server pipeline. */
+/** Dispatches Semantic Model operations through the server pipeline. */
 public interface SemanticModelDispatcher {
+
+  /**
+   * Lists datasets directly associated with a table or View.
+   *
+   * @param source The fully qualified source identifier.
+   * @param sourceType TABLE or VIEW.
+   * @return Fully qualified dataset identifiers sorted by their components.
+   * @throws NoSuchMetadataObjectException If the source does not exist.
+   */
+  NameIdentifier[] listSemanticModelDatasets(NameIdentifier source, Entity.EntityType sourceType);
 
   /**
    * Lists the Semantic Models in a schema namespace.
@@ -49,6 +67,24 @@ public interface SemanticModelDispatcher {
   NameIdentifier[] listSemanticModels(Namespace namespace) throws NoSuchSchemaException;
 
   /**
+   * Lists metric identifiers across the live Semantic Models in a schema.
+   *
+   * @param namespace The full schema namespace.
+   * @return Metric identifiers, ordered by model identifier and case-sensitive metric name.
+   * @throws NoSuchSchemaException If the schema does not exist.
+   */
+  NameIdentifier[] listMetrics(Namespace namespace) throws NoSuchSchemaException;
+
+  /**
+   * Lists complete metrics across the live Semantic Models in a schema.
+   *
+   * @param namespace The full schema namespace.
+   * @return Decoded metrics, ordered by model identifier and case-sensitive metric name.
+   * @throws NoSuchSchemaException If the schema does not exist.
+   */
+  SemanticModelMetric[] listMetricInfos(Namespace namespace) throws NoSuchSchemaException;
+
+  /**
    * Loads a Semantic Model by identifier.
    *
    * @param ident The Semantic Model identifier.
@@ -56,6 +92,29 @@ public interface SemanticModelDispatcher {
    * @throws NoSuchSemanticModelException If the Semantic Model does not exist.
    */
   SemanticModel loadSemanticModel(NameIdentifier ident) throws NoSuchSemanticModelException;
+
+  /** Loads a selected revision for an internal caller. */
+  default SemanticModel loadSemanticModelRevision(
+      NameIdentifier ident, SemanticModelRevisionSelector selector) {
+    return loadSemanticModelRevision(ident, selector, ignored -> {});
+  }
+
+  /** Loads a selected revision and checks its visibility before returning it. */
+  SemanticModel loadSemanticModelRevision(
+      NameIdentifier ident,
+      SemanticModelRevisionSelector selector,
+      Consumer<SemanticModelRevision> checkVisibility);
+
+  /** Lists retained revision metadata for a model. The caller applies visibility rules. */
+  SemanticModelRevision[] listSemanticModelRevisions(NameIdentifier ident);
+
+  /**
+   * Publishes the latest revision using the supplied principal.
+   *
+   * <p>The extension entry point must verify that the authenticated principal can modify the target
+   * model before calling this method. It must pass that same principal for auditing.
+   */
+  SemanticModel publishSemanticModelRevision(NameIdentifier ident, int revision, String principal);
 
   /**
    * Returns whether a Semantic Model exists.
@@ -79,6 +138,7 @@ public interface SemanticModelDispatcher {
    * @param comment The Semantic Model comment, or {@code null} if it has no comment.
    * @param definition The complete Semantic Model definition.
    * @param properties The Gravitino-specific Semantic Model properties.
+   * @param sourceUpdate The validated complete dataset source associations.
    * @return The created Semantic Model.
    * @throws NoSuchSchemaException If the schema does not exist.
    * @throws SemanticModelAlreadyExistsException If the Semantic Model already exists.
@@ -88,7 +148,8 @@ public interface SemanticModelDispatcher {
       NameIdentifier ident,
       @Nullable String comment,
       SemanticModelDefinition definition,
-      Map<String, String> properties)
+      Map<String, String> properties,
+      SemanticModelSourceUpdate sourceUpdate)
       throws NoSuchSchemaException, SemanticModelAlreadyExistsException,
           IllegalSemanticModelException;
 
@@ -101,28 +162,32 @@ public interface SemanticModelDispatcher {
    *
    * @param namespace The destination schema namespace.
    * @param document The document to import.
-   * @param sourceValidator The required caller-specific source validator.
+   * @param sourceValidator The required caller-specific source validator, which must return a
+   *     non-null source update.
    * @return The imported Semantic Model.
+   * @throws IllegalArgumentException If the source validator returns {@code null}.
    */
   default SemanticModel importOssieDocument(
       Namespace namespace,
       OssieDocument document,
-      Consumer<SemanticModelDefinition> sourceValidator) {
+      Function<SemanticModelDefinition, SemanticModelSourceUpdate> sourceValidator) {
     Objects.requireNonNull(sourceValidator, "sourceValidator must not be null");
     ParsedSemanticModel model = OssieDocumentConverter.importDocument(document);
-    sourceValidator.accept(model.definition());
+    SemanticModelSourceUpdate sourceUpdate = sourceValidator.apply(model.definition());
+    Preconditions.checkArgument(sourceUpdate != null, "sourceValidator must not return null");
     return importSemanticModel(
         NameIdentifier.of(namespace, model.name()),
         model.comment(),
         model.definition(),
-        model.properties());
+        model.properties(),
+        sourceUpdate);
   }
 
   /**
    * Dispatches a parsed import through normalization and import-specific hooks.
    *
    * <p>This internal entry point is used by {@link #importOssieDocument(Namespace, OssieDocument,
-   * Consumer)} after parsing and source validation. Each decorator implements it separately from
+   * Function)} after parsing and source validation. Each decorator implements it separately from
    * create; only the operation dispatcher reuses the underlying create implementation. The
    * top-level event dispatcher rejects direct calls to this internal entry point.
    *
@@ -130,6 +195,7 @@ public interface SemanticModelDispatcher {
    * @param comment The model comment, or {@code null} if it has no comment.
    * @param definition The parsed native definition whose sources have been validated.
    * @param properties The Gravitino-specific model properties.
+   * @param sourceUpdate The validated complete dataset source associations.
    * @return The imported Semantic Model.
    * @throws UnsupportedOperationException If called directly on the top-level event dispatcher.
    */
@@ -137,7 +203,8 @@ public interface SemanticModelDispatcher {
       NameIdentifier ident,
       @Nullable String comment,
       SemanticModelDefinition definition,
-      Map<String, String> properties);
+      Map<String, String> properties,
+      SemanticModelSourceUpdate sourceUpdate);
 
   /**
    * Exports a Semantic Model as a standalone Apache Ossie document.
@@ -151,12 +218,27 @@ public interface SemanticModelDispatcher {
    * @throws NoSuchSemanticModelException If the Semantic Model does not exist.
    * @throws IllegalSemanticModelException If the model cannot be represented as an Ossie document.
    */
-  OssieDocument exportOssieDocument(NameIdentifier ident, OssieFormat format);
+  default OssieDocument exportOssieDocument(NameIdentifier ident, OssieFormat format) {
+    return exportSemanticModel(ident, SemanticModelRevisionSelector.ACTIVE, format, ignored -> {})
+        .document();
+  }
+
+  /** Exports the same snapshot checked by the caller's visibility rule. */
+  SemanticModelExport exportSemanticModel(
+      NameIdentifier ident,
+      SemanticModelRevisionSelector selector,
+      OssieFormat format,
+      Consumer<SemanticModelRevision> checkVisibility);
+
+  /** An exported document and the exact revision used to serialize it. */
+  record SemanticModelExport(OssieDocument document, int revision) {}
 
   /**
    * Applies changes atomically to a Semantic Model.
    *
    * @param ident The Semantic Model identifier.
+   * @param sourceUpdate Replace associations for a definition write, or preserve them for metadata
+   *     changes.
    * @param changes The changes to apply.
    * @return The altered Semantic Model.
    * @throws NoSuchSemanticModelException If the Semantic Model does not exist.
@@ -164,9 +246,19 @@ public interface SemanticModelDispatcher {
    *     Model.
    * @throws IllegalSemanticModelException If a change or the resulting Semantic Model is invalid.
    */
-  SemanticModel alterSemanticModel(NameIdentifier ident, SemanticModelChange... changes)
-      throws NoSuchSemanticModelException, SemanticModelAlreadyExistsException,
-          IllegalSemanticModelException;
+  default SemanticModel alterSemanticModel(
+      NameIdentifier ident,
+      SemanticModelSourceUpdate sourceUpdate,
+      SemanticModelChange... changes) {
+    return alterSemanticModel(ident, null, sourceUpdate, changes);
+  }
+
+  /** Applies changes to latest, optionally requiring the caller's expected revision. */
+  SemanticModel alterSemanticModel(
+      NameIdentifier ident,
+      @Nullable Integer expectedRevision,
+      SemanticModelSourceUpdate sourceUpdate,
+      SemanticModelChange... changes);
 
   /**
    * Drops a Semantic Model.

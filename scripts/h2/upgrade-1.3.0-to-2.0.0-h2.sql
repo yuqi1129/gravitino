@@ -18,6 +18,33 @@
 --
 
 
+-- Preserve retired registrations while keeping each external ID unique among active rows.
+EXECUTE IMMEDIATE 'ALTER TABLE `schema_meta` DROP CONSTRAINT IF EXISTS "' ||
+    COALESCE((SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+        WHERE TABLE_SCHEMA = CURRENT_SCHEMA AND UPPER(TABLE_NAME) = UPPER('schema_meta')
+        AND CONSTRAINT_TYPE = 'PRIMARY KEY'), 'schema_meta_pkey') || '"';
+ALTER TABLE `schema_meta` ADD PRIMARY KEY (`schema_id`, `deleted_at`);
+
+EXECUTE IMMEDIATE 'ALTER TABLE `table_meta` DROP CONSTRAINT IF EXISTS "' ||
+    COALESCE((SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+        WHERE TABLE_SCHEMA = CURRENT_SCHEMA AND UPPER(TABLE_NAME) = UPPER('table_meta')
+        AND CONSTRAINT_TYPE = 'PRIMARY KEY'), 'table_meta_pkey') || '"';
+ALTER TABLE `table_meta` ADD PRIMARY KEY (`table_id`, `deleted_at`);
+
+EXECUTE IMMEDIATE 'ALTER TABLE `topic_meta` DROP CONSTRAINT IF EXISTS "' ||
+    COALESCE((SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+        WHERE TABLE_SCHEMA = CURRENT_SCHEMA AND UPPER(TABLE_NAME) = UPPER('topic_meta')
+        AND CONSTRAINT_TYPE = 'PRIMARY KEY'), 'topic_meta_pkey') || '"';
+ALTER TABLE `topic_meta` ADD PRIMARY KEY (`topic_id`, `deleted_at`);
+
+EXECUTE IMMEDIATE 'ALTER TABLE `view_meta` DROP CONSTRAINT IF EXISTS "' ||
+    COALESCE((SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+        WHERE TABLE_SCHEMA = CURRENT_SCHEMA AND UPPER(TABLE_NAME) = UPPER('view_meta')
+        AND CONSTRAINT_TYPE = 'PRIMARY KEY'), 'view_meta_pkey') || '"';
+ALTER TABLE `view_meta` ADD PRIMARY KEY (`view_id`, `deleted_at`);
+
+
+
 
 
 -- Preserve policy_relation_meta from pre-2.0 installations, including its existing data.
@@ -25,6 +52,9 @@
 
 ALTER TABLE `table_column_version_info`
     ALTER COLUMN `column_comment` VARCHAR(4096) DEFAULT '';
+
+-- Support external column names up to 300 characters (including BigQuery).
+ALTER TABLE `table_column_version_info` ALTER COLUMN `column_name` VARCHAR(300) NOT NULL;
 
 ALTER TABLE `model_meta` ADD COLUMN IF NOT EXISTS `current_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'model current version' AFTER `model_latest_version`;
 ALTER TABLE `model_meta` ADD COLUMN IF NOT EXISTS `last_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'model last allocated version' AFTER `current_version`;
@@ -64,6 +94,18 @@ CREATE TABLE IF NOT EXISTS `policy_tag_relation_meta` (
     KEY `policy_tag_relation_meta_idx_tag_id` (`tag_id`)
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS `policy_role_relation_meta` (
+    `id` BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'auto increment id',
+    `policy_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'policy id',
+    `role_name` VARCHAR(128) NOT NULL COMMENT 'role name referenced by the policy content',
+    `current_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'policy role relation current version',
+    `last_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'policy role relation last version',
+    `deleted_at` BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 COMMENT 'policy role relation deleted at',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `policy_role_relation_meta_uk_pid_rn_del` (`policy_id`, `role_name`, `deleted_at`),
+    KEY `policy_role_relation_meta_idx_role_name` (`role_name`)
+) ENGINE=InnoDB;
+
 ALTER TABLE `job_run_meta` ADD COLUMN IF NOT EXISTS `runtime_job_template` CLOB DEFAULT NULL COMMENT 'job run runtime job template' AFTER `job_finished_at`;
 
 CREATE TABLE IF NOT EXISTS `semantic_model_meta` (
@@ -74,6 +116,7 @@ CREATE TABLE IF NOT EXISTS `semantic_model_meta` (
     `schema_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'schema id',
     `audit_info` CLOB NOT NULL COMMENT 'semantic model identity audit info',
     `current_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'current version',
+    `active_version` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'published revision, 0 if none',
     `last_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'last allocated version',
     `deleted_at` BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 COMMENT 'semantic model deleted at',
     PRIMARY KEY (`semantic_model_id`),
@@ -89,9 +132,15 @@ CREATE TABLE IF NOT EXISTS `semantic_model_version_info` (
     `schema_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'schema id',
     `semantic_model_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'semantic model id',
     `version` INT UNSIGNED NOT NULL COMMENT 'semantic model version',
-    `semantic_model_name` VARCHAR(128) NOT NULL COMMENT 'semantic model name snapshot',
+    `publication_status` VARCHAR(32) NOT NULL DEFAULT 'DRAFT' COMMENT 'publication status of the revision',
+    `published_by` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'publishing principal, empty for a draft',
+    `published_at` BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 COMMENT 'publication time in epoch millis, 0 for a draft',
     `semantic_model_comment` CLOB DEFAULT NULL COMMENT 'semantic model comment snapshot',
-    `semantic_model_definition` CLOB NOT NULL COMMENT 'structured definition snapshot (JSON)',
+    `datasets` CLOB NOT NULL COMMENT 'dataset definitions snapshot (JSON)',
+    `relationships` CLOB DEFAULT NULL COMMENT 'relationship definitions snapshot (JSON)',
+    `metrics` CLOB DEFAULT NULL COMMENT 'metric definitions snapshot (JSON)',
+    `ai_context` CLOB DEFAULT NULL COMMENT 'model AI context snapshot (JSON)',
+    `custom_extensions` CLOB DEFAULT NULL COMMENT 'model custom extensions snapshot (JSON)',
     `properties` CLOB DEFAULT NULL COMMENT 'semantic model properties snapshot (JSON)',
     `audit_info` CLOB NOT NULL COMMENT 'semantic model version audit info',
     `deleted_at` BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 COMMENT 'version deleted at',
@@ -101,6 +150,21 @@ CREATE TABLE IF NOT EXISTS `semantic_model_version_info` (
     KEY `idx_smvi_cid` (`catalog_id`),
     KEY `idx_smvi_sid` (`schema_id`)
 ) ENGINE=InnoDB COMMENT 'semantic model version information';
+
+CREATE TABLE IF NOT EXISTS `semantic_model_metric_meta` (
+    `metric_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'stable internal metric id',
+    `metalake_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'metalake id',
+    `catalog_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'catalog id',
+    `schema_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'schema id',
+    `semantic_model_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'containing semantic model id',
+    `metric_name` CLOB NOT NULL COMMENT 'metric name',
+    `deleted_at` BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 COMMENT 'metric retired at',
+    PRIMARY KEY (`metric_id`),
+    KEY `idx_smmm_model_live` (`semantic_model_id`, `deleted_at`),
+    KEY `idx_smmm_mid` (`metalake_id`),
+    KEY `idx_smmm_cid` (`catalog_id`),
+    KEY `idx_smmm_sid` (`schema_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT 'semantic model metric identities';
 
 CREATE TABLE IF NOT EXISTS `scheduled_expand_tasks` (
     `task_name` VARCHAR(100) NOT NULL COMMENT 'task name',
@@ -154,33 +218,33 @@ CREATE INDEX IF NOT EXISTS `scheduled_commit_tasks_execution_time_idx` ON `sched
 CREATE INDEX IF NOT EXISTS `scheduled_commit_tasks_last_heartbeat_idx` ON `scheduled_commit_tasks`(`last_heartbeat`);
 
 CREATE TABLE IF NOT EXISTS `table_maintenance_action` (
-    `id` BIGINT AUTO_INCREMENT NOT NULL COMMENT 'auto increment id',
+    `action_id` BIGINT AUTO_INCREMENT NOT NULL COMMENT 'maintenance action id',
     `job_id` BIGINT COMMENT 'job run id, maps to job_run_meta.job_run_id',
     `table_id` BIGINT NOT NULL COMMENT 'table id from table_meta',
     `policy_id` BIGINT NOT NULL COMMENT 'policy id from policy_meta',
-    `before_snapshot_id` BIGINT COMMENT 'Iceberg snapshot id before maintenance, null until sampled',
-    `after_snapshot_id` BIGINT COMMENT 'Iceberg snapshot id after maintenance, null while pending',
-    `finished_at` BIGINT NOT NULL DEFAULT 0 COMMENT 'finish millis, 0 = soft in-flight slot (one per table/policy)',
+    `before_metrics_id` BIGINT COMMENT 'table_snapshot_metrics.metrics_id for S0 sample',
+    `after_metrics_id` BIGINT COMMENT 'table_snapshot_metrics.metrics_id for S1 sample',
     `created_at` BIGINT NOT NULL COMMENT 'creation timestamp in milliseconds',
-    PRIMARY KEY (`id`)
+    `finished_at` BIGINT NOT NULL DEFAULT 0 COMMENT 'finish millis, 0 = soft in-flight slot (one per table/policy)',
+    PRIMARY KEY (`action_id`)
 ) COMMENT='table maintenance action metadata';
-CREATE UNIQUE INDEX IF NOT EXISTS `uk_tma_job_id` ON `table_maintenance_action`(`job_id`);
+CREATE INDEX IF NOT EXISTS `idx_tma_job_id` ON `table_maintenance_action`(`job_id`);
 -- Soft slot: finished_at=0 is exclusive per table/policy (one in-flight finish).
 CREATE UNIQUE INDEX IF NOT EXISTS `uk_tma_table_policy_finished` ON `table_maintenance_action`(`table_id`, `policy_id`, `finished_at`);
-CREATE INDEX IF NOT EXISTS `idx_tma_before_sid` ON `table_maintenance_action`(`table_id`, `before_snapshot_id`);
-CREATE INDEX IF NOT EXISTS `idx_tma_after_sid` ON `table_maintenance_action`(`table_id`, `after_snapshot_id`);
+CREATE INDEX IF NOT EXISTS `idx_tma_before_metrics` ON `table_maintenance_action`(`before_metrics_id`);
+CREATE INDEX IF NOT EXISTS `idx_tma_after_metrics` ON `table_maintenance_action`(`after_metrics_id`);
 CREATE INDEX IF NOT EXISTS `idx_tma_created_at` ON `table_maintenance_action`(`created_at`);
 
 CREATE TABLE IF NOT EXISTS `table_snapshot_metrics` (
-    `id` BIGINT AUTO_INCREMENT NOT NULL COMMENT 'auto increment id',
+    `metrics_id` BIGINT AUTO_INCREMENT NOT NULL COMMENT 'metrics row id',
     `table_id` BIGINT NOT NULL COMMENT 'table id from table_meta',
     `policy_id` BIGINT NOT NULL COMMENT 'policy id from policy_meta',
     `snapshot_id` BIGINT NOT NULL COMMENT 'Iceberg snapshot id',
     `metrics_value` CLOB NOT NULL COMMENT 'metrics value as JSON',
     `created_at` BIGINT NOT NULL COMMENT 'creation timestamp in milliseconds',
-    PRIMARY KEY (`id`)
+    PRIMARY KEY (`metrics_id`)
 ) COMMENT='table snapshot metrics metadata';
-CREATE UNIQUE INDEX IF NOT EXISTS `uk_tid_pid_sid` ON `table_snapshot_metrics`(`table_id`, `policy_id`, `snapshot_id`);
+CREATE INDEX IF NOT EXISTS `idx_tsm_tid_pid_sid` ON `table_snapshot_metrics`(`table_id`, `policy_id`, `snapshot_id`);
 CREATE INDEX IF NOT EXISTS `idx_tsm_created_at` ON `table_snapshot_metrics`(`created_at`);
 
 -- Merge duplicate live owners left by concurrent assignments: the newest live row
@@ -207,3 +271,233 @@ ALTER TABLE `fileset_meta`
 
 ALTER TABLE `policy_meta`
     ADD COLUMN IF NOT EXISTS `occ_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'policy optimistic concurrency version' AFTER `last_version`;
+
+-- Role deletion soft-deletes relation rows by role_id.
+CREATE INDEX IF NOT EXISTS `group_role_rel_idx_role_id` ON `group_role_rel` (`role_id`);
+
+CREATE TABLE IF NOT EXISTS `semantic_model_source_rel` (
+    `id` BIGINT AUTO_INCREMENT COMMENT 'auto increment id',
+    `metalake_id` BIGINT NOT NULL COMMENT 'containing metalake id',
+    `semantic_model_id` BIGINT NOT NULL COMMENT 'containing semantic model id',
+    `dataset_name` CLOB NOT NULL COMMENT 'exact dataset name in the associated revisions',
+    `source_type` VARCHAR(64) NOT NULL COMMENT 'TABLE or VIEW',
+    `source_id` BIGINT NOT NULL COMMENT 'resolved source object id',
+    `from_version` INT UNSIGNED NOT NULL COMMENT 'first revision containing this association',
+    `to_version` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'first revision without it, 0 if open',
+    `deleted_at` BIGINT NOT NULL DEFAULT 0 COMMENT 'association retired at',
+    PRIMARY KEY (`id`)
+) COMMENT='versioned semantic model dataset source associations';
+CREATE INDEX IF NOT EXISTS `idx_smsr_model` ON `semantic_model_source_rel` (`semantic_model_id`, `deleted_at`);
+CREATE INDEX IF NOT EXISTS `idx_smsr_source` ON `semantic_model_source_rel` (`metalake_id`, `source_type`, `source_id`, `deleted_at`);
+CREATE INDEX IF NOT EXISTS `idx_smsr_deleted_at` ON `semantic_model_source_rel` (`deleted_at`);
+
+-- Clear governance attached to retired external registrations before their IDs can be reused.
+-- A retry must preserve relationships attached to a new active registration of the same ID.
+UPDATE owner_meta r
+SET deleted_at = ((UNIX_TIMESTAMP() * 1000.0) + EXTRACT(MICROSECOND FROM CURRENT_TIMESTAMP(3)) / 1000),
+    updated_at = ((UNIX_TIMESTAMP() * 1000.0) + EXTRACT(MICROSECOND FROM CURRENT_TIMESTAMP(3)) / 1000)
+WHERE r.deleted_at = 0 AND EXISTS (
+    SELECT 1 FROM schema_meta retired
+    WHERE r.metadata_object_type = 'SCHEMA' AND retired.schema_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM schema_meta live
+                      WHERE live.schema_id = retired.schema_id AND live.deleted_at = 0)
+    UNION ALL
+    SELECT 1 FROM table_meta retired
+    WHERE r.metadata_object_type = 'TABLE' AND retired.table_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM table_meta live
+                      WHERE live.table_id = retired.table_id AND live.deleted_at = 0)
+    UNION ALL
+    SELECT 1 FROM topic_meta retired
+    WHERE r.metadata_object_type = 'TOPIC' AND retired.topic_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM topic_meta live
+                      WHERE live.topic_id = retired.topic_id AND live.deleted_at = 0)
+    UNION ALL
+    SELECT 1 FROM view_meta retired
+    WHERE r.metadata_object_type = 'VIEW' AND retired.view_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM view_meta live
+                      WHERE live.view_id = retired.view_id AND live.deleted_at = 0)
+);
+
+UPDATE role_meta_securable_object r
+SET deleted_at = ((UNIX_TIMESTAMP() * 1000.0) + EXTRACT(MICROSECOND FROM CURRENT_TIMESTAMP(3)) / 1000)
+WHERE r.deleted_at = 0 AND EXISTS (
+    SELECT 1 FROM schema_meta retired
+    WHERE r.type = 'SCHEMA' AND retired.schema_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM schema_meta live
+                      WHERE live.schema_id = retired.schema_id AND live.deleted_at = 0)
+    UNION ALL
+    SELECT 1 FROM table_meta retired
+    WHERE r.type = 'TABLE' AND retired.table_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM table_meta live
+                      WHERE live.table_id = retired.table_id AND live.deleted_at = 0)
+    UNION ALL
+    SELECT 1 FROM topic_meta retired
+    WHERE r.type = 'TOPIC' AND retired.topic_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM topic_meta live
+                      WHERE live.topic_id = retired.topic_id AND live.deleted_at = 0)
+    UNION ALL
+    SELECT 1 FROM view_meta retired
+    WHERE r.type = 'VIEW' AND retired.view_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM view_meta live
+                      WHERE live.view_id = retired.view_id AND live.deleted_at = 0)
+);
+
+UPDATE tag_relation_meta r
+SET deleted_at = ((UNIX_TIMESTAMP() * 1000.0) + EXTRACT(MICROSECOND FROM CURRENT_TIMESTAMP(3)) / 1000)
+WHERE r.deleted_at = 0 AND EXISTS (
+    SELECT 1 FROM schema_meta retired
+    WHERE r.metadata_object_type = 'SCHEMA' AND retired.schema_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM schema_meta live
+                      WHERE live.schema_id = retired.schema_id AND live.deleted_at = 0)
+    UNION ALL
+    SELECT 1 FROM table_meta retired
+    WHERE r.metadata_object_type = 'TABLE' AND retired.table_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM table_meta live
+                      WHERE live.table_id = retired.table_id AND live.deleted_at = 0)
+    UNION ALL
+    SELECT 1 FROM topic_meta retired
+    WHERE r.metadata_object_type = 'TOPIC' AND retired.topic_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM topic_meta live
+                      WHERE live.topic_id = retired.topic_id AND live.deleted_at = 0)
+    UNION ALL
+    SELECT 1 FROM view_meta retired
+    WHERE r.metadata_object_type = 'VIEW' AND retired.view_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM view_meta live
+                      WHERE live.view_id = retired.view_id AND live.deleted_at = 0)
+);
+
+UPDATE statistic_meta r
+SET deleted_at = ((UNIX_TIMESTAMP() * 1000.0) + EXTRACT(MICROSECOND FROM CURRENT_TIMESTAMP(3)) / 1000)
+WHERE r.deleted_at = 0 AND EXISTS (
+    SELECT 1 FROM schema_meta retired
+    WHERE r.metadata_object_type = 'SCHEMA' AND retired.schema_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM schema_meta live
+                      WHERE live.schema_id = retired.schema_id AND live.deleted_at = 0)
+    UNION ALL
+    SELECT 1 FROM table_meta retired
+    WHERE r.metadata_object_type = 'TABLE' AND retired.table_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM table_meta live
+                      WHERE live.table_id = retired.table_id AND live.deleted_at = 0)
+    UNION ALL
+    SELECT 1 FROM topic_meta retired
+    WHERE r.metadata_object_type = 'TOPIC' AND retired.topic_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM topic_meta live
+                      WHERE live.topic_id = retired.topic_id AND live.deleted_at = 0)
+    UNION ALL
+    SELECT 1 FROM view_meta retired
+    WHERE r.metadata_object_type = 'VIEW' AND retired.view_id = r.metadata_object_id
+      AND retired.deleted_at > 0
+      AND NOT EXISTS (SELECT 1 FROM view_meta live
+                      WHERE live.view_id = retired.view_id AND live.deleted_at = 0)
+);
+
+-- Align the location and uri name widths with the MySQL and PostgreSQL schemas.
+ALTER TABLE `fileset_version_info` ALTER COLUMN `storage_location_name` VARCHAR(256) NOT NULL DEFAULT 'default';
+ALTER TABLE `model_version_info` ALTER COLUMN `model_version_uri_name` VARCHAR(256) NOT NULL;
+
+CREATE TABLE IF NOT EXISTS `domain_meta` (
+    `domain_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'domain id',
+    `domain_name` VARCHAR(128) NOT NULL COMMENT 'domain name',
+    `metalake_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'metalake id',
+    `domain_comment` VARCHAR(256) DEFAULT '' COMMENT 'domain comment',
+    `domain_status` VARCHAR(16) NOT NULL DEFAULT 'DRAFT' COMMENT 'domain status, DRAFT or PUBLISHED',
+    `backing_tag_id` BIGINT(20) UNSIGNED DEFAULT NULL COMMENT 'id of the backing tag, NULL if the domain has none',
+    `backing_tag_value` VARCHAR(256) DEFAULT NULL COMMENT 'value of the backing tag, NULL binds the tag without a value',
+    `properties` CLOB DEFAULT NULL COMMENT 'domain properties',
+    `audit_info` CLOB NOT NULL COMMENT 'domain audit info',
+    `current_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'domain current version',
+    `last_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'domain last version',
+    `deleted_at` BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 COMMENT 'domain deleted at',
+    PRIMARY KEY (`domain_id`),
+    UNIQUE KEY `uk_mi_dn_del` (`metalake_id`, `domain_name`, `deleted_at`),
+    KEY `domain_meta_idx_backing_tag` (`metalake_id`, `backing_tag_id`, `backing_tag_value`, `deleted_at`)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `domain_rel` (
+    `id` BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'auto increment id',
+    `metalake_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'metalake id',
+    `parent_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'parent domain id',
+    `child_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'sub-domain id',
+    `audit_info` CLOB NOT NULL COMMENT 'domain relation audit info',
+    `current_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'domain relation current version',
+    `last_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'domain relation last version',
+    `deleted_at` BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 COMMENT 'domain relation deleted at',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_dr_ci_del` (`child_id`, `deleted_at`),
+    KEY `domain_rel_idx_parent` (`parent_id`, `deleted_at`),
+    KEY `domain_rel_idx_metalake` (`metalake_id`, `deleted_at`)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `iceberg_idempotency_meta` (
+  `idempotency_key`  VARCHAR(36) NOT NULL     COMMENT 'client-provided UUIDv7 idempotency key',
+  `http_method`      VARCHAR(16) NOT NULL     COMMENT 'HTTP method of the request',
+  `request_uri`      TEXT        NOT NULL     COMMENT 'encoded request path and sorted query string',
+  `generation`       BIGINT      NOT NULL     COMMENT 'reservation fencing token',
+  `http_status`      INT         NULL         COMMENT 'HTTP status of finalized response, NULL while reserved',
+  `response_summary` CLOB        NULL         COMMENT 'serialized response body (JSON) for replay',
+  `audit_info`       CLOB        NOT NULL     COMMENT 'idempotency record audit info',
+  `created_at`       BIGINT      NOT NULL     COMMENT 'record created at (unix epoch millis)',
+  `expires_at`       BIGINT      NOT NULL     COMMENT 'record expires at (unix epoch millis)',
+  PRIMARY KEY (`idempotency_key`)
+) COMMENT='Iceberg REST idempotency records';
+CREATE INDEX IF NOT EXISTS `idx_iim_expires` ON `iceberg_idempotency_meta` (`expires_at`);
+
+
+CREATE TABLE IF NOT EXISTS iceberg_idempotency_generation_meta (
+  stripe INT NOT NULL PRIMARY KEY,
+  generation BIGINT NOT NULL
+) ENGINE=InnoDB;
+
+-- Index live metadata lists and relationship cleanup by their lookup keys and deletion status.
+CREATE INDEX IF NOT EXISTS `idx_tag_meta_live` ON `tag_meta` (`metalake_id`, `deleted_at`);
+CREATE INDEX IF NOT EXISTS `idx_policy_meta_live` ON `policy_meta` (`metalake_id`, `deleted_at`);
+CREATE INDEX IF NOT EXISTS `idx_role_meta_live` ON `role_meta` (`metalake_id`, `deleted_at`);
+CREATE INDEX IF NOT EXISTS `idx_user_meta_live` ON `user_meta` (`metalake_id`, `deleted_at`);
+CREATE INDEX IF NOT EXISTS `idx_tag_relation_meta_live` ON `tag_relation_meta` (`metadata_object_id`, `metadata_object_type`, `deleted_at`);
+CREATE INDEX IF NOT EXISTS `idx_role_meta_securable_object_live` ON `role_meta_securable_object` (`metadata_object_id`, `type`, `deleted_at`);
+CREATE INDEX IF NOT EXISTS `idx_user_role_rel_live` ON `user_role_rel` (`role_id`, `deleted_at`);
+CREATE INDEX IF NOT EXISTS `idx_policy_tag_relation_meta_live` ON `policy_tag_relation_meta` (`tag_id`, `deleted_at`);
+
+CREATE TABLE IF NOT EXISTS `ontology_meta` (
+    `ontology_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'ontology id',
+    `ontology_name` VARCHAR(128) NOT NULL COMMENT 'ontology name',
+    `metalake_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'metalake id',
+    `audit_info` MEDIUMTEXT NOT NULL COMMENT 'ontology identity audit info',
+    `current_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'current version',
+    `last_version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT 'last allocated version',
+    `deleted_at` BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 COMMENT 'ontology deleted at',
+    PRIMARY KEY (`ontology_id`),
+    UNIQUE KEY `uk_onm_mid_name_del` (`metalake_id`, `ontology_name`, `deleted_at`),
+    KEY `idx_onm_deleted` (`deleted_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT 'ontology identity';
+
+CREATE TABLE IF NOT EXISTS `ontology_version_info` (
+    `id` BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'auto increment id',
+    `metalake_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'metalake id',
+    `ontology_id` BIGINT(20) UNSIGNED NOT NULL COMMENT 'ontology id',
+    `version` INT UNSIGNED NOT NULL COMMENT 'version',
+    `ontology_comment` TEXT DEFAULT NULL COMMENT 'comment snapshot',
+    `definition` MEDIUMTEXT NOT NULL COMMENT 'normalized OntologyDefinition (JSON)',
+    `properties` MEDIUMTEXT DEFAULT NULL COMMENT 'properties snapshot (JSON)',
+    `audit_info` MEDIUMTEXT NOT NULL COMMENT 'version audit info',
+    `deleted_at` BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 COMMENT 'version deleted at',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_onvi_oid_ver_del` (`ontology_id`, `version`, `deleted_at`),
+    KEY `idx_onvi_mid` (`metalake_id`, `deleted_at`),
+    KEY `idx_onvi_deleted` (`deleted_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT 'ontology versions';

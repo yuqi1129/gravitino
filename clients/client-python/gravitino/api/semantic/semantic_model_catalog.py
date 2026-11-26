@@ -21,6 +21,8 @@ from typing import Optional
 from gravitino.api.semantic.semantic_model import SemanticModel
 from gravitino.api.semantic.semantic_model_change import SemanticModelChange
 from gravitino.api.semantic.semantic_model_definition import SemanticModelDefinition
+from gravitino.api.semantic.semantic_model_metric import SemanticModelMetric
+from gravitino.api.semantic.semantic_model_revision import SemanticModelRevision
 from gravitino.exceptions.base import (
     NoSuchSemanticModelException,
     UnsupportedOperationException,
@@ -37,6 +39,8 @@ class SemanticModelCatalog(ABC):
     depend on whether the underlying connector implements a semantic-model
     capability.
     """
+
+    LATEST_REVISION = "latest"
 
     @abstractmethod
     def list_semantic_models(self, namespace: Namespace) -> list[NameIdentifier]:
@@ -55,12 +59,54 @@ class SemanticModelCatalog(ABC):
             NoSuchSchemaException: If the schema does not exist.
         """
 
+    def list_metrics(self, namespace: Namespace) -> list[NameIdentifier]:
+        """List visible metric identifiers across the Semantic Models in a schema.
+
+        Identifiers are relative to this catalog. Each identifier's namespace
+        contains the schema and Semantic Model names, and its name is the exact
+        metric name.
+        Results are ordered by model identifier and then case-sensitive metric name.
+
+        Args:
+            namespace (Namespace): A single-level schema namespace.
+
+        Returns:
+            list[NameIdentifier]: The visible metric identifiers, or an empty list.
+
+        Raises:
+            NoSuchSchemaException: If the schema does not exist.
+            UnsupportedOperationException: If metric discovery is not supported.
+        """
+        raise UnsupportedOperationException("Metric listing is not supported")
+
+    def list_metric_infos(self, namespace: Namespace) -> list[SemanticModelMetric]:
+        """List complete visible metrics across the Semantic Models in a schema.
+
+        Each result contains a namespace of schema and model names and the complete
+        metric definition. Visibility and ordering match :meth:`list_metrics`.
+        The request fails as a whole if metric definitions cannot be decoded.
+
+        Args:
+            namespace (Namespace): A single-level schema namespace.
+
+        Returns:
+            list[SemanticModelMetric]: The visible metrics, or an empty list.
+
+        Raises:
+            NoSuchSchemaException: If the schema does not exist.
+            UnsupportedOperationException: If metric discovery is not supported.
+        """
+        raise UnsupportedOperationException("Metric info listing is not supported")
+
     @abstractmethod
-    def load_semantic_model(self, identifier: NameIdentifier) -> SemanticModel:
-        """Load Semantic Model metadata by `NameIdentifier` from the catalog.
+    def load_semantic_model(
+        self, identifier: NameIdentifier, revision: Optional[int | str] = None
+    ) -> SemanticModel:
+        """Load the active revision, a positive revision number, or "latest".
 
         Args:
             identifier (NameIdentifier): A Semantic Model identifier.
+            revision: A positive revision number or "latest"; None selects active.
 
         Returns:
             SemanticModel: The Semantic Model metadata.
@@ -68,6 +114,12 @@ class SemanticModelCatalog(ABC):
         Raises:
             NoSuchSemanticModelException: If the Semantic Model does not exist.
         """
+
+    def list_semantic_model_revisions(
+        self, identifier: NameIdentifier
+    ) -> list[SemanticModelRevision]:
+        """List visible, retained revision summaries newest first."""
+        raise UnsupportedOperationException("Semantic Model history is not supported")
 
     def semantic_model_exists(self, identifier: NameIdentifier) -> bool:
         """Check if a Semantic Model with the given name exists in the catalog.
@@ -145,7 +197,10 @@ class SemanticModelCatalog(ABC):
         raise UnsupportedOperationException("Ossie import is not supported")
 
     def export_ossie_document(
-        self, identifier: NameIdentifier, document_format: str = "yaml"
+        self,
+        identifier: NameIdentifier,
+        document_format: str = "yaml",
+        revision: Optional[int | str] = None,
     ) -> str:
         """Export a Semantic Model as standalone Apache Ossie document text.
 
@@ -156,6 +211,7 @@ class SemanticModelCatalog(ABC):
         Args:
             identifier (NameIdentifier): The Semantic Model identifier.
             document_format (str): ``"yaml"`` (default) or ``"json"``.
+            revision: A positive revision number or "latest"; None selects active.
 
         Returns:
             str: The serialized document in the requested format.
@@ -170,15 +226,21 @@ class SemanticModelCatalog(ABC):
 
     @abstractmethod
     def alter_semantic_model(
-        self, identifier: NameIdentifier, *changes: SemanticModelChange
+        self,
+        identifier: NameIdentifier,
+        *changes: SemanticModelChange,
+        expected_revision: Optional[int] = None,
     ) -> SemanticModel:
         """Alter a Semantic Model in the catalog.
 
-        All changes are applied atomically to the current Semantic Model.
+        All changes are applied atomically to the latest saved revision.
+        Rename must be the only change when requested.
 
         Args:
             identifier (NameIdentifier): A Semantic Model identifier.
             *changes: The Semantic Model changes to apply.
+            expected_revision: The latest revision on which the changes are based.
+                Required when replacing the definition.
 
         Returns:
             SemanticModel: The updated Semantic Model metadata.

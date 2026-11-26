@@ -15,23 +15,38 @@
 # specific language governing permissions and limitations
 # under the License.
 
+from datetime import datetime
 from typing import Optional
 
 from gravitino.api.audit import Audit
 from gravitino.api.metadata_object import MetadataObject
 from gravitino.api.metadata_objects import MetadataObjects
+from gravitino.api.policy.policy import Policy
+from gravitino.api.policy.policy_list import PolicyList
+from gravitino.api.policy.supports_policies import SupportsPolicies
 from gravitino.api.semantic.semantic_model import SemanticModel
 from gravitino.api.semantic.semantic_model_definition import SemanticModelDefinition
+from gravitino.api.semantic.semantic_model_revision import SemanticModelStatus
+from gravitino.api.domain.domain import Domain
+from gravitino.api.domain.supports_domains import SupportsDomains
+from gravitino.client.metadata_object_domain_operations import (
+    MetadataObjectDomainOperations,
+)
 from gravitino.api.tag.supports_tags import SupportsTags
 from gravitino.api.tag.tag import Tag
 from gravitino.api.tag.tag_list import TagList
+from gravitino.client.metadata_object_policy_operations import (
+    MetadataObjectPolicyOperations,
+)
 from gravitino.client.metadata_object_tag_operations import MetadataObjectTagOperations
 from gravitino.dto.semantic.semantic_model_dto import SemanticModelDTO
 from gravitino.namespace import Namespace
 from gravitino.utils import HTTPClient
 
 
-class GenericSemanticModel(SemanticModel, SupportsTags):
+class GenericSemanticModel(
+    SemanticModel, SupportsTags, SupportsDomains, SupportsPolicies
+):  # pylint: disable=too-many-instance-attributes
     """An immutable client-side Semantic Model returned by the Gravitino REST API."""
 
     def __init__(
@@ -52,11 +67,21 @@ class GenericSemanticModel(SemanticModel, SupportsTags):
         self._definition = semantic_model_dto.definition()
         self._properties = dict(semantic_model_dto.properties())
         self._audit = semantic_model_dto.audit_info()
+        self._revision = semantic_model_dto.revision()
+        self._status = semantic_model_dto.status()
+        self._published_by = semantic_model_dto.published_by()
+        self._published_at = semantic_model_dto.published_at()
         model_object = MetadataObjects.of(
             [semantic_model_ns.level(1), semantic_model_ns.level(2), self._name],
             MetadataObject.Type.SEMANTIC_MODEL,
         )
+        self._object_domain_operations = MetadataObjectDomainOperations(
+            semantic_model_ns.level(0), model_object, rest_client
+        )
         self._model_tag_operations = MetadataObjectTagOperations(
+            semantic_model_ns.level(0), model_object, rest_client
+        )
+        self._model_policy_operations = MetadataObjectPolicyOperations(
             semantic_model_ns.level(0), model_object, rest_client
         )
 
@@ -75,6 +100,18 @@ class GenericSemanticModel(SemanticModel, SupportsTags):
     def audit_info(self) -> Audit:
         return self._audit
 
+    def revision(self) -> int:
+        return self._revision
+
+    def status(self) -> Optional[SemanticModelStatus]:
+        return self._status
+
+    def published_by(self) -> Optional[str]:
+        return self._published_by
+
+    def published_at(self) -> Optional[datetime]:
+        return self._published_at
+
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, GenericSemanticModel):
             return False
@@ -84,10 +121,16 @@ class GenericSemanticModel(SemanticModel, SupportsTags):
             and self._definition == other.definition()
             and self._properties == other.properties()
             and self._audit == other.audit_info()
+            and self._revision == other.revision()
+            and self._status == other.status()
+            and self._published_by == other.published_by()
+            and self._published_at == other.published_at()
         )
 
     def __hash__(self) -> int:
-        return hash((self._name, self._comment, self._definition))
+        return hash(
+            (self._name, self._comment, self._definition, self._revision, self._status)
+        )
 
     def __repr__(self) -> str:
         return (
@@ -97,6 +140,21 @@ class GenericSemanticModel(SemanticModel, SupportsTags):
         )
 
     def supports_tags(self) -> SupportsTags:
+        return self
+
+    def list_policies(self) -> list[str]:
+        return self._model_policy_operations.list_policies()
+
+    def list_policies_with_visibility(self) -> PolicyList[str]:
+        return self._model_policy_operations.list_policies_with_visibility()
+
+    def list_policy_infos(self) -> list[Policy]:
+        return self._model_policy_operations.list_policy_infos()
+
+    def list_policy_infos_with_visibility(self) -> PolicyList[Policy]:
+        return self._model_policy_operations.list_policy_infos_with_visibility()
+
+    def supports_policies(self) -> SupportsPolicies:
         return self
 
     def list_tags(self) -> list[str]:
@@ -125,3 +183,12 @@ class GenericSemanticModel(SemanticModel, SupportsTags):
         self, tags_to_add: list[str], tags_to_remove: list[str]
     ) -> list[str]:
         return self._model_tag_operations.associate_tags(tags_to_add, tags_to_remove)
+
+    def supports_domains(self) -> SupportsDomains:
+        return self
+
+    def list_domains(self) -> list[str]:
+        return self._object_domain_operations.list_domains()
+
+    def list_domains_info(self) -> list[Domain]:
+        return self._object_domain_operations.list_domains_info()
